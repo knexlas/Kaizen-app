@@ -289,3 +289,43 @@ export async function processIncomingCompost(fileOrText) {
     return null;
   }
 }
+
+/**
+ * Suggests a structure for a new goal based on its title and type.
+ * Returns JSON: { estimatedMinutes, targetHours, rituals: [{title, days}], milestones: [{title}] }
+ */
+export async function suggestGoalStructure(title, type = 'kaizen', currentMetric, targetMetric) {
+  const apiKey = getApiKey();
+  if (!apiKey) return null;
+
+  try {
+    const { GoogleGenerativeAI } = await import('@google/generative-ai');
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({ model: MODEL });
+
+    const prompt = `
+      The user wants to start a "${type}" goal named "${title}".
+      ${currentMetric && targetMetric ? `They are tracking a metric from ${currentMetric} to ${targetMetric}.` : ''}
+      
+      Act as a Kaizen expert. Return a JSON object (no markdown) with:
+      1. "estimatedMinutes" (number, 15/30/60/90) for a typical session.
+      2. "targetHours" (number) weekly commitment.
+      3. "rituals" (array of {title, days[]}) where days are 0-6 (Sun-Sat). Suggest 1-2 rituals.
+      4. "milestones" (array of strings). If tracking a metric, break the gap into 3-5 progressive steps. If not, break the project into small kaizen steps.
+      
+      Keep it encouraging but realistic.
+    `;
+
+    const result = await model.generateContent(prompt);
+    const text = result?.response?.text?.();
+    if (!text) return null;
+
+    let raw = text.trim();
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    if (jsonMatch) raw = jsonMatch[0];
+    return JSON.parse(raw);
+  } catch (err) {
+    console.warn('Gemini suggestGoalStructure:', err);
+    return null;
+  }
+}

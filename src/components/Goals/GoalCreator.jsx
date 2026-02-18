@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { suggestGoalStructure } from '../../services/geminiService';
 
 // --- Wisdom Engine: RITUAL_PATTERNS + MILESTONE_PATTERNS (keywords -> rituals + milestones) ---
 const RITUAL_PATTERNS = [
@@ -118,6 +119,7 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
   const [notes, setNotes] = useState('');
   const [linkedVitalityId, setLinkedVitalityId] = useState('');
   const [toast, setToast] = useState(null);
+  const [isSuggesting, setIsSuggesting] = useState(false);
   // Routine: Schedule mode (Solid vs Liquid) and settings
   const [scheduleMode, setScheduleMode] = useState('liquid');
   const [solidStart, setSolidStart] = useState('09:00');
@@ -168,6 +170,25 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
       setVines(subtasks.map((t) => newVine({ title: t.trim(), estimatedHours: 0 })));
     }
   }, [open, initialSubtasks]);
+
+  // Kaizen Metric Steps: when Vitality has Start + Target, auto-fill milestones
+  useEffect(() => {
+    if (goalType === 'vitality' && metricCurrentValue && metricTargetValue) {
+      const start = parseFloat(metricCurrentValue);
+      const end = parseFloat(metricTargetValue);
+      if (!isNaN(start) && !isNaN(end) && start !== end && milestones.length === 0) {
+        const diff = start - end;
+        const step = diff / 4;
+        const newMs = [
+          newMilestone(`Reach ${Math.round((start - step) * 10) / 10}`),
+          newMilestone(`Reach ${Math.round((start - step * 2) * 10) / 10}`),
+          newMilestone(`Reach ${Math.round((start - step * 3) * 10) / 10}`),
+          newMilestone(`Reach ${end}`),
+        ];
+        setMilestones(newMs);
+      }
+    }
+  }, [metricCurrentValue, metricTargetValue, goalType, milestones.length]);
 
   const toggleSolidDay = (dayIndex) => {
     setSolidDays((prev) =>
@@ -245,15 +266,40 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
     setVines((prev) => prev.filter((v) => v.id !== vineId));
   };
 
-  const handleSuggest = () => {
-    const { rituals: suggestedRituals, milestones: suggestedMilestones } = getSuggestionsForTitle(title);
-    if (suggestedRituals && suggestedRituals.length > 0) {
-      suggestedRituals.forEach((s) => addRitual(s));
-      (suggestedMilestones || []).forEach((t) => addMilestone(t));
-      setToast('Wisdom applied.');
-    } else {
-      addRitual(DEFAULT_RITUAL);
-      setToast('No specific pattern found, added default.');
+  const handleSuggest = async () => {
+    if (!title.trim()) return;
+    setIsSuggesting(true);
+    setToast('Mochi is dreaming up a plan...');
+
+    try {
+      const suggestion = await suggestGoalStructure(
+        title,
+        goalType,
+        metricCurrentValue,
+        metricTargetValue
+      );
+
+      if (suggestion) {
+        if (suggestion.estimatedMinutes) setEstimatedMinutes(suggestion.estimatedMinutes);
+        if (suggestion.targetHours) setTargetHours(suggestion.targetHours);
+
+        if (Array.isArray(suggestion.rituals)) {
+          const newRituals = suggestion.rituals.map((r) => newRitual({ title: r.title, days: r.days }));
+          setRituals(newRituals.length ? newRituals : [newRitual()]);
+        }
+
+        if (Array.isArray(suggestion.milestones)) {
+          setMilestones(suggestion.milestones.map((t) => newMilestone(t)));
+        }
+        setToast('Plan sprouted!');
+      } else {
+        setToast('Mochi is meditating... try again?');
+      }
+    } catch (e) {
+      console.error(e);
+      setToast('Connection to the spirit realm failed.');
+    } finally {
+      setIsSuggesting(false);
     }
   };
 
@@ -830,7 +876,8 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
                 <button
                   type="button"
                   onClick={handleSuggest}
-                  className="font-sans text-sm text-moss-600 font-medium hover:text-moss-700"
+                  disabled={isSuggesting}
+                  className="font-sans text-sm text-moss-600 font-medium hover:text-moss-700 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   ✨ Suggest based on Title
                 </button>
