@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { EnergyProvider } from './context/EnergyContext';
 import { useGarden, todayString } from './context/GardenContext';
+import { generateDailyPlan } from './services/schedulerService';
 import { useTheme } from './context/ThemeContext';
 import SundayRitualController from './components/Rituals/SundayRitualController';
 import GardenDashboard from './components/Dashboard/GardenDashboard';
@@ -32,6 +33,7 @@ function App() {
     lastCheckInDate,
     lastSundayRitualDate,
     dailyEnergyModifier,
+    dailySpoonCount,
     goals,
     userSettings,
     googleUser,
@@ -39,6 +41,8 @@ function App() {
     updateWeeklyEvents,
     completeMorningCheckIn,
     markSundayRitualComplete,
+    assignments,
+    setAssignments,
   } = useGarden();
 
   const isAuthed = !!googleUser?.uid;
@@ -46,7 +50,7 @@ function App() {
   const needsWelcome = isAuthed && !hasOnboarded;
   const yesterdayPlan =
     lastCheckInDate === yesterdayString()
-      ? { modifier: dailyEnergyModifier }
+      ? { modifier: dailyEnergyModifier, spoonCount: dailySpoonCount }
       : null;
   const { theme } = useTheme();
 
@@ -72,8 +76,13 @@ function App() {
     setView(lastCheckInDate !== todayString() ? 'intro' : 'dashboard');
   };
 
-  const handleIntroComplete = (modifier) => {
-    completeMorningCheckIn(modifier);
+  const handleIntroComplete = (modifier, spoonCount) => {
+    completeMorningCheckIn(spoonCount);
+    const hasAnyAssignment = Object.keys(assignments || {}).length > 0;
+    if (!hasAnyAssignment) {
+      const plan = generateDailyPlan(goals, spoonCount);
+      setAssignments(plan);
+    }
     setView('dashboard');
   };
 

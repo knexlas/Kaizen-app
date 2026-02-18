@@ -35,12 +35,14 @@ export function getSpiritGreeting(context = {}) {
 
 /**
  * Immediate feedback after morning check-in, based on energy and the generated plan.
- * @param {number} energyModifier - From check-in: -2 = low, 0 = normal, 1 = high
+ * @param {number} spoonCountOrModifier - Spoon count (1–12) or legacy modifier (-2 = low, 0 = normal, 1 = high)
  * @param {null|{ slotCount: number }} planSummary - If auto-plan ran, { slotCount }; otherwise null
  * @returns {string} Spirit message to show right after check-in closes
  */
-export function getPlanReaction(energyModifier, planSummary) {
-  const mod = Number(energyModifier) || 0;
+export function getPlanReaction(spoonCountOrModifier, planSummary) {
+  const val = Number(spoonCountOrModifier);
+  const mod =
+    val >= 1 && val <= 12 ? (val <= 4 ? -2 : val >= 9 ? 1 : 0) : val;
   const slots = planSummary?.slotCount ?? 0;
   const isHeavy = slots >= 5;
   const isLight = slots > 0 && slots <= 3;
@@ -117,10 +119,10 @@ export function SpeechBubble({ text, visible, isThinking = false }) {
   );
 }
 
-/** Default spirit SVG (hand-drawn Mochi). */
-function DefaultSpiritSvg() {
+/** Default spirit SVG (hand-drawn Mochi / "Old Mochi"). Exported for SpiritBuilder. */
+export function DefaultSpiritSvg({ className }) {
   return (
-    <svg width="56" height="64" viewBox="0 0 60 70" fill="none" className="overflow-visible">
+    <svg width="56" height="64" viewBox="0 0 60 70" fill="none" className={className ?? 'overflow-visible'}>
       <circle cx="30" cy="40" r="25" fill="white" filter="blur(15px)" opacity="0.4" />
       <path
         d="M15 45 C15 30, 20 10, 30 10 C40 10, 45 30, 45 45 C45 55, 40 60, 30 60 C20 60, 15 55, 15 45 Z"
@@ -138,7 +140,24 @@ function DefaultSpiritSvg() {
   );
 }
 
-/** Custom spirit from Spirit Builder: head + body emoji with aura. */
+/** Archetype spirit from Spirit Builder: emoji container for cat/ember/nimbus. Mochi uses DefaultSpiritSvg in MochiSpirit. */
+const ARCHETYPE_DISPLAY = {
+  mochi: { emoji: '🐱', class: 'bg-amber-200/80 ring-amber-300 shadow-amber-200/40' },
+  cat: { emoji: '🐱', class: 'bg-amber-200/80 ring-amber-300 shadow-amber-200/40' },
+  ember: { emoji: '🔥', class: 'bg-orange-200/80 ring-orange-300 shadow-orange-200/40' },
+  nimbus: { emoji: '☁️', class: 'bg-sky-200/80 ring-sky-300 shadow-sky-200/40' },
+};
+
+function ArchetypeSpirit({ config }) {
+  const display = ARCHETYPE_DISPLAY[config.type] ?? ARCHETYPE_DISPLAY.mochi;
+  return (
+    <div className={`flex items-center justify-center w-14 h-14 rounded-2xl border-2 ring-2 ${display.class} shadow-lg`}>
+      <span className="text-3xl leading-none">{display.emoji}</span>
+    </div>
+  );
+}
+
+/** Custom spirit from Spirit Builder (legacy): head + body emoji with aura. */
 function CustomSpirit({ config }) {
   const headEmoji = HEADS[config.head] ?? '🐰';
   const bodyEmoji = BODIES[config.body] ?? '🍵';
@@ -157,7 +176,9 @@ export function MochiSpirit({ isWalking = false, isThinking = false }) {
   const breathingDuration = isThinking ? 0.25 : isWalking ? 0.4 : 0.2;
   const breathingY = isWalking || isThinking ? [0, -8, 0] : 0;
   const useFloat = !isWalking && !isThinking;
-  const isCustom = spiritConfig && spiritConfig.head && spiritConfig.body;
+  const isMochi = spiritConfig?.type === 'mochi';
+  const isOtherArchetype = spiritConfig?.type === 'cat' || spiritConfig?.type === 'ember' || spiritConfig?.type === 'nimbus';
+  const isCustom = spiritConfig?.type === 'custom' && spiritConfig?.head && spiritConfig?.body;
 
   return (
     <motion.div
@@ -192,7 +213,11 @@ export function MochiSpirit({ isWalking = false, isThinking = false }) {
               }
         }
       >
-        {isCustom ? (
+        {isMochi ? (
+          <DefaultSpiritSvg />
+        ) : isOtherArchetype ? (
+          <ArchetypeSpirit config={spiritConfig} />
+        ) : isCustom ? (
           <CustomSpirit config={spiritConfig} />
         ) : (
           <DefaultSpiritSvg />

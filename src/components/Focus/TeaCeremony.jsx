@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useGarden } from '../../context/GardenContext';
 
 // --- Japanese tea cup SVG ---
 function TeaCup() {
@@ -46,22 +47,113 @@ const RATING_OPTIONS = [
   { id: 'bloomed', label: 'Energized', emoji: '🌸', border: 'border-amber-200', hover: 'hover:bg-amber-50' },
 ];
 
+const EMBER_PARTICLE_COUNT = 8;
+
 export default function TeaCeremony({ task, completedTask, subtasks = [], onComplete }) {
   const resolvedTask = task ?? completedTask;
+  const { earnEmbers } = useGarden();
   const [rating, setRating] = useState(null);
   const [note, setNote] = useState('');
   const [subtaskId, setSubtaskId] = useState('');
+  const [phase, setPhase] = useState('reflection'); // 'reflection' | 'success'
+  const [embersEarned, setEmbersEarned] = useState(0);
+
+  const durationMinutes = resolvedTask?.timeSpentMinutes ?? 25;
 
   const handleFinish = () => {
+    const embers = Math.max(1, Math.floor(durationMinutes)); // 1 Ember per minute
+    earnEmbers(embers);
+    setEmbersEarned(embers);
+    setPhase('success');
+
     const log = {
       taskId: resolvedTask?.id ?? null,
       rating: rating ?? null,
       note: note.trim() || undefined,
       timestamp: new Date().toISOString(),
       subtaskId: subtaskId || undefined,
+      minutes: durationMinutes,
     };
-    onComplete?.(log);
+
+    // Close and notify parent after success animation
+    setTimeout(() => onComplete?.(log), 2800);
   };
+
+  // Success screen: "You gathered [X] Embers 🔥" + embers flying into counter
+  if (phase === 'success') {
+    return (
+      <motion.div
+        key="tea-success"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.3 }}
+        className="fixed inset-0 z-50 bg-stone-50 flex flex-col items-center justify-center px-4 py-8"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Session complete"
+      >
+        <p className="font-serif text-xl md:text-2xl text-stone-800 text-center mb-2">
+          You gathered <span className="font-semibold text-amber-700">{embersEarned}</span> Embers 🔥
+        </p>
+        <div className="relative flex items-center justify-center mt-4">
+          {/* Counter that receives the embers */}
+          <motion.div
+            className="flex items-center gap-1.5 rounded-full bg-amber-50 border-2 border-amber-200 px-6 py-3"
+            initial={{ scale: 0.8, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            transition={{ delay: 0.2, type: 'spring', stiffness: 200 }}
+          >
+            <motion.span
+              className="text-2xl"
+              key={embersEarned}
+              initial={{ scale: 1.5 }}
+              animate={{ scale: 1 }}
+              transition={{ duration: 0.3 }}
+            >
+              🔥
+            </motion.span>
+            <motion.span
+              className="font-sans text-xl font-semibold text-amber-800 tabular-nums"
+              key={embersEarned}
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.1 }}
+            >
+              +{embersEarned}
+            </motion.span>
+          </motion.div>
+          {/* Ember particles flying from center toward counter */}
+          <div className="absolute inset-0 pointer-events-none flex items-center justify-center" aria-hidden>
+            {Array.from({ length: EMBER_PARTICLE_COUNT }).map((_, i) => (
+              <motion.span
+                key={i}
+                className="absolute text-xl"
+                initial={{
+                  x: (i - EMBER_PARTICLE_COUNT / 2) * 24,
+                  y: 20 + (i % 3) * 16,
+                  opacity: 1,
+                  scale: 1,
+                }}
+                animate={{
+                  x: 0,
+                  y: 0,
+                  opacity: 0,
+                  scale: 0.4,
+                }}
+                transition={{
+                  duration: 1,
+                  delay: 0.3 + i * 0.06,
+                  ease: 'easeIn',
+                }}
+              >
+                🔥
+              </motion.span>
+            ))}
+          </div>
+        </div>
+      </motion.div>
+    );
+  }
 
   return (
     <AnimatePresence mode="wait">

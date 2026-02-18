@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useGarden } from '../../context/GardenContext';
 
-export default function SettingsView() {
+export default function SettingsView({ onReplayTour }) {
   const {
     userSettings = {},
     setUserSettings,
@@ -110,6 +110,20 @@ export default function SettingsView() {
     <div className="space-y-8">
       <h2 className="font-serif text-stone-900 text-xl">Settings</h2>
 
+      {typeof onReplayTour === 'function' && (
+        <div className="rounded-xl border border-stone-200 bg-white p-6">
+          <h3 className="font-sans text-sm font-medium text-stone-700 mb-2">Tour</h3>
+          <p className="font-sans text-sm text-stone-500 mb-3">See the Spirit guide tour again.</p>
+          <button
+            type="button"
+            onClick={onReplayTour}
+            className="px-4 py-2 rounded-lg font-sans text-sm font-medium border border-stone-200 text-stone-700 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
+          >
+            Replay Tour
+          </button>
+        </div>
+      )}
+
       <div className="rounded-xl border border-stone-200 bg-white p-6 space-y-6">
         <div>
           <label htmlFor="settings-username" className="block font-sans text-sm font-medium text-stone-600 mb-1">
@@ -213,6 +227,23 @@ export default function SettingsView() {
             Cancel
           </button>
         )}
+      </div>
+
+      <div className="rounded-xl border border-stone-200 bg-white p-6">
+        <h3 className="font-sans text-sm font-medium text-stone-700 mb-2">Account</h3>
+        <p className="font-sans text-sm text-stone-500 mb-3">Reset the onboarding tutorial so it shows again on next load.</p>
+        <button
+          type="button"
+          onClick={() => {
+            try {
+              localStorage.removeItem('hasSeenTour');
+            } catch (_) {}
+            window.location.reload();
+          }}
+          className="px-4 py-2 rounded-lg font-sans text-sm font-medium border border-stone-200 text-stone-700 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
+        >
+          Replay Tutorial
+        </button>
       </div>
     </div>
   );

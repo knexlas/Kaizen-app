@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useGarden } from '../../context/GardenContext';
 
 const DOMAINS = [
   { id: 'finance', label: 'Finance', emoji: '📈' },
@@ -15,9 +16,11 @@ const COLOR_PRESETS = [
 ];
 
 export default function GoalEditor({ open, goal, onClose, onSave, addSubtask, updateSubtask, deleteSubtask }) {
+  const { metrics = [], addMetric } = useGarden();
   const [title, setTitle] = useState('');
   const [domain, setDomain] = useState('');
   const [color, setColor] = useState('');
+  const [metricId, setMetricId] = useState('');
   const [vineTitle, setVineTitle] = useState('');
   const [vineHours, setVineHours] = useState('');
   const [vineDeadline, setVineDeadline] = useState('');
@@ -27,6 +30,7 @@ export default function GoalEditor({ open, goal, onClose, onSave, addSubtask, up
       setTitle(goal.title ?? '');
       setDomain(goal.domain ?? '');
       setColor(goal.color ?? '');
+      setMetricId(goal.metricId ?? '');
     }
   }, [goal]);
 
@@ -58,6 +62,7 @@ export default function GoalEditor({ open, goal, onClose, onSave, addSubtask, up
       title: trimmedTitle,
       domain: domain || undefined,
       color: color || undefined,
+      metricId: metricId || undefined,
     });
     onClose?.();
   };
@@ -117,6 +122,38 @@ export default function GoalEditor({ open, goal, onClose, onSave, addSubtask, up
                 ))}
               </div>
             </div>
+            <div>
+              <label className="block font-sans text-sm font-medium text-stone-600 mb-2">Tracking (Vitality)</label>
+              <div className="flex flex-wrap items-center gap-2">
+                <select
+                  value={metricId}
+                  onChange={(e) => setMetricId(e.target.value)}
+                  className="flex-1 min-w-0 py-2 px-3 rounded-lg border border-stone-200 bg-white text-stone-900 font-sans text-sm focus:outline-none focus:ring-2 focus:ring-moss-500/40 focus:border-moss-500"
+                  aria-label="Link to metric"
+                >
+                  <option value="">No Tracking</option>
+                  {metrics.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const name = window.prompt('New metric name (e.g. Steps, Sleep hours)');
+                    if (name && addMetric) {
+                      const id = addMetric(name);
+                      if (id) setMetricId(id);
+                    }
+                  }}
+                  className="shrink-0 py-2 px-3 rounded-lg font-sans text-sm border border-stone-200 text-stone-600 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
+                >
+                  New Metric
+                </button>
+              </div>
+            </div>
+
             <div>
               <label className="block font-sans text-sm font-medium text-stone-600 mb-2">Color</label>
               <div className="flex flex-wrap gap-2">

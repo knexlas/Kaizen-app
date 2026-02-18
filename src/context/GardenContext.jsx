@@ -22,13 +22,16 @@ const defaultData = {
   weeklyEvents: [],
   userSettings: {},
   dailyEnergyModifier: 0,
+  dailySpoonCount: null, // 1–12 from morning check-in; used as maxSlots for the day when set
   lastCheckInDate: null,
   lastSundayRitualDate: null,
   logs: [],
-  spiritConfig: null, // { head, body, color, name } from Spirit Builder
+  spiritConfig: null, // { name, type: 'mochi'|'ember'|'nimbus' } from Spirit Builder (or legacy { head, body, color, name })
   compost: [], // Inbox: { id, text, createdAt }
   spiritPoints: 0, // 1 per minute of focus
-  decorations: [], // { id, type: 'lantern'|'bench'|'pond'|'path', x, y }
+  embers: 100, // currency for decorations; new users start with 100 (enough for a bench)
+  decorations: [], // { id, type, x, y, variant? }
+  metrics: [], // { id, name } — available metrics for vitality tracking
 };
 
 const GardenContext = createContext(null);
@@ -38,6 +41,7 @@ export function GardenProvider({ children }) {
   const [weeklyEvents, setWeeklyEvents] = useState(defaultData.weeklyEvents);
   const [userSettings, setUserSettings] = useState(defaultData.userSettings);
   const [dailyEnergyModifier, setDailyEnergyModifier] = useState(defaultData.dailyEnergyModifier);
+  const [dailySpoonCount, setDailySpoonCount] = useState(defaultData.dailySpoonCount);
   const [lastCheckInDate, setLastCheckInDate] = useState(defaultData.lastCheckInDate);
   const [lastSundayRitualDate, setLastSundayRitualDate] = useState(defaultData.lastSundayRitualDate);
   const [logs, setLogs] = useState(defaultData.logs);
@@ -47,7 +51,9 @@ export function GardenProvider({ children }) {
   const [planDate, setPlanDate] = useState(() => todayString()); // current date for plan subscription (updates so we re-sub at midnight)
   const [eveningMode, setEveningMode] = useState('none'); // 'none' | 'sleep' | 'night-owl'
   const [spiritPoints, setSpiritPoints] = useState(defaultData.spiritPoints);
+  const [embers, setEmbers] = useState(defaultData.embers ?? 100);
   const [decorations, setDecorations] = useState(defaultData.decorations);
+  const [metrics, setMetrics] = useState(defaultData.metrics);
   const [hydrated, setHydrated] = useState(false);
   const [cloudSaveStatus, setCloudSaveStatus] = useState('idle'); // 'idle' | 'saving' | 'saved'
   const saveTimeoutRef = useRef(null);
@@ -84,19 +90,267 @@ export function GardenProvider({ children }) {
         if (Array.isArray(data.weeklyEvents)) setWeeklyEvents(data.weeklyEvents);
         if (data.userSettings && typeof data.userSettings === 'object') setUserSettings(data.userSettings);
         if (typeof data.dailyEnergyModifier === 'number') setDailyEnergyModifier(data.dailyEnergyModifier);
+        if (typeof data.dailySpoonCount === 'number' && data.dailySpoonCount >= 1 && data.dailySpoonCount <= 12) setDailySpoonCount(data.dailySpoonCount);
         if (data.lastCheckInDate != null) setLastCheckInDate(data.lastCheckInDate);
         if (data.lastSundayRitualDate != null) setLastSundayRitualDate(data.lastSundayRitualDate);
         if (Array.isArray(data.logs)) setLogs(data.logs);
         if (data.spiritConfig && typeof data.spiritConfig === 'object') setSpiritConfigState(data.spiritConfig);
         if (Array.isArray(data.compost)) setCompost(data.compost);
         if (typeof data.spiritPoints === 'number') setSpiritPoints(data.spiritPoints);
+        if (typeof data.embers === 'number') setEmbers(data.embers);
         if (Array.isArray(data.decorations)) setDecorations(data.decorations);
+        if (Array.isArray(data.metrics)) setMetrics(data.metrics);
       }
     } catch (e) {
       console.warn('GardenContext: failed to load gardenData', e);
     }
     setHydrated(true);
   }, []);
+
+  // Load from Firestore when googleUser (login) changes
+  useEffect(() => {
+    const uid = googleUser?.uid;
+    if (!uid) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const ref = doc(db, 'users', uid, 'garden', 'data');
+        const snap = await getDoc(ref);
+        if (cancelled) return;
+        if (snap.exists() && snap.data()) {
+          const data = snap.data();
+          if (Array.isArray(data.goals)) setGoals(data.goals);
+          if (Array.isArray(data.weeklyEvents)) setWeeklyEvents(data.weeklyEvents ?? []);
+          if (data.userSettings && typeof data.userSettings === 'object') setUserSettings(data.userSettings);
+          if (typeof data.dailyEnergyModifier === 'number') setDailyEnergyModifier(data.dailyEnergyModifier);
+          if (data.lastCheckInDate != null) setLastCheckInDate(data.lastCheckInDate);
+          if (data.lastSundayRitualDate != null) setLastSundayRitualDate(data.lastSundayRitualDate);
+          if (Array.isArray(data.logs)) setLogs(data.logs);
+          if (data.spiritConfig && typeof data.spiritConfig === 'object') setSpiritConfigState(data.spiritConfig);
+          // Compost is sourced from subscribeToCompost when uid exists; do not overwrite from garden/data
+          if (typeof data.spiritPoints === 'number') setSpiritPoints(data.spiritPoints);
+          if (typeof data.embers === 'number') setEmbers(data.embers);
+          if (Array.isArray(data.decorations)) setDecorations(data.decorations);
+          if (Array.isArray(data.metrics)) setMetrics(data.metrics);
+          skipCloudSaveUntilRef.current = Date.now() + 3000;
+        }
+      } catch (e) {
+        if (!cancelled) console.warn('GardenContext: failed to load from cloud', e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [googleUser?.uid]);
+
+  // Persist compost to Firebase: subscribe when logged in
+  useEffect(() => {
+    const uid = googleUser?.uid;
+    if (!uid) return;
+    const unsubscribe = subscribeToCompost(uid, setCompost);
+    return () => unsubscribe();
+  }, [googleUser?.uid]);
+
+  // Keep plan date in sync so we re-subscribe at midnight
+  useEffect(() => {
+    const interval = setInterval(() => setPlanDate(todayString()), 60 * 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Subscribe to today's daily plan when logged in
+  useEffect(() => {
+    const uid = googleUser?.uid;
+    if (!uid) return;
+    const unsubscribe = subscribeToDailyPlan(uid, planDate, ({ assignments: next }) => {
+      setAssignments(next && typeof next === 'object' ? next : {});
+    });
+    return () => unsubscribe();
+  }, [googleUser?.uid, planDate]);
+
+  // Debounced save of daily plan to Firebase when assignments change (logged in)
+  const dailyPlanSaveTimeoutRef = useRef(null);
+  useEffect(() => {
+    const uid = googleUser?.uid;
+    if (!uid || !hydrated) return;
+    if (dailyPlanSaveTimeoutRef.current) clearTimeout(dailyPlanSaveTimeoutRef.current);
+    dailyPlanSaveTimeoutRef.current = setTimeout(() => {
+      dailyPlanSaveTimeoutRef.current = null;
+      saveDailyPlan(uid, planDate, assignments).catch((e) => console.warn('saveDailyPlan failed', e));
+    }, CLOUD_DEBOUNCE_MS);
+    return () => {
+      if (dailyPlanSaveTimeoutRef.current) {
+        clearTimeout(dailyPlanSaveTimeoutRef.current);
+        dailyPlanSaveTimeoutRef.current = null;
+      }
+    };
+  }, [googleUser?.uid, hydrated, planDate, assignments]);
+
+  // Save to localStorage when state changes
+  useEffect(() => {
+    if (!hydrated) return;
+    try {
+      const data = { goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, logs, spiritConfig, compost, spiritPoints, embers, decorations, metrics };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    } catch (e) {
+      console.warn('GardenContext: failed to save gardenData', e);
+    }
+  }, [hydrated, goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, logs, spiritConfig, compost, spiritPoints, embers, decorations, metrics]);
+
+  // Debounced save to Firestore when goals, logs, weeklyEvents change (and user is logged in)
+  useEffect(() => {
+    const uid = googleUser?.uid;
+    if (!uid || !hydrated) return;
+    if (Date.now() < skipCloudSaveUntilRef.current) return;
+
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    setCloudSaveStatus('saving');
+
+    saveTimeoutRef.current = setTimeout(async () => {
+      saveTimeoutRef.current = null;
+      try {
+        const ref = doc(db, 'users', uid, 'garden', 'data');
+        await setDoc(ref, {
+          goals,
+          weeklyEvents,
+          userSettings,
+          dailyEnergyModifier,
+          dailySpoonCount: dailySpoonCount ?? null,
+          lastCheckInDate,
+          lastSundayRitualDate,
+          logs,
+          spiritConfig: spiritConfig ?? null,
+          compost: compost ?? [],
+          spiritPoints: spiritPoints ?? 0,
+          embers: embers ?? 100,
+          decorations: decorations ?? [],
+          metrics: metrics ?? [],
+          updatedAt: new Date().toISOString(),
+        }, { merge: true });
+        setCloudSaveStatus('saved');
+        if (savedIdleTimeoutRef.current) clearTimeout(savedIdleTimeoutRef.current);
+        savedIdleTimeoutRef.current = setTimeout(() => setCloudSaveStatus('idle'), 2500);
+      } catch (e) {
+        console.warn('GardenContext: failed to save to cloud', e);
+        setCloudSaveStatus('idle');
+      }
+    }, CLOUD_DEBOUNCE_MS);
+
+    return () => {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+        saveTimeoutRef.current = null;
+      }
+      if (savedIdleTimeoutRef.current) {
+        clearTimeout(savedIdleTimeoutRef.current);
+        savedIdleTimeoutRef.current = null;
+      }
+    };
+  }, [hydrated, googleUser?.uid, goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, logs, spiritConfig, compost, spiritPoints, embers, decorations, metrics]);
+
+  const addLog = useCallback((log) => {
+    const mins = Number(log?.minutes) || 0;
+    if (mins > 0) setSpiritPoints((p) => p + mins);
+    setLogs((prev) => [...prev, { ...log, date: log.date instanceof Date ? log.date.toISOString() : log.date }]);
+  }, []);
+
+  const DECORATION_COSTS = { lantern: 15, bench: 25, pond: 40, path: 10, bush: 20 };
+
+  /** Add a decoration without spending. Use with spendEmbers(cost) for purchasing. */
+  const placeDecoration = useCallback((type, x, y, variant) => {
+    const id = crypto.randomUUID?.() ?? `dec-${Date.now()}`;
+    setDecorations((prev) => [
+      ...prev,
+      { id, type, x: x ?? '50%', y: y ?? '50%', ...(variant != null ? { variant } : {}) },
+    ]);
+  }, []);
+
+  /** Deduct embers only if balance is sufficient. Returns true if deduction was made, false otherwise. */
+  const spendEmbers = useCallback((amount) => {
+    const n = Number(amount) || 0;
+    if (n <= 0) return true;
+    if (embers < n) return false;
+    setEmbers((p) => p - n);
+    return true;
+  }, [embers]);
+
+  /** Add embers (e.g. reward from Tea Ceremony session). */
+  const earnEmbers = useCallback((amount) => {
+    const n = Number(amount) || 0;
+    if (n > 0) setEmbers((p) => p + n);
+  }, []);
+
+  const buyDecoration = useCallback((type) => {
+    const cost = DECORATION_COSTS[type] ?? 0;
+    if (embers < cost) return;
+    setEmbers((p) => p - cost);
+    placeDecoration(type, '50%', '50%');
+  }, [embers, placeDecoration]);
+
+  const addDecoration = useCallback((type, x, y) => {
+    const cost = DECORATION_COSTS[type] ?? 0;
+    if (embers < cost) return;
+    setEmbers((p) => p - cost);
+    placeDecoration(type, x, y);
+  }, [embers, placeDecoration]);
+
+  const updateDecoration = useCallback((id, updates) => {
+    setDecorations((prev) => prev.map((d) => (d.id === id ? { ...d, ...updates } : d)));
+  }, []);
+
+  const updateDecorationPosition = useCallback((id, x, y) => {
+    setDecorations((prev) => prev.map((d) => (d.id === id ? { ...d, x, y } : d)));
+  }, []);
+
+  const removeDecoration = useCallback((id) => {
+    setDecorations((prev) => prev.filter((d) => d.id !== id));
+  }, []);
+
+  const spendSpiritPoints = useCallback((amount) => {
+    const n = Number(amount) || 0;
+    setSpiritPoints((p) => (p >= n ? p - n : p));
+  }, []);
+
+  const addToCompost = useCallback(
+    async (text) => {
+      const trimmed = (text || '').trim();
+      if (!trimmed) return;
+      const uid = googleUser?.uid;
+      if (uid) {
+        try {
+          await addCompostItem(uid, trimmed);
+        } catch (e) {
+          console.warn('addCompostItem failed, using local state', e);
+          const item = {
+            id: crypto.randomUUID?.() ?? `compost-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+            text: trimmed,
+            createdAt: new Date().toISOString(),
+          };
+          setCompost((prev) => [item, ...prev]);
+        }
+      } else {
+        const item = {
+          id: crypto.randomUUID?.() ?? `compost-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+          text: trimmed,
+          createdAt: new Date().toISOString(),
+        };
+        setCompost((prev) => [item, ...prev]);
+      }
+    },
+    [googleUser?.uid]
+  );
+
+  const removeFromCompost = useCallback(
+    (id) => {
+      const uid = googleUser?.uid;
+      if (uid) {
+        deleteCompostItem(uid, id).catch((e) => {
+          console.warn('deleteCompostItem failed', e);
+          setCompost((prev) => prev.filter((item) => item.id !== id));
+        });
+      } else {
+        setCompost((prev) => prev.filter((item) => item.id !== id));
+      }
+    },
+    [googleUser?.uid]
+  );
 
   // Gardener: on app open, if it's a new day → archive yesterday's tasks to Goal Bank (compost), clear today's assignments, reset evening mode. Morning check-in shows automatically (lastCheckInDate !== today).
   const gardenerHasRunRef = useRef(false);
@@ -159,232 +413,6 @@ export function GardenProvider({ children }) {
 
     archiveYesterday();
   }, [hydrated, googleUser?.uid, goals, addToCompost]);
-
-  // Load from Firestore when googleUser (login) changes
-  useEffect(() => {
-    const uid = googleUser?.uid;
-    if (!uid) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const ref = doc(db, 'users', uid, 'garden', 'data');
-        const snap = await getDoc(ref);
-        if (cancelled) return;
-        if (snap.exists() && snap.data()) {
-          const data = snap.data();
-          if (Array.isArray(data.goals)) setGoals(data.goals);
-          if (Array.isArray(data.weeklyEvents)) setWeeklyEvents(data.weeklyEvents ?? []);
-          if (data.userSettings && typeof data.userSettings === 'object') setUserSettings(data.userSettings);
-          if (typeof data.dailyEnergyModifier === 'number') setDailyEnergyModifier(data.dailyEnergyModifier);
-          if (data.lastCheckInDate != null) setLastCheckInDate(data.lastCheckInDate);
-          if (data.lastSundayRitualDate != null) setLastSundayRitualDate(data.lastSundayRitualDate);
-          if (Array.isArray(data.logs)) setLogs(data.logs);
-          if (data.spiritConfig && typeof data.spiritConfig === 'object') setSpiritConfigState(data.spiritConfig);
-          // Compost is sourced from subscribeToCompost when uid exists; do not overwrite from garden/data
-          if (typeof data.spiritPoints === 'number') setSpiritPoints(data.spiritPoints);
-          if (Array.isArray(data.decorations)) setDecorations(data.decorations);
-          skipCloudSaveUntilRef.current = Date.now() + 3000;
-        }
-      } catch (e) {
-        if (!cancelled) console.warn('GardenContext: failed to load from cloud', e);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [googleUser?.uid]);
-
-  // Persist compost to Firebase: subscribe when logged in
-  useEffect(() => {
-    const uid = googleUser?.uid;
-    if (!uid) return;
-    const unsubscribe = subscribeToCompost(uid, setCompost);
-    return () => unsubscribe();
-  }, [googleUser?.uid]);
-
-  // Keep plan date in sync so we re-subscribe at midnight
-  useEffect(() => {
-    const interval = setInterval(() => setPlanDate(todayString()), 60 * 1000);
-    return () => clearInterval(interval);
-  }, []);
-
-  // Subscribe to today's daily plan when logged in
-  useEffect(() => {
-    const uid = googleUser?.uid;
-    if (!uid) return;
-    const unsubscribe = subscribeToDailyPlan(uid, planDate, ({ assignments: next }) => {
-      setAssignments(next && typeof next === 'object' ? next : {});
-    });
-    return () => unsubscribe();
-  }, [googleUser?.uid, planDate]);
-
-  // Debounced save of daily plan to Firebase when assignments change (logged in)
-  const dailyPlanSaveTimeoutRef = useRef(null);
-  useEffect(() => {
-    const uid = googleUser?.uid;
-    if (!uid || !hydrated) return;
-    if (dailyPlanSaveTimeoutRef.current) clearTimeout(dailyPlanSaveTimeoutRef.current);
-    dailyPlanSaveTimeoutRef.current = setTimeout(() => {
-      dailyPlanSaveTimeoutRef.current = null;
-      saveDailyPlan(uid, planDate, assignments).catch((e) => console.warn('saveDailyPlan failed', e));
-    }, CLOUD_DEBOUNCE_MS);
-    return () => {
-      if (dailyPlanSaveTimeoutRef.current) {
-        clearTimeout(dailyPlanSaveTimeoutRef.current);
-        dailyPlanSaveTimeoutRef.current = null;
-      }
-    };
-  }, [googleUser?.uid, hydrated, planDate, assignments]);
-
-  // Save to localStorage when state changes
-  useEffect(() => {
-    if (!hydrated) return;
-    try {
-      const data = { goals, weeklyEvents, userSettings, dailyEnergyModifier, lastCheckInDate, lastSundayRitualDate, logs, spiritConfig, compost, spiritPoints, decorations };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-    } catch (e) {
-      console.warn('GardenContext: failed to save gardenData', e);
-    }
-  }, [hydrated, goals, weeklyEvents, userSettings, dailyEnergyModifier, lastCheckInDate, lastSundayRitualDate, logs, spiritConfig, compost, spiritPoints, decorations]);
-
-  // Debounced save to Firestore when goals, logs, weeklyEvents change (and user is logged in)
-  useEffect(() => {
-    const uid = googleUser?.uid;
-    if (!uid || !hydrated) return;
-    if (Date.now() < skipCloudSaveUntilRef.current) return;
-
-    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-    setCloudSaveStatus('saving');
-
-    saveTimeoutRef.current = setTimeout(async () => {
-      saveTimeoutRef.current = null;
-      try {
-        const ref = doc(db, 'users', uid, 'garden', 'data');
-        await setDoc(ref, {
-          goals,
-          weeklyEvents,
-          userSettings,
-          dailyEnergyModifier,
-          lastCheckInDate,
-          lastSundayRitualDate,
-          logs,
-          spiritConfig: spiritConfig ?? null,
-          compost: compost ?? [],
-          spiritPoints: spiritPoints ?? 0,
-          decorations: decorations ?? [],
-          updatedAt: new Date().toISOString(),
-        }, { merge: true });
-        setCloudSaveStatus('saved');
-        if (savedIdleTimeoutRef.current) clearTimeout(savedIdleTimeoutRef.current);
-        savedIdleTimeoutRef.current = setTimeout(() => setCloudSaveStatus('idle'), 2500);
-      } catch (e) {
-        console.warn('GardenContext: failed to save to cloud', e);
-        setCloudSaveStatus('idle');
-      }
-    }, CLOUD_DEBOUNCE_MS);
-
-    return () => {
-      if (saveTimeoutRef.current) {
-        clearTimeout(saveTimeoutRef.current);
-        saveTimeoutRef.current = null;
-      }
-      if (savedIdleTimeoutRef.current) {
-        clearTimeout(savedIdleTimeoutRef.current);
-        savedIdleTimeoutRef.current = null;
-      }
-    };
-  }, [hydrated, googleUser?.uid, goals, weeklyEvents, userSettings, dailyEnergyModifier, lastCheckInDate, lastSundayRitualDate, logs, spiritConfig, compost, spiritPoints, decorations]);
-
-  const addLog = useCallback((log) => {
-    const mins = Number(log?.minutes) || 0;
-    if (mins > 0) setSpiritPoints((p) => p + mins);
-    setLogs((prev) => [...prev, { ...log, date: log.date instanceof Date ? log.date.toISOString() : log.date }]);
-  }, []);
-
-  const DECORATION_COSTS = { lantern: 15, bench: 25, pond: 40, path: 10, bush: 20 };
-
-  const buyDecoration = useCallback((type) => {
-    const cost = DECORATION_COSTS[type] ?? 0;
-    setSpiritPoints((p) => {
-      if (p < cost) return p;
-      setDecorations((prev) => [
-        ...prev,
-        { id: crypto.randomUUID?.() ?? `dec-${Date.now()}`, type, x: '50%', y: '50%' },
-      ]);
-      return p - cost;
-    });
-  }, []);
-
-  const addDecoration = useCallback((type, x, y) => {
-    const cost = DECORATION_COSTS[type] ?? 0;
-    setSpiritPoints((p) => {
-      if (p < cost) return p;
-      setDecorations((prev) => [
-        ...prev,
-        { id: crypto.randomUUID?.() ?? `dec-${Date.now()}`, type, x: x ?? '50%', y: y ?? '50%' },
-      ]);
-      return p - cost;
-    });
-  }, []);
-
-  const updateDecoration = useCallback((id, updates) => {
-    setDecorations((prev) => prev.map((d) => (d.id === id ? { ...d, ...updates } : d)));
-  }, []);
-
-  const updateDecorationPosition = useCallback((id, x, y) => {
-    setDecorations((prev) => prev.map((d) => (d.id === id ? { ...d, x, y } : d)));
-  }, []);
-
-  const removeDecoration = useCallback((id) => {
-    setDecorations((prev) => prev.filter((d) => d.id !== id));
-  }, []);
-
-  const spendSpiritPoints = useCallback((amount) => {
-    const n = Number(amount) || 0;
-    setSpiritPoints((p) => (p >= n ? p - n : p));
-  }, []);
-
-  const addToCompost = useCallback(
-    async (text) => {
-      const trimmed = (text || '').trim();
-      if (!trimmed) return;
-      const uid = googleUser?.uid;
-      if (uid) {
-        try {
-          await addCompostItem(uid, trimmed);
-        } catch (e) {
-          console.warn('addCompostItem failed, using local state', e);
-          const item = {
-            id: crypto.randomUUID?.() ?? `compost-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-            text: trimmed,
-            createdAt: new Date().toISOString(),
-          };
-          setCompost((prev) => [item, ...prev]);
-        }
-      } else {
-        const item = {
-          id: crypto.randomUUID?.() ?? `compost-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-          text: trimmed,
-          createdAt: new Date().toISOString(),
-        };
-        setCompost((prev) => [item, ...prev]);
-      }
-    },
-    [googleUser?.uid]
-  );
-
-  const removeFromCompost = useCallback(
-    (id) => {
-      const uid = googleUser?.uid;
-      if (uid) {
-        deleteCompostItem(uid, id).catch((e) => {
-          console.warn('deleteCompostItem failed', e);
-          setCompost((prev) => prev.filter((item) => item.id !== id));
-        });
-      } else {
-        setCompost((prev) => prev.filter((item) => item.id !== id));
-      }
-    },
-    [googleUser?.uid]
-  );
 
   const FERTILIZER_BONUS_MINUTES = 15;
 
@@ -549,8 +577,14 @@ export function GardenProvider({ children }) {
     );
   }, []);
 
-  const completeMorningCheckIn = useCallback((modifier) => {
-    setDailyEnergyModifier(modifier);
+  const completeMorningCheckIn = useCallback((spoonCountOrModifier) => {
+    const n = Number(spoonCountOrModifier);
+    if (n >= 1 && n <= 12) {
+      setDailySpoonCount(n);
+      setDailyEnergyModifier(0);
+    } else {
+      setDailyEnergyModifier(n);
+    }
     setLastCheckInDate(todayString());
   }, []);
 
@@ -562,6 +596,26 @@ export function GardenProvider({ children }) {
     setSpiritConfigState(config && typeof config === 'object' ? config : null);
   }, []);
 
+  /** Add a metric (e.g. "Steps", "Sleep hours") for vitality tracking. */
+  const addMetric = useCallback((name) => {
+    const trimmed = typeof name === 'string' ? name.trim() : '';
+    if (!trimmed) return null;
+    const id = crypto.randomUUID?.() ?? `m-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    setMetrics((prev) => [...prev, { id, name: trimmed }]);
+    return id;
+  }, []);
+
+  /** Add a ritual category name (e.g. "Sunday Reset") so it appears in the Ritual dropdown for future goals. */
+  const addRitualCategory = useCallback((name) => {
+    const trimmed = typeof name === 'string' ? name.trim() : '';
+    if (!trimmed) return;
+    setUserSettings((prev) => {
+      const list = Array.isArray(prev.ritualCategories) ? prev.ritualCategories : [];
+      if (list.some((n) => String(n).trim().toLowerCase() === trimmed.toLowerCase())) return prev;
+      return { ...prev, ritualCategories: [...list, trimmed] };
+    });
+  }, []);
+
   /** Import garden data from JSON (e.g. backup). Merges into state; persist effects will save to localStorage/Firestore. */
   const importGardenData = useCallback((data) => {
     if (!data || typeof data !== 'object') return;
@@ -569,13 +623,16 @@ export function GardenProvider({ children }) {
     if (Array.isArray(data.weeklyEvents)) setWeeklyEvents(data.weeklyEvents);
     if (data.userSettings && typeof data.userSettings === 'object') setUserSettings(data.userSettings);
     if (typeof data.dailyEnergyModifier === 'number') setDailyEnergyModifier(data.dailyEnergyModifier);
+    if (typeof data.dailySpoonCount === 'number' && data.dailySpoonCount >= 1 && data.dailySpoonCount <= 12) setDailySpoonCount(data.dailySpoonCount);
     if (data.lastCheckInDate != null) setLastCheckInDate(data.lastCheckInDate);
     if (data.lastSundayRitualDate != null) setLastSundayRitualDate(data.lastSundayRitualDate);
     if (Array.isArray(data.logs)) setLogs(data.logs);
     if (data.spiritConfig !== undefined) setSpiritConfigState(data.spiritConfig && typeof data.spiritConfig === 'object' ? data.spiritConfig : null);
     if (Array.isArray(data.compost)) setCompost(data.compost);
     if (typeof data.spiritPoints === 'number') setSpiritPoints(data.spiritPoints);
+    if (typeof data.embers === 'number') setEmbers(data.embers);
     if (Array.isArray(data.decorations)) setDecorations(data.decorations);
+    if (Array.isArray(data.metrics)) setMetrics(data.metrics);
   }, []);
 
   /** Clear all garden data (localStorage + in-memory; if logged in, overwrite Firestore with default). */
@@ -584,6 +641,7 @@ export function GardenProvider({ children }) {
     setWeeklyEvents(defaultData.weeklyEvents);
     setUserSettings(defaultData.userSettings);
     setDailyEnergyModifier(defaultData.dailyEnergyModifier);
+    setDailySpoonCount(defaultData.dailySpoonCount);
     setLastCheckInDate(defaultData.lastCheckInDate);
     setLastSundayRitualDate(defaultData.lastSundayRitualDate);
     setLogs(defaultData.logs);
@@ -591,7 +649,9 @@ export function GardenProvider({ children }) {
     setCompost(defaultData.compost);
     setAssignments({});
     setSpiritPoints(defaultData.spiritPoints);
+    setEmbers(defaultData.embers ?? 100);
     setDecorations(defaultData.decorations);
+    setMetrics(defaultData.metrics);
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(defaultData));
     } catch (e) {
@@ -615,6 +675,7 @@ export function GardenProvider({ children }) {
     userSettings,
     setUserSettings,
     dailyEnergyModifier,
+    dailySpoonCount,
     lastCheckInDate,
     completeMorningCheckIn,
     hydrated,
@@ -649,15 +710,22 @@ export function GardenProvider({ children }) {
     eveningMode,
     setEveningMode,
     spiritPoints,
+    embers,
     decorations,
+    placeDecoration,
     buyDecoration,
     addDecoration,
     updateDecoration,
     updateDecorationPosition,
     removeDecoration,
+    spendEmbers,
+    earnEmbers,
     decorationCosts: { lantern: 15, bench: 25, pond: 40, path: 10, bush: 20 },
+    metrics,
+    addMetric,
     importGardenData,
     deleteAllData,
+    addRitualCategory,
   };
 
   return (

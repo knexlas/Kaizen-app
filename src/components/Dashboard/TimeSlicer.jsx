@@ -5,6 +5,7 @@ import confetti from 'canvas-confetti';
 import { createGoogleEvent } from '../../services/googleCalendarService';
 import { suggestLoadLightening, generateDailyPlan } from '../../services/schedulerService';
 import { useGarden } from '../../context/GardenContext';
+import WoodenSpoon from '../WoodenSpoon';
 
 const HOUR_START = 6;
 const HOUR_END = 23;
@@ -44,34 +45,76 @@ function LowBatteryIcon() {
   );
 }
 
-function CapacityBar({ filledCount, maxSlots, onLightenLoad }) {
-  const isOverCapacity = filledCount > maxSlots;
-  const fillPercent = maxSlots ? Math.min((filledCount / maxSlots) * 100, 100) : 0;
+/** Spoon Battery: row of spoons at top; loud and clear. Low energy = fewer spoons, cracked/dim. */
+function SpoonBattery({ used, total, isLowEnergy, onLightenLoad }) {
+  const safeTotal = Math.max(1, total);
+  const displayUsed = Math.min(used, safeTotal);
+  const hoursRemaining = Math.max(0, safeTotal - displayUsed);
+  const isOverCapacity = used > total;
 
   return (
-    <div className="mb-4">
-      <div className="h-2 w-full rounded-full bg-stone-200 overflow-hidden">
-        <div
-          className={`h-full rounded-full transition-all duration-300 ${
-            isOverCapacity ? 'bg-orange-400' : 'bg-moss-500'
-          }`}
-          style={{ width: `${fillPercent}%` }}
-        />
-      </div>
-      {isOverCapacity && (
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <p className="font-sans text-sm text-orange-700">
-            Stretching your energy limits. Proceed with care.
+    <div className="mb-5">
+      <div
+        id="tour-battery"
+        className={`relative flex flex-wrap items-center gap-3 p-4 rounded-xl border-2 transition-colors duration-300 ${
+          isLowEnergy
+            ? 'bg-stone-200/90 border-stone-400 text-stone-600'
+            : isOverCapacity
+              ? 'bg-amber-50/95 border-amber-300 text-amber-900'
+              : 'bg-[#FDFCF5] border-[#4A5D23]/30 text-stone-800'
+        }`}
+        aria-label={`Energy budget: ${hoursRemaining} hours remaining of ${safeTotal}`}
+      >
+        {/* Row of spoon icons / battery segments */}
+        <div className="flex items-center gap-1 shrink-0">
+          {Array.from({ length: safeTotal }).map((_, i) => {
+            const isUsed = i < displayUsed;
+            const cracked = isLowEnergy;
+            return (
+              <span
+                key={i}
+                className={`inline-flex items-center justify-center transition-all duration-300 ${
+                  isUsed
+                    ? isOverCapacity
+                      ? 'opacity-90'
+                      : isLowEnergy
+                        ? 'opacity-50 grayscale'
+                        : 'opacity-100'
+                    : isLowEnergy
+                      ? 'opacity-40 grayscale'
+                      : 'opacity-70'
+                } ${cracked ? 'contrast-75' : ''}`}
+                aria-hidden
+                title={isUsed ? 'Used' : 'Available'}
+              >
+                <WoodenSpoon size={22} />
+              </span>
+            );
+          })}
+        </div>
+        {isLowEnergy && (
+          <span className="shrink-0 text-stone-500/80 text-sm font-medium" aria-hidden>
+            (low energy)
+          </span>
+        )}
+        <div className="min-w-0 flex-1">
+          <p className="font-sans text-stone-900 font-semibold">
+            Energy Budget: <span className="tabular-nums text-[#4A5D23]">{hoursRemaining}</span> hour{hoursRemaining !== 1 ? 's' : ''} remaining.
           </p>
-          {onLightenLoad && (
-            <button
-              type="button"
-              onClick={onLightenLoad}
-              className="shrink-0 px-3 py-1.5 rounded-lg font-sans text-sm font-medium bg-amber-100 text-amber-800 hover:bg-amber-200 focus:outline-none focus:ring-2 focus:ring-amber-500/40"
-            >
-              📉 Lighten My Load
-            </button>
+          {isLowEnergy && (
+            <p className="font-sans text-xs text-stone-500 mt-0.5">Fewer slots today — rest when you need to.</p>
           )}
+        </div>
+      </div>
+      {isOverCapacity && onLightenLoad && (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={onLightenLoad}
+            className="shrink-0 px-3 py-1.5 rounded-lg font-sans text-sm font-medium bg-amber-100 text-amber-800 hover:bg-amber-200 focus:outline-none focus:ring-2 focus:ring-amber-500/40"
+          >
+            📉 Lighten My Load
+          </button>
         </div>
       )}
     </div>
@@ -123,6 +166,7 @@ function TimeSlot({
   const goal = goalId ? goals?.find((g) => g.id === goalId) : null;
   const isEmpty = !goal && !routineSession;
   const thisSlotOverLimit = goal && filledCount > maxSlots && filledOrderIndex >= maxSlots;
+  const isSlotBlocked = isEmpty && filledCount >= maxSlots;
   const firstUncompleted = goal?.milestones?.find((m) => !m.completed);
   const milestoneTitle = firstUncompleted?.title ?? firstUncompleted?.text;
 
@@ -131,13 +175,15 @@ function TimeSlot({
   const currentMinutePercent = isCurrentHour ? (now.getMinutes() / 60) * 100 : 0;
   const timeLabel = isCurrentHour ? `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}` : '';
 
-  const slotBg = isEmpty
-    ? 'bg-stone-100 border-2 border-dashed border-stone-300'
-    : routineSession
-      ? 'bg-slate-200 border border-slate-300 text-stone-800'
-      : thisSlotOverLimit
-        ? 'bg-orange-200 border border-orange-300 text-orange-900'
-        : 'bg-moss-200 border border-moss-500/50 text-stone-800';
+  const slotBg = isSlotBlocked
+    ? 'bg-stone-200 border-2 border-dashed border-stone-400'
+    : isEmpty
+      ? 'bg-stone-100 border-2 border-dashed border-stone-300'
+      : routineSession
+        ? 'bg-slate-200 border border-slate-300 text-stone-800'
+        : thisSlotOverLimit
+          ? 'bg-orange-200 border border-orange-300 text-orange-900'
+          : 'bg-moss-200 border border-moss-500/50 text-stone-800';
 
   const estimatedMins = goal?.estimatedMinutes ?? 0;
   const totalMins = goal?.totalMinutes ?? 0;
@@ -194,9 +240,20 @@ function TimeSlot({
         onClick={isMobile && isEmpty && onEmptySlotClick ? () => onEmptySlotClick(hour) : undefined}
         onKeyDown={isMobile && isEmpty && onEmptySlotClick ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onEmptySlotClick(hour); } } : undefined}
         className={`flex-1 min-h-[52px] rounded-lg flex flex-col justify-center px-3 py-2 transition-colors relative overflow-hidden ${slotBg} ${
-          isOver && isEmpty ? 'ring-2 ring-moss-500/50 ring-offset-1' : ''
-        } ${isFullyHarvested && !routineSession ? 'border-moss-600/60' : ''} ${isMobile && isEmpty && onEmptySlotClick ? 'cursor-pointer hover:bg-stone-200/80 active:bg-stone-300/80' : ''}`}
+          isOver && isEmpty && !isSlotBlocked ? 'ring-2 ring-moss-500/50 ring-offset-1' : ''
+        } ${isFullyHarvested && !routineSession ? 'border-moss-600/60' : ''} ${isMobile && isEmpty && onEmptySlotClick && !isSlotBlocked ? 'cursor-pointer hover:bg-stone-200/80 active:bg-stone-300/80' : ''} ${isSlotBlocked ? 'cursor-not-allowed' : ''}`}
       >
+        {/* Blocked overlay: striped + stone texture when over capacity or empty at capacity */}
+        {(isSlotBlocked || thisSlotOverLimit) && (
+          <div
+            className="absolute inset-0 rounded-lg pointer-events-none overflow-hidden"
+            style={{
+              backgroundColor: 'rgba(120, 113, 108, 0.75)',
+              backgroundImage: 'repeating-linear-gradient(-45deg, transparent, transparent 6px, rgba(87, 83, 78, 0.4) 6px, rgba(87, 83, 78, 0.4) 12px)',
+            }}
+            aria-hidden
+          />
+        )}
         {routineSession ? (
           <>
             <div className="flex items-center justify-between gap-2">
@@ -305,7 +362,9 @@ function TimeSlot({
             )}
           </>
         ) : (
-          <span className="font-sans text-sm text-stone-400">{isMobile && onEmptySlotClick ? 'Tap to plant a seed' : 'Plant Seed'}</span>
+          <span className={`font-sans text-sm relative z-10 ${isSlotBlocked ? 'text-stone-500' : 'text-stone-400'}`}>
+            {isSlotBlocked ? 'No spoons left' : isMobile && onEmptySlotClick ? 'Tap to plant a seed' : 'Plant Seed'}
+          </span>
         )}
       </div>
     </div>
@@ -735,6 +794,7 @@ function TimeSlicer({
   todayRitualItems = [],
   goalBank = [],
   dailyEnergyModifier = 0,
+  dailySpoonCount = null,
   assignments: controlledAssignments,
   onAssignmentsChange,
   onStartFocus,
@@ -758,6 +818,7 @@ function TimeSlicer({
   const [recentlyExportedSlot, setRecentlyExportedSlot] = useState(null);
   const [pendingRoutineDrop, setPendingRoutineDrop] = useState(null); // { time, goal, value }
   const [seedPickerTargetHour, setSeedPickerTargetHour] = useState(null);
+  const [spoonsToast, setSpoonsToast] = useState(false);
   const [now, setNow] = useState(() => new Date());
   const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < MOBILE_BREAKPOINT);
   const isControlled = onAssignmentsChange != null;
@@ -788,9 +849,19 @@ function TimeSlicer({
     return () => clearTimeout(t);
   }, [recentlyExportedSlot]);
 
+  useEffect(() => {
+    if (!spoonsToast) return;
+    const t = setTimeout(() => setSpoonsToast(false), 4000);
+    return () => clearTimeout(t);
+  }, [spoonsToast]);
+
   const baseCapacity = MAX_SLOTS_BY_WEATHER[weather] ?? 6;
-  const maxSlots = Math.max(1, baseCapacity + dailyEnergyModifier);
-  const isLowEnergy = dailyEnergyModifier === -2;
+  const maxSlots =
+    typeof dailySpoonCount === 'number' && dailySpoonCount >= 1 && dailySpoonCount <= 12
+      ? dailySpoonCount
+      : Math.max(1, baseCapacity + dailyEnergyModifier);
+  const isLowEnergy =
+    (typeof dailySpoonCount === 'number' && dailySpoonCount <= 4) || dailyEnergyModifier === -2;
   const filledTimes = HOURS.filter((h) => {
     const gid = getGoalIdFromAssignment(assignments[h]);
     return gid && goals.some((g) => g.id === gid);
@@ -799,7 +870,11 @@ function TimeSlicer({
   const isOverCapacity = filledCount > maxSlots;
 
   const handleLightenLoad = () => {
-    const result = suggestLoadLightening(assignments, goals, maxSlots, dailyEnergyModifier);
+    const energyModifier =
+      typeof dailySpoonCount === 'number' && dailySpoonCount <= 12
+        ? (dailySpoonCount <= 4 ? -2 : dailySpoonCount >= 9 ? 1 : 0)
+        : dailyEnergyModifier;
+    const result = suggestLoadLightening(assignments, goals, maxSlots, energyModifier);
     if (result != null) {
       if (isControlled) onAssignmentsChange(result.assignments);
       else setInternalAssignments(result.assignments);
@@ -829,6 +904,11 @@ function TimeSlicer({
     if (!over || !active) return;
     const time = String(over.id);
     if (!HOURS.includes(time)) return;
+    const targetWasEmpty = !assignments[time];
+    if (targetWasEmpty && filledCount >= maxSlots) {
+      setSpoonsToast(true);
+      return;
+    }
     const data = active.data?.current;
     const ritualTitle = data?.ritualTitle;
     const goalId = data?.goal?.id ?? active.id;
@@ -888,6 +968,12 @@ function TimeSlicer({
   /** Assign a goal/ritual to the given hour (used by Seed Picker modal on mobile). */
   const handleSelectSeedForSlot = (time, goal, ritualTitle = null) => {
     if (!time || !HOURS.includes(time) || !goal?.id) return;
+    const slotWasEmpty = !assignments[time];
+    if (slotWasEmpty && filledCount >= maxSlots) {
+      setSpoonsToast(true);
+      setSeedPickerTargetHour(null);
+      return;
+    }
     let value;
     if (goal.type === 'routine') {
       value = {
@@ -935,9 +1021,10 @@ function TimeSlicer({
         )}
       </div>
       {!hideCapacityOnMobile && (
-        <CapacityBar
-          filledCount={filledCount}
-          maxSlots={maxSlots}
+        <SpoonBattery
+          used={filledCount}
+          total={maxSlots}
+          isLowEnergy={isLowEnergy}
           onLightenLoad={isOverCapacity ? handleLightenLoad : undefined}
         />
       )}
@@ -963,7 +1050,7 @@ function TimeSlicer({
                     cloudSaved={recentlyExportedSlot === hour}
                     now={now}
                     isMobile={isMobile}
-                    onEmptySlotClick={isMobile ? (h) => setSeedPickerTargetHour(h) : undefined}
+                    onEmptySlotClick={isMobile ? (h) => { if (filledCount >= maxSlots) { setSpoonsToast(true); return; } setSeedPickerTargetHour(h); } : undefined}
                   />
                 ))}
               </div>
@@ -1030,6 +1117,22 @@ function TimeSlicer({
           </div>
         </div>
       </DndContext>
+
+      {/* Spoons exceeded toast */}
+      <AnimatePresence>
+        {spoonsToast && (
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 4 }}
+            transition={{ duration: 0.25 }}
+            className="fixed bottom-6 left-4 right-4 z-50 mx-auto max-w-sm rounded-xl border border-amber-200 bg-amber-50/95 px-4 py-3 shadow-lg font-sans text-sm text-amber-900"
+            role="alert"
+          >
+            <p className="font-medium">You are out of spoons. Rest, or borrow from tomorrow?</p>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Seed Picker Modal (mobile): choose a seed for the tapped empty slot */}
       <AnimatePresence>

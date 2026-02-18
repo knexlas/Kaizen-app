@@ -50,6 +50,15 @@
 .animate-fog-drift { animation: fog-drift 8s ease-in-out infinite; }
 .animate-firefly-up { animation: firefly-float-up 6s ease-out infinite; }
 
+/* Garden: gentle plant sway */
+@keyframes plant-sway {
+  0%, 100% { transform: rotate(-2deg); }
+  50% { transform: rotate(2deg); }
+}
+.animate-plant-sway {
+  animation: plant-sway 4s ease-in-out infinite;
+}
+
 /* Add a global reset for that "Paper" feel */
 body {
   background-color: #FDFCF5; /* cream-50 */

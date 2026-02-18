@@ -4,10 +4,13 @@ import { addEnergyRecord as saveEnergyRecord } from '../firebase/services';
 const EnergyContext = createContext(null);
 
 const DEFAULT_DAILY = 5;
+/** Spoons (1–12) set at morning check-in; used as max slots for the day. */
+const DEFAULT_SPOON_COUNT = 6;
 
 export function EnergyProvider({ children }) {
   const [dailyEnergy] = useState(DEFAULT_DAILY);
   const [currentEnergy, setCurrentEnergy] = useState(DEFAULT_DAILY);
+  const [dailySpoonCount, setDailySpoonCount] = useState(DEFAULT_SPOON_COUNT);
 
   const recordEnergy = useCallback(async (stones, valence, journal) => {
     const record = { stones, valence, journal };
@@ -22,6 +25,8 @@ export function EnergyProvider({ children }) {
     dailyEnergy,
     currentEnergy,
     setCurrentEnergy,
+    dailySpoonCount,
+    setDailySpoonCount,
     recordEnergy,
     restMode: currentEnergy < 1,
   };

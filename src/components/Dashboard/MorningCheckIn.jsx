@@ -1,11 +1,41 @@
 import { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useEnergy } from '../../context/EnergyContext';
 
-const OPTIONS = [
-  { modifier: -2, emoji: '🔋', label: 'Low', sublabel: 'Operating on reserves.', description: 'Bad Sleep', className: 'border-red-200 hover:bg-red-50' },
-  { modifier: 0, emoji: '🔋', label: 'Normal', sublabel: 'Ready for the day.', description: 'Standard Capacity', className: 'border-moss-200 hover:bg-moss-50' },
-  { modifier: 1, emoji: '🔋', label: 'High', sublabel: 'Full power.', description: 'Well Rested', className: 'border-amber-200 hover:bg-amber-50' },
-];
+const SPOON_COUNT = 12;
+
+/** Wooden spoon SVG – cozy, wooden style (amber). */
+function WoodenSpoonIcon({ className = 'w-8 h-8 text-amber-700' }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" className={className} aria-hidden>
+      <path d="M7 2C9.76 2 12 4.24 12 7C12 8.64 11.21 10.11 10 11.09V22H4V11.09C2.79 10.11 2 8.64 2 7C2 4.24 4.24 2 7 2Z" />
+    </svg>
+  );
+}
+
+/** Dynamic label by spoon range (1–12). */
+function getSpoonLabel(count) {
+  if (count == null || count < 1) return null;
+  if (count <= 4) return 'Survival Mode. We will go gently.';
+  if (count <= 8) return 'Nourishing Day. Good for growth.';
+  return 'Abundance. Ready for the harvest.';
+}
+
+/** Spoon count (1–12) → energy modifier for plan logic. */
+function spoonCountToModifier(count) {
+  if (count == null || count < 1) return 0;
+  if (count <= 4) return -2;
+  if (count <= 8) return 0;
+  return 2;
+}
+
+/** Map legacy modifier to spoon count for "Repeat Yesterday". */
+function modifierToSpoonCount(modifier) {
+  if (modifier == null || typeof modifier !== 'number') return 6;
+  if (modifier <= -2) return 4;
+  if (modifier >= 1) return 9;
+  return 6;
+}
 
 /** Get yesterday as YYYY-MM-DD */
 function yesterdayString() {
@@ -81,8 +111,10 @@ function Sparkline({ data }) {
 }
 
 export default function MorningCheckIn({ onComplete, goals = [], logMetric, yesterdayPlan = null }) {
+  const { setDailySpoonCount } = useEnergy();
   const [step, setStep] = useState('energy');
-  const [selectedModifier, setSelectedModifier] = useState(null);
+  const [selectedSpoonCount, setSelectedSpoonCount] = useState(null);
+  const [hoverSpoonCount, setHoverSpoonCount] = useState(null);
   const [measurementValues, setMeasurementValues] = useState({});
 
   const vitalityGoals = useMemo(
@@ -90,10 +122,18 @@ export default function MorningCheckIn({ onComplete, goals = [], logMetric, yest
     [goals]
   );
 
-  const handleEnergySelect = (modifier) => {
-    setSelectedModifier(modifier);
+  const yesterdaySpoonCount = useMemo(() => {
+    if (!yesterdayPlan) return null;
+    if (typeof yesterdayPlan.spoonCount === 'number' && yesterdayPlan.spoonCount >= 1 && yesterdayPlan.spoonCount <= 12) return yesterdayPlan.spoonCount;
+    return modifierToSpoonCount(yesterdayPlan.modifier);
+  }, [yesterdayPlan]);
+
+  const handleSpoonSelect = (spoonCount) => {
+    setSelectedSpoonCount(spoonCount);
+    setDailySpoonCount(spoonCount);
+    const modifier = spoonCountToModifier(spoonCount);
     if (vitalityGoals.length === 0) {
-      onComplete?.(modifier);
+      onComplete?.(modifier, spoonCount);
       return;
     }
     const initial = {};
@@ -104,6 +144,12 @@ export default function MorningCheckIn({ onComplete, goals = [], logMetric, yest
     setStep('measurements');
   };
 
+  const finishWithMeasurements = () => {
+    const count = selectedSpoonCount ?? 6;
+    setDailySpoonCount(count);
+    onComplete?.(spoonCountToModifier(count), count);
+  };
+
   const handleMeasurementsDone = () => {
     const today = new Date();
     vitalityGoals.forEach((g) => {
@@ -112,11 +158,11 @@ export default function MorningCheckIn({ onComplete, goals = [], logMetric, yest
         logMetric?.(g.id, Number(raw), today);
       }
     });
-    onComplete?.(selectedModifier ?? 0);
+    finishWithMeasurements();
   };
 
   const handleSkipMeasurements = () => {
-    onComplete?.(selectedModifier ?? 0);
+    finishWithMeasurements();
   };
 
   return (
@@ -144,39 +190,60 @@ export default function MorningCheckIn({ onComplete, goals = [], logMetric, yest
               exit={{ opacity: 0 }}
               className="contents"
             >
-              <h2 id="morning-checkin-title" className="font-serif text-stone-900 text-xl text-center mb-6">
-                Good Morning. Calibrate your energy.
+              <h2 id="morning-checkin-title" className="font-serif text-stone-900 text-xl text-center mb-2">
+                Good Morning.
               </h2>
-              {yesterdayPlan && (
+              <p className="font-sans text-stone-600 text-center mb-4">
+                How many spoons did you wake up with?
+              </p>
+              {yesterdayPlan && yesterdaySpoonCount != null && (
                 <div className="mb-4">
                   <button
                     type="button"
-                    onClick={() => handleEnergySelect(yesterdayPlan.modifier)}
+                    onClick={() => handleSpoonSelect(yesterdaySpoonCount)}
                     className="w-full py-3 px-4 rounded-xl border-2 border-moss-300 bg-moss-50/80 font-sans text-sm text-moss-800 hover:bg-moss-100 hover:border-moss-400 focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors"
                   >
-                    🔄 Repeat Yesterday&apos;s Flow
+                    🔄 Repeat Yesterday&apos;s Flow ({yesterdaySpoonCount} spoons)
                   </button>
                 </div>
               )}
-              <div className="grid grid-cols-1 gap-3">
-                {OPTIONS.map((opt) => (
-                  <button
-                    key={opt.modifier}
-                    type="button"
-                    onClick={() => handleEnergySelect(opt.modifier)}
-                    className={`flex items-center gap-4 p-4 rounded-xl border-2 bg-white text-left transition-colors focus:outline-none focus:ring-2 focus:ring-moss-500/40 ${opt.className}`}
-                  >
-                    <span className="text-3xl shrink-0" aria-hidden>
-                      {opt.emoji}
-                    </span>
-                    <div className="min-w-0">
-                      <p className="font-serif text-stone-900 font-medium">{opt.label}</p>
-                      <p className="font-sans text-sm text-stone-600">{opt.sublabel}</p>
-                      <p className="font-sans text-xs text-stone-400 mt-0.5">{opt.description}</p>
-                    </div>
-                  </button>
-                ))}
+              <div
+                className="flex flex-wrap justify-center gap-0.5 sm:gap-1 mb-4"
+                role="group"
+                aria-label="Select number of spoons"
+                onMouseLeave={() => setHoverSpoonCount(null)}
+              >
+                {Array.from({ length: SPOON_COUNT }, (_, i) => {
+                  const count = i + 1;
+                  const selected = selectedSpoonCount === count;
+                  const highlightUpTo = hoverSpoonCount ?? selectedSpoonCount;
+                  const highlighted = highlightUpTo != null && count <= highlightUpTo;
+                  return (
+                    <button
+                      key={count}
+                      type="button"
+                      onClick={() => handleSpoonSelect(count)}
+                      onMouseEnter={() => setHoverSpoonCount(count)}
+                      className={`rounded-lg border-2 flex items-center justify-center transition-colors focus:outline-none focus:ring-2 focus:ring-moss-500/40 focus:ring-offset-1 ${
+                        highlighted
+                          ? 'border-amber-600 bg-amber-50 text-amber-800'
+                          : 'border-stone-200 bg-white text-stone-400'
+                      } ${selected ? 'ring-2 ring-amber-400/60 ring-offset-1' : ''}`}
+                      style={{ width: 36, height: 36 }}
+                      aria-pressed={selected}
+                      aria-label={`${count} spoons`}
+                      title={`${count} spoons`}
+                    >
+                      <WoodenSpoonIcon className="w-6 h-6 sm:w-7 sm:h-7 text-amber-700" />
+                    </button>
+                  );
+                })}
               </div>
+              {selectedSpoonCount != null && (
+                <p className="font-sans text-sm text-stone-600 text-center">
+                  {getSpoonLabel(selectedSpoonCount)}
+                </p>
+              )}
             </motion.div>
           )}
 

@@ -152,7 +152,12 @@ export function generateLiquidSchedule(goal, availableSlots) {
   if (!goal?.id || !Array.isArray(availableSlots) || availableSlots.length === 0) return [];
 
   const settings = goal.schedulerSettings ?? {};
-  const preference = settings.preference ?? 'balanced';
+  const preference = (() => {
+    const r = settings.ritualName;
+    if (r === 'Morning Heavy') return 'morning';
+    if (r === 'Afternoon Heavy') return 'afternoon';
+    return settings.preference ?? 'balanced';
+  })();
 
   const slotStarts = availableSlots.map((s) => ({
     ...s,
@@ -440,15 +445,18 @@ const MAX_CONSECUTIVE_WORK_SLOTS = 4;
  * Generate a simplified daily plan for today: routine goals only, capped by energy.
  * Balances 'Work' vs 'Nourishment' by energy level.
  * @param {Array} goals - All goals (routine goals are used; optional scheduleCategory: 'work' | 'nourishment')
- * @param {number} energyModifier - From check-in (-2 = low, 0 = normal, 1 = high). Caps slot count.
+ * @param {number} maxSlotsOrModifier - Spoon count (1–12) used as maxSlots, or legacy energy modifier (-2, 0, 1) for backward compat.
  * @returns {Object} assignments - { '06:00': { id, parentGoalId, title, type: 'routine', duration: 60 }, ... }
  */
-export function generateDailyPlan(goals, energyModifier = 0) {
+export function generateDailyPlan(goals, maxSlotsOrModifier = 0) {
   const routineGoals = Array.isArray(goals) ? goals.filter((g) => g.type === 'routine') : [];
   if (routineGoals.length === 0) return {};
 
   const todayDayIndex = new Date().getDay();
-  const maxSlots = Math.max(1, 6 + (Number(energyModifier) || 0));
+  const maxSlots =
+    typeof maxSlotsOrModifier === 'number' && maxSlotsOrModifier >= 1 && maxSlotsOrModifier <= 12
+      ? maxSlotsOrModifier
+      : Math.max(1, 6 + (Number(maxSlotsOrModifier) || 0));
   const availableSlotsToday = [{ dayIndex: todayDayIndex, start: '06:00', end: '23:00' }];
 
   const entriesByCategory = { work: [], nourishment: [] };
@@ -481,7 +489,10 @@ export function generateDailyPlan(goals, energyModifier = 0) {
 
   const workEntries = entriesByCategory.work.sort((a, b) => a.hour.localeCompare(b.hour));
   const nourishmentEntries = entriesByCategory.nourishment.sort((a, b) => a.hour.localeCompare(b.hour));
-  const modifier = Number(energyModifier) || 0;
+  const modifier =
+    typeof maxSlotsOrModifier === 'number' && maxSlotsOrModifier >= 1 && maxSlotsOrModifier <= 12
+      ? (maxSlotsOrModifier <= 4 ? -2 : maxSlotsOrModifier >= 9 ? 1 : 0)
+      : Number(maxSlotsOrModifier) || 0;
 
   let selected = [];
 

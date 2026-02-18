@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useGarden } from '../../context/GardenContext';
+import { useEnergy } from '../../context/EnergyContext';
 import GoalCreator from '../Goals/GoalCreator';
 import GoalEditor from '../Goals/GoalEditor';
 import TimeSlicer, { HOURS, MAX_SLOTS_BY_WEATHER } from './TimeSlicer';
@@ -22,6 +23,8 @@ import JournalView from './JournalView';
 import AnalyticsView from './AnalyticsView';
 import SettingsView from './SettingsView';
 import SpiritBuilder from '../Onboarding/SpiritBuilder';
+import SpiritGuideTour from '../Onboarding/SpiritGuideTour';
+import SpiritOrigins from '../Onboarding/SpiritOrigins';
 import { fetchGoogleEvents } from '../../services/googleCalendarService';
 import { findAvailableSlots, generateLiquidSchedule, generateSolidSchedule, getDefaultWeekStart, getStormWarnings, timeToMinutes, minutesToTime, generateDailyPlan } from '../../services/schedulerService';
 
@@ -62,6 +65,10 @@ const MoonIcon = () => (
 const DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 const TODAY_MVP = 'Monday';
 const TODAY_INDEX = DAY_NAMES.indexOf(TODAY_MVP);
+
+/** Garden Level: 1 = Seedling (Focus, Garden, Settings), 2 = Sprout (+ Journal), 3 = Bloom (+ Wisdom, Map). */
+const TAB_LEVELS = { focus: 1, garden: 1, settings: 1, journal: 2, wisdom: 3, map: 3 };
+const LOCKED_TAB_TOAST = 'Keep growing to unlock this area.';
 
 /** Minutes logged this month for a goal (from logs). */
 function getMinutesThisMonthForGoal(logs, goalId) {
@@ -139,9 +146,23 @@ function getRitualForToday(goal, dayIndex) {
 }
 
 function GardenDashboard() {
-  const { goals, weeklyEvents, logs, addGoal, updateGoalProgress, updateGoalMilestone, editGoal, deleteGoal, addSubtask, updateSubtask, deleteSubtask, updateSubtaskProgress, lastCheckInDate, completeMorningCheckIn, dailyEnergyModifier, addLog, logMetric, googleUser, connectCalendar, disconnectCalendar, googleToken, updateWeeklyEvents, cloudSaveStatus, spiritConfig, compost, addToCompost, removeFromCompost, assignments, setAssignments, eveningMode, setEveningMode } = useGarden();
+  const { goals, weeklyEvents, logs, addGoal, updateGoalProgress, updateGoalMilestone, editGoal, deleteGoal, addSubtask, updateSubtask, deleteSubtask, updateSubtaskProgress, lastCheckInDate, completeMorningCheckIn, dailyEnergyModifier, dailySpoonCount, addLog, logMetric, googleUser, connectCalendar, disconnectCalendar, googleToken, updateWeeklyEvents, cloudSaveStatus, spiritConfig, setSpiritConfig, compost, addToCompost, removeFromCompost, assignments, setAssignments, eveningMode, setEveningMode, userSettings, addRitualCategory } = useGarden();
   const [today, setToday] = useState(() => new Date().toISOString().slice(0, 10));
   const needsMorningCheckIn = lastCheckInDate !== today;
+
+  const yesterdayForPlan = useMemo(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    return d.toISOString().slice(0, 10);
+  }, [today]);
+  const yesterdayPlan = lastCheckInDate === yesterdayForPlan ? { modifier: dailyEnergyModifier, spoonCount: dailySpoonCount } : null;
+
+  const { setDailySpoonCount } = useEnergy();
+  useEffect(() => {
+    if (typeof dailySpoonCount === 'number' && dailySpoonCount >= 1 && dailySpoonCount <= 12) {
+      setDailySpoonCount(dailySpoonCount);
+    }
+  }, [dailySpoonCount, setDailySpoonCount]);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -186,6 +207,10 @@ function GardenDashboard() {
   const [showEveningModal, setShowEveningModal] = useState(false);
   const [showEveningNudgeToast, setShowEveningNudgeToast] = useState(false);
   const eveningNudgeShownRef = useRef(null); // date string when nudge was shown
+  const [lockedTabToast, setLockedTabToast] = useState(null);
+  const [recordedToast, setRecordedToast] = useState(false);
+  const [showTour, setShowTour] = useState(false);
+  const [showSpiritOrigins, setShowSpiritOrigins] = useState(false);
   // eveningMode and setEveningMode come from GardenContext (Gardener resets on new day)
 
   useEffect(() => {
@@ -198,6 +223,20 @@ function GardenDashboard() {
       window.removeEventListener('offline', onOffline);
     };
   }, []);
+
+  /** Show Spirit Origins when user data is loaded but no spirit config saved yet. */
+  useEffect(() => {
+    if (cloudSaveStatus !== 'loading' && !spiritConfig) {
+      setShowSpiritOrigins(true);
+    }
+  }, [cloudSaveStatus, spiritConfig]);
+
+  /** Trigger tour if fresh account (0 goals, 0 logs) or user clicked Replay Tour in settings. */
+  useEffect(() => {
+    if ((goals?.length ?? 0) === 0 && (logs?.length ?? 0) === 0 && !localStorage.getItem('hasSeenTour')) {
+      setShowTour(true);
+    }
+  }, [goals?.length, logs?.length]);
 
   useEffect(() => {
     const check = () => setIsMobileNav(window.innerWidth < 640);
@@ -404,7 +443,14 @@ function GardenDashboard() {
     const options = { weekStartDate: getDefaultWeekStart(), startHour: 6, endHour: 23 };
     return getStormWarnings(goals, events, options);
   }, [goals, events]);
-  const maxSlots = Math.max(1, (MAX_SLOTS_BY_WEATHER[weather] ?? 6) + dailyEnergyModifier);
+  const todaySpoonCount =
+    lastCheckInDate === today && typeof dailySpoonCount === 'number' && dailySpoonCount >= 1 && dailySpoonCount <= 12
+      ? dailySpoonCount
+      : null;
+  const maxSlots =
+    todaySpoonCount != null
+      ? todaySpoonCount
+      : Math.max(1, (MAX_SLOTS_BY_WEATHER[weather] ?? 6) + dailyEnergyModifier);
   const isOverloaded = filledCount > maxSlots;
 
   const spiritFallbackMessage = useMemo(
@@ -498,6 +544,21 @@ function GardenDashboard() {
     [goals, todayDayIndex]
   );
 
+  /** Garden Level: 1 = Seedling, 2 = Sprout (first task or 1 log), 3 = Bloom (5 tasks). */
+  const gardenLevel = useMemo(() => {
+    const logList = Array.isArray(logs) ? logs : [];
+    const completedTasks = logList.length;
+    if (completedTasks >= 5) return 3;
+    if (completedTasks >= 1) return 2;
+    return 1;
+  }, [logs]);
+
+  const isTabLocked = useCallback((tabId) => (TAB_LEVELS[tabId] ?? 1) > gardenLevel, [gardenLevel]);
+
+  useEffect(() => {
+    if (isTabLocked(activeTab)) setActiveTab('focus');
+  }, [activeTab, gardenLevel, isTabLocked]);
+
   const handleSaveSeed = (goal) => {
     addGoal(goal);
     setIsPlanting(false);
@@ -554,6 +615,7 @@ function GardenDashboard() {
       date: new Date(),
       minutes: durationMinutes,
     });
+    // Embers are awarded in TeaCeremony (1 per minute) before onComplete
     setShowTeaCeremony(false);
     setJustFinishedSession(true);
     setShowSpiritDialogue(true);
@@ -561,6 +623,17 @@ function GardenDashboard() {
       setShowSpiritDialogue(false);
       setJustFinishedSession(false);
     }, 5000);
+  };
+
+  /** Chain: User finishes SpiritOrigins → close it → show Tour so Spirit explains the Compass. */
+  const handleSpiritBorn = () => {
+    setShowSpiritOrigins(false);
+    setTimeout(() => setShowTour(true), 300);
+  };
+
+  const handleSpiritSkip = () => {
+    setSpiritConfig({ name: 'Mochi', type: 'mochi' });
+    setShowSpiritOrigins(false);
   };
 
   const handleSelectDate = (dayIndex) => {
@@ -611,6 +684,14 @@ function GardenDashboard() {
 
   return (
     <>
+      <AnimatePresence>
+        {showSpiritOrigins && (
+          <div className="fixed inset-0 z-50 overflow-auto">
+            <SpiritOrigins onComplete={handleSpiritBorn} onSkip={handleSpiritSkip} />
+          </div>
+        )}
+      </AnimatePresence>
+
       {/* Sleep Mode Overlay */}
       {eveningMode === 'sleep' && (
         <div className="fixed inset-0 z-[60] bg-slate-900/95 flex flex-col items-center justify-center p-6 text-center">
@@ -631,17 +712,18 @@ function GardenDashboard() {
           <MorningCheckIn
             goals={goals}
             logMetric={logMetric}
-            onComplete={(modifier) => {
-              completeMorningCheckIn(modifier);
+            yesterdayPlan={yesterdayPlan}
+            onComplete={(modifier, spoonCount) => {
+              completeMorningCheckIn(spoonCount);
               requestSpiritWisdom(false);
               const hasAnyAssignment = HOURS.some((h) => assignments[h]);
               let planSummary = null;
               if (!hasAnyAssignment) {
-                const plan = generateDailyPlan(goals, modifier);
+                const plan = generateDailyPlan(goals, spoonCount);
                 setAssignments(plan);
                 planSummary = { slotCount: Object.keys(plan).length };
               }
-              const reaction = getPlanReaction(modifier, planSummary);
+              const reaction = getPlanReaction(spoonCount, planSummary);
               setCheckInReactionMessage(reaction);
               setShowSpiritDialogue(true);
               setTimeout(() => {
@@ -669,130 +751,164 @@ function GardenDashboard() {
           eveningMode === 'night-owl' ? 'border-slate-700 bg-slate-800/80' : `border-stone-200 ${skyBg}`
         }`}
       >
-        <div className="max-w-4xl mx-auto px-4 py-5 flex items-center justify-between">
-          <p className={`font-serif text-xl md:text-2xl ${eveningMode === 'night-owl' ? 'text-slate-100' : 'text-stone-900'}`}>
-            {new Date(today + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}
-          </p>
-          <div className={`flex items-center gap-3 font-sans text-sm ${eveningMode === 'night-owl' ? 'text-slate-300' : 'text-stone-700'}`}>
-            <button
-              type="button"
-              onClick={() => setShowChat(true)}
-              className={`flex items-center gap-2 py-1.5 pl-1 pr-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors ${
-                eveningMode === 'night-owl' ? 'text-slate-400 hover:text-slate-100 hover:bg-slate-700/60' : 'text-stone-600 hover:text-stone-900 hover:bg-stone-200/60'
-              }`}
-              aria-label="Chat with Mochi"
-              title="Chat with Mochi"
-            >
-              <span className="inline-block w-7 h-8 flex items-center justify-center [&_svg]:w-7 [&_svg]:h-8" aria-hidden>
-                <MochiSpirit />
-              </span>
-              <span className="hidden sm:inline text-xs font-medium">Wisdom</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowCompost(true)}
-              className={`flex items-center gap-2 py-1.5 pl-1 pr-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors ${
-                eveningMode === 'night-owl' ? 'text-slate-400 hover:text-slate-100 hover:bg-slate-700/60' : 'text-stone-600 hover:text-stone-900 hover:bg-stone-200/60'
-              }`}
-              aria-label="Compost Heap (Inbox)"
-              title="Compost Heap (Inbox)"
-            >
-              <span className="text-lg leading-none" aria-hidden>🍂</span>
-              <span className="hidden sm:inline text-xs font-medium">Inbox</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowSpiritMirror(true)}
-              className={`p-1.5 rounded-lg focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors ${
-                eveningMode === 'night-owl' ? 'text-slate-400 hover:text-slate-100 hover:bg-slate-700/60' : 'text-stone-500 hover:text-stone-800 hover:bg-stone-200/60'
-              }`}
-              aria-label="Customize Spirit"
-              title="Spirit Mirror"
-            >
-              <MirrorIcon />
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowEveningModal(true)}
-              className="p-1.5 rounded-lg text-stone-500 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
-              aria-label="Evening Ritual"
-              title="Evening Ritual"
-            >
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
-              </svg>
-            </button>
-            {eveningMode !== 'night-owl' && (
-            <button
-              type="button"
-              onClick={() => setActiveTab('settings')}
-              className="p-1.5 rounded-lg text-stone-500 hover:text-stone-800 hover:bg-stone-200/60 focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors"
-              aria-label="Settings"
-              title="Settings"
-            >
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0" aria-hidden>
-                <circle cx="12" cy="12" r="3" />
-                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
-              </svg>
-            </button>
-            )}
-            {/* Connection / Offline: when offline show only grey Offline Mode badge */}
+        <div className="max-w-4xl mx-auto px-4 py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          {/* Left: Date • Weather • Sync status */}
+          <div className={`flex flex-wrap items-center gap-2 font-sans text-sm ${eveningMode === 'night-owl' ? 'text-slate-300' : 'text-stone-600'}`}>
+            <p className={`font-serif text-xl md:text-2xl mr-1 ${eveningMode === 'night-owl' ? 'text-slate-100' : 'text-stone-900'}`}>
+              {new Date(today + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}
+            </p>
+            <span className="hidden sm:inline opacity-50 select-none" aria-hidden>|</span>
+            <div className="flex items-center gap-1.5">
+              <WeatherIcon />
+              <span>{forecast}</span>
+            </div>
+            <span className="hidden sm:inline opacity-50 select-none" aria-hidden>•</span>
             {!isOnline ? (
               <span
                 className="flex items-center gap-1 font-sans text-xs text-stone-500 bg-stone-200/80 px-2 py-1 rounded-full"
                 title="Offline"
                 aria-label="Offline mode"
               >
-                Offline Mode
+                Offline
               </span>
-            ) : (
-              <>
-                {googleUser ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (window.confirm('Disconnect Google Calendar? Your events will no longer sync.')) {
-                        disconnectCalendar();
-                      }
-                    }}
-                    className="flex items-center gap-2 py-1.5 px-2.5 rounded-full text-moss-700 font-sans text-sm hover:bg-moss-100/60 focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors"
-                    title={`Logged in as ${googleUser.email ?? 'Google'}`}
-                    aria-label="Calendar synced; click to disconnect"
-                  >
-                    ✅ Synced
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      const ok = await connectCalendar();
-                      if (ok) setCalendarConnectedToast(true);
-                    }}
-                    className="flex items-center gap-2 py-1.5 px-2.5 rounded-full text-stone-500 font-sans text-sm hover:text-stone-800 hover:underline focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors"
-                    aria-label="Sync Google Calendar"
-                  >
-                    🔗 Sync Google Cal
-                  </button>
-                )}
-              </>
-            )}
-            <div className="flex items-center gap-2">
-              <WeatherIcon />
-              <span>{forecast}</span>
-            </div>
-            {isOnline && googleUser && cloudSaveStatus === 'saved' && (
-              <span
-                className="flex items-center gap-1 font-sans text-xs text-moss-600"
-                title="Saved to cloud"
-                aria-label="Saved to cloud"
+            ) : googleUser ? (
+              <button
+                type="button"
+                onClick={() => {
+                  if (window.confirm('Disconnect Google Calendar? Your events will no longer sync.')) {
+                    disconnectCalendar();
+                  }
+                }}
+                className="flex items-center gap-1.5 py-1 px-2 rounded-full text-moss-700 font-sans text-xs hover:bg-moss-100/60 focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors"
+                title={`Synced · ${googleUser.email ?? 'Google'}`}
+                aria-label="Calendar synced; click to disconnect"
               >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
                   <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z" />
                   <path d="M9 12l2 2 4-4" />
                 </svg>
-                <span className="hidden sm:inline">Saved</span>
-              </span>
+                <span className="hidden md:inline">Synced</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={async () => {
+                  const ok = await connectCalendar();
+                  if (ok) setCalendarConnectedToast(true);
+                }}
+                className="flex items-center gap-1.5 py-1 px-2 rounded-full text-stone-500 font-sans text-xs hover:text-stone-800 hover:underline focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors"
+                aria-label="Sync Google Calendar"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="7 10 12 15 17 10" />
+                  <line x1="12" y1="15" x2="12" y2="3" />
+                </svg>
+                <span className="hidden md:inline">Sync</span>
+              </button>
             )}
+            {isOnline && googleUser && cloudSaveStatus === 'saved' && (
+              <>
+                <span className="hidden sm:inline opacity-50 select-none" aria-hidden>•</span>
+                <span
+                  className="flex items-center gap-1 font-sans text-xs text-moss-600"
+                  title="Saved to cloud"
+                  aria-label="Saved to cloud"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
+                    <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z" />
+                    <path d="M9 12l2 2 4-4" />
+                  </svg>
+                  <span className="hidden md:inline">Saved</span>
+                </span>
+              </>
+            )}
+          </div>
+
+          {/* Right: Toolbelt – Wisdom, Inbox, Mirror, Evening, Settings */}
+          <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
+            <button
+              id="tour-wisdom"
+              type="button"
+              onClick={() => setShowChat(true)}
+              className={`flex items-center gap-2 py-2 pl-2 pr-2.5 rounded-lg focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors ${
+                eveningMode === 'night-owl'
+                  ? 'bg-moss-900/40 text-moss-200 hover:bg-moss-800/50'
+                  : 'bg-moss-100/80 text-moss-800 hover:bg-moss-200/80'
+              }`}
+              aria-label="Chat with Mochi (Wisdom)"
+              title="Wisdom"
+            >
+              <span className="inline-flex w-7 h-8 items-center justify-center [&_svg]:w-7 [&_svg]:h-8" aria-hidden>
+                <MochiSpirit />
+              </span>
+              <span className="hidden lg:inline text-xs font-medium">Wisdom</span>
+            </button>
+            <button
+              id="tour-compost"
+              type="button"
+              onClick={() => setShowCompost(true)}
+              className={`flex items-center gap-2 py-2 pl-2 pr-2.5 rounded-lg focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors ${
+                eveningMode === 'night-owl' ? 'text-slate-400 hover:text-slate-100 hover:bg-slate-700/60' : 'text-stone-600 hover:text-stone-900 hover:bg-stone-200/60'
+              }`}
+              aria-label="Compost Heap"
+              title="Compost Heap"
+            >
+              <span className="text-lg leading-none" aria-hidden>🍂</span>
+              <span className="hidden lg:inline text-xs font-medium">Compost</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowSpiritMirror(true)}
+              className={`p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors ${
+                eveningMode === 'night-owl' ? 'text-slate-400 hover:text-slate-100 hover:bg-slate-700/60' : 'text-stone-500 hover:text-stone-800 hover:bg-stone-200/60'
+              }`}
+              aria-label="Customize Spirit (Mirror)"
+              title="Mirror"
+            >
+              <MirrorIcon />
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowEveningModal(true)}
+              className={`p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors ${
+                eveningMode === 'night-owl' ? 'text-indigo-300 hover:text-indigo-200 hover:bg-slate-700/60' : 'text-stone-500 hover:text-indigo-600 hover:bg-indigo-50'
+              }`}
+              aria-label="Evening Ritual"
+              title="Evening Ritual"
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+              </svg>
+            </button>
+            {eveningMode !== 'night-owl' && (
+              <button
+                id="tour-settings"
+                type="button"
+                onClick={() => setActiveTab('settings')}
+                className="p-2 rounded-lg text-stone-500 hover:text-stone-800 hover:bg-stone-200/60 focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors"
+                aria-label="Settings"
+                title="Settings"
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0" aria-hidden>
+                  <circle cx="12" cy="12" r="3" />
+                  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                </svg>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setShowTour(true)}
+              className="p-2 rounded-lg text-stone-400 hover:text-stone-600 hover:bg-stone-200/60 focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors"
+              aria-label="Replay tour"
+              title="Replay tour"
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0" aria-hidden>
+                <circle cx="12" cy="12" r="10" />
+                <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+                <line x1="12" y1="17" x2="12.01" y2="17" />
+              </svg>
+            </button>
           </div>
         </div>
       </header>
@@ -802,30 +918,44 @@ function GardenDashboard() {
           <div className="max-w-4xl mx-auto px-4 flex gap-8">
             {[
               { id: 'focus', label: 'Daily Focus' },
-              { id: 'map', label: 'Weekly Map' },
               { id: 'garden', label: 'My Garden' },
               { id: 'journal', label: 'Journal' },
               { id: 'wisdom', label: 'Wisdom' },
+              { id: 'map', label: 'Weekly Map' },
               { id: 'settings', label: 'Settings' },
             ]
               .filter(({ id }) => eveningMode !== 'night-owl' || (id !== 'garden' && id !== 'settings'))
-              .map(({ id, label }) => (
-                <button
-                  key={id}
-                  type="button"
-                  onClick={() => setActiveTab(id)}
-                  className={`relative py-4 font-sans font-medium focus:outline-none focus:ring-2 focus:ring-moss-500/30 rounded ${
-                    eveningMode === 'night-owl'
-                      ? activeTab === id ? 'text-slate-100' : 'text-slate-400 hover:text-slate-200'
-                      : activeTab === id ? 'text-stone-900' : 'text-stone-600 hover:text-stone-800'
-                  }`}
-                >
-                  {label}
-                  {activeTab === id && (
-                    <span className={`absolute bottom-0 left-0 right-0 h-0.5 rounded-full ${eveningMode === 'night-owl' ? 'bg-slate-400' : 'bg-stone-400'}`} />
-                  )}
-                </button>
-              ))}
+              .map(({ id, label }) => {
+                const locked = isTabLocked(id);
+                return (
+                  <button
+                    key={id}
+                    id={id === 'garden' ? 'tour-garden-tab' : undefined}
+                    type="button"
+                    onClick={() => {
+                      if (locked) {
+                        setLockedTabToast(LOCKED_TAB_TOAST);
+                        setTimeout(() => setLockedTabToast(null), 3000);
+                      } else {
+                        setActiveTab(id);
+                      }
+                    }}
+                    className={`relative py-4 font-sans font-medium focus:outline-none focus:ring-2 focus:ring-moss-500/30 rounded flex items-center gap-1.5 ${
+                      locked
+                        ? eveningMode === 'night-owl' ? 'text-slate-500 cursor-default' : 'text-stone-400 cursor-default'
+                        : eveningMode === 'night-owl'
+                          ? activeTab === id ? 'text-slate-100' : 'text-slate-400 hover:text-slate-200'
+                          : activeTab === id ? 'text-stone-900' : 'text-stone-600 hover:text-stone-800'
+                    }`}
+                  >
+                    {locked && <span className="shrink-0 opacity-70" aria-hidden>🔒</span>}
+                    {label}
+                    {activeTab === id && !locked && (
+                      <span className={`absolute bottom-0 left-0 right-0 h-0.5 rounded-full ${eveningMode === 'night-owl' ? 'bg-slate-400' : 'bg-stone-400'}`} />
+                    )}
+                  </button>
+                );
+              })}
           </div>
         </nav>
       )}
@@ -835,29 +965,46 @@ function GardenDashboard() {
           <div className="max-w-4xl mx-auto px-2 flex justify-around py-2">
             {[
               { id: 'focus', label: 'Focus', icon: '🎯' },
-              { id: 'map', label: 'Map', icon: '🗺️' },
               { id: 'garden', label: 'Garden', icon: '🌱' },
               { id: 'journal', label: 'Journal', icon: '📔' },
               { id: 'wisdom', label: 'Wisdom', icon: '📊' },
+              { id: 'map', label: 'Map', icon: '🗺️' },
               { id: 'settings', label: 'Settings', icon: '⚙️' },
             ]
               .filter(({ id }) => eveningMode !== 'night-owl' || (id !== 'garden' && id !== 'settings'))
-              .map(({ id, label, icon }) => (
-                <button
-                  key={id}
-                  type="button"
-                  onClick={() => setActiveTab(id)}
-                  className={`flex flex-col items-center gap-0.5 py-2 px-3 rounded-lg font-sans text-xs focus:outline-none focus:ring-2 focus:ring-moss-500/30 ${
-                    eveningMode === 'night-owl'
-                      ? activeTab === id ? 'text-indigo-200 bg-slate-700' : 'text-slate-400'
-                      : activeTab === id ? 'text-moss-700 bg-moss-100' : 'text-stone-600'
-                  }`}
-                  aria-label={label}
-                >
-                  <span className="text-lg leading-none" aria-hidden>{icon}</span>
-                  <span>{label}</span>
-                </button>
-              ))}
+              .map(({ id, label, icon }) => {
+                const locked = isTabLocked(id);
+                return (
+                  <button
+                    key={id}
+                    id={id === 'garden' ? 'tour-garden-tab' : undefined}
+                    type="button"
+                    onClick={() => {
+                      if (locked) {
+                        setLockedTabToast(LOCKED_TAB_TOAST);
+                        setTimeout(() => setLockedTabToast(null), 3000);
+                      } else {
+                        setActiveTab(id);
+                      }
+                    }}
+                    className={`flex flex-col items-center gap-0.5 py-2 px-3 rounded-lg font-sans text-xs focus:outline-none focus:ring-2 focus:ring-moss-500/30 relative ${
+                      locked
+                        ? 'text-stone-400 opacity-70 cursor-default'
+                        : eveningMode === 'night-owl'
+                          ? activeTab === id ? 'text-indigo-200 bg-slate-700' : 'text-slate-400'
+                          : activeTab === id ? 'text-moss-700 bg-moss-100' : 'text-stone-600'
+                    }`}
+                    aria-label={locked ? `${label} (locked)` : label}
+                  >
+                    {locked ? (
+                      <span className="flex items-center justify-center w-6 h-6" aria-hidden>🔒</span>
+                    ) : (
+                      <span className="text-lg leading-none" aria-hidden>{icon}</span>
+                    )}
+                    <span>{label}</span>
+                  </button>
+                );
+              })}
           </div>
         </nav>
       )}
@@ -875,7 +1022,7 @@ function GardenDashboard() {
         {activeTab === 'focus' && (
           <>
             {isMobileNav && (
-              <div className="mb-4">
+              <div id="tour-compass" className="mb-4">
                 <CompassWidget
                   assignments={assignments}
                   goals={goals}
@@ -903,12 +1050,14 @@ function GardenDashboard() {
                 </ul>
               </div>
             )}
+            <div id="tour-timeline">
             <TimeSlicer
               weather={weather}
               goals={goals}
               todayRitualItems={todayRitualItems}
               goalBank={goalBank}
               dailyEnergyModifier={dailyEnergyModifier}
+              dailySpoonCount={todaySpoonCount}
               assignments={assignments}
               onAssignmentsChange={setAssignments}
               onStartFocus={handleStartSession}
@@ -925,6 +1074,7 @@ function GardenDashboard() {
               autoFillLoading={autoFillLoading}
               googleToken={googleToken}
             />
+            </div>
             <button
               type="button"
               onClick={() => setIsPlanting(true)}
@@ -946,7 +1096,7 @@ function GardenDashboard() {
               });
               const domainOrder = ['body', 'finance', 'mind', 'spirit'];
               return (
-                <div className="mt-8">
+                <div id="tour-ponds" className="mt-8">
                   <h3 className="font-serif text-stone-800 text-base mb-3">Ponds</h3>
                   <div className="space-y-4">
                     {domainOrder.filter((d) => byDomain[d]).map((domainId) => {
@@ -964,17 +1114,38 @@ function GardenDashboard() {
                           <div className="p-4 space-y-3">
                             {vitality.map((goal) => {
                               const latest = getLatestMetricValue(goal);
-                              const name = goal.metricSettings?.metricName || goal.title;
                               return (
-                                <div key={goal.id} className="flex items-center gap-2 font-sans text-sm">
+                                <div key={goal.id} className="flex items-center gap-2 font-sans text-sm group">
                                   <span className="text-stone-500 shrink-0">💧</span>
                                   <span className="text-stone-800 font-medium">{goal.title}:</span>
-                                  <span className="text-stone-600">
-                                    {latest != null ? `${latest}` : '—'}
+                                  <span className="text-stone-600 flex-1 min-w-0">
+                                    {latest != null ? `${latest}${goal.metricSettings?.unit ? ` ${goal.metricSettings.unit}` : ''}` : '—'}
                                     {goal.metricSettings?.targetValue != null && (
-                                      <span className="text-stone-400"> → {goal.metricSettings.targetValue}</span>
+                                      <span className="text-stone-400"> → {goal.metricSettings.targetValue}{goal.metricSettings?.unit ? ` ${goal.metricSettings.unit}` : ''}</span>
                                     )}
                                   </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const raw = window.prompt(`Update value for ${goal.title}:`);
+                                      if (raw != null && raw.trim() !== '') {
+                                        const num = parseFloat(raw.trim());
+                                        if (!Number.isNaN(num)) {
+                                          logMetric(goal.id, num);
+                                          setRecordedToast(true);
+                                          setTimeout(() => setRecordedToast(false), 2500);
+                                        }
+                                      }
+                                    }}
+                                    className="shrink-0 p-1.5 rounded-md text-stone-400 hover:text-moss-600 hover:bg-moss-50 focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors"
+                                    title={`Update value for ${goal.title}`}
+                                    aria-label={`Update value for ${goal.title}`}
+                                  >
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                                      <path d="M12 5v14" />
+                                      <path d="M5 12h14" />
+                                    </svg>
+                                  </button>
                                 </div>
                               );
                             })}
@@ -1110,7 +1281,7 @@ function GardenDashboard() {
         )}
         {activeTab === 'settings' && (
           <div className="w-full pb-24 sm:pb-0">
-            <SettingsView />
+            <SettingsView onReplayTour={() => setShowTour(true)} />
           </div>
         )}
       </main>
@@ -1163,6 +1334,8 @@ function GardenDashboard() {
         initialSubtasks={goalCreatorInitialSubtasks}
         existingRoutineGoals={(goals ?? []).filter((g) => g.type === 'routine')}
         existingVitalityGoals={(goals ?? []).filter((g) => g.type === 'vitality')}
+        ritualCategories={userSettings?.ritualCategories ?? []}
+        onAddRitualCategory={addRitualCategory}
       />
 
       <GoalEditor
@@ -1429,6 +1602,41 @@ function GardenDashboard() {
           </button>
         </motion.div>
       )}
+
+      {lockedTabToast && (
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0 }}
+          className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-3 rounded-xl bg-stone-800 text-stone-100 font-sans text-sm shadow-lg border border-stone-600/50 max-w-xs text-center"
+          role="status"
+        >
+          {lockedTabToast}
+        </motion.div>
+      )}
+
+      {recordedToast && (
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0 }}
+          className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-lg bg-moss-600 text-stone-50 font-sans text-sm shadow-lg"
+          role="status"
+          aria-live="polite"
+        >
+          Recorded.
+        </motion.div>
+      )}
+
+      <SpiritGuideTour
+        open={showTour}
+        onComplete={() => {
+          setShowTour(false);
+          try {
+            localStorage.setItem('hasSeenTour', 'true');
+          } catch (_) {}
+        }}
+      />
     </div>
     </>
   );
