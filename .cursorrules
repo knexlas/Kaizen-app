@@ -1,0 +1,42 @@
+# Project: KAIZEN (The 1% App)
+
+## Core Philosophy
+We are building a "Calm Technology" goal-setting app based on the Japanese philosophy of Kaizen (continuous improvement).
+- **Anti-Hustle:** No streaks, no red notification badges, no shame.
+- **Micro-Steps:** Users cannot add tasks >15 mins.
+- **Aesthetic:** "Japandi" (Japanese-Scandi). Cream (#FDFCF5), Charcoal (#2D2D2D), Moss Green (#4A5D23).
+
+## Tech Stack
+- **Frontend:** React (Vite), Tailwind CSS (styling), Framer Motion (animations).
+- **Backend:** Firebase (Firestore, Auth).
+- **Mobile:** Capacitor (to wrap for iOS/Android).
+
+## Key Features & Data Structure
+
+### 1. The North Star (Goals)
+- **Data:** `goals` collection.
+- **UI:** Visible only as "Context" or header.
+- **Critical:** Must include `emotional_why` (The user's deep motivation).
+
+### 2. The Bento Box (Weekly Planner)
+- **Concept:** A limited container for the week.
+- **Constraint:** Users drag items from "North Star" into "Bento Box." Max 5 items per week.
+
+### 3. The Daily 1% (Execution)
+- **Logic:** The "Task Slicer."
+- **Rule:** If a user inputs a big task, use Gemini API to break it down into 3 micro-steps.
+- **The Breathing Gate:** A 30s overlay before starting a task (skippable).
+
+### 4. Progression Logic (The Algorithm)
+- **No Streaks:** We track "Cumulative Volume" (Total stones piled up).
+- **Rest:** If `ease_streak` is low, suggest fewer minutes. If high, suggest +5%.
+
+## Design Rules
+- **Typography:** Serif for headings (Merriweather), Sans for UI (Inter).
+- **Animations:** Slow, organic. No "bouncy" or "flashy" game-like effects.
+- **Feedback:** Use Haptics (vibration) for task completion.
+
+## Code Style
+- Use Functional React Components.
+- Use Tailwind for all styling.
+- specific filename convention: `components/ComponentName.jsx`
