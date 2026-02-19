@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { fetchWeeklyEvents } from '../../services/CalendarImport';
+import { fetchWeeklyEvents } from '../../services/calendarSyncService';
 
 const WEATHER_CYCLE = ['storm', 'cloud', 'sun'];
 const WEATHER_ICONS = { storm: '⛈️', cloud: '☁️', sun: '☀️' };

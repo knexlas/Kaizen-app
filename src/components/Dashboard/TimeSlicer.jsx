@@ -444,7 +444,7 @@ function subtaskStatus(st) {
   return est > 0 && done >= est ? 'bloom' : 'bud';
 }
 
-function SeedChip({ goal, assignments = {}, onSeedClick, onMilestoneCheck, onEditGoal, onCompostGoal, onAddRoutineTime, onPlantRoutineBlock, onAddSubtask }) {
+function SeedChip({ goal, assignments = {}, onSeedClick, onMilestoneCheck, onEditGoal, onCompostGoal, onAddRoutineTime, onPlantRoutineBlock, onAddSubtask, onStartFocus }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuAnchorRef = useRef(null);
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: goal.id, data: { goal } });
@@ -478,6 +478,17 @@ function SeedChip({ goal, assignments = {}, onSeedClick, onMilestoneCheck, onEdi
           </span>
           <span className="font-sans text-sm text-stone-900 font-medium truncate">{goal.title}</span>
         </div>
+        {onStartFocus && (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onStartFocus(goal.id, null, goal.title, undefined); }}
+            className="shrink-0 flex items-center gap-1 px-2 py-1 rounded font-sans text-xs bg-moss-600 text-stone-50 hover:bg-moss-700 focus:outline-none focus:ring-2 focus:ring-moss-500/50"
+            aria-label={`Do ${goal.title} now`}
+          >
+            <span aria-hidden>▶️</span>
+            <span>Do It Now</span>
+          </button>
+        )}
         {onSeedClick && !isRoutine && (
           <button
             type="button"
@@ -640,7 +651,7 @@ function SeedChip({ goal, assignments = {}, onSeedClick, onMilestoneCheck, onEdi
 }
 
 /** Ritual seed: goal + ritual title for today; drag stores ritualTitle so session config shows ritual name */
-function RitualSeedChip({ goal, ritualTitle, assignments = {}, onSeedClick, onMilestoneCheck, onEditGoal, onCompostGoal, onAddRoutineTime, onPlantRoutineBlock }) {
+function RitualSeedChip({ goal, ritualTitle, assignments = {}, onSeedClick, onMilestoneCheck, onEditGoal, onCompostGoal, onAddRoutineTime, onPlantRoutineBlock, onStartFocus }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuAnchorRef = useRef(null);
   const dragId = `ritual-${goal.id}`;
@@ -674,6 +685,17 @@ function RitualSeedChip({ goal, ritualTitle, assignments = {}, onSeedClick, onMi
           </span>
           <span className="font-sans text-sm text-stone-900 font-medium truncate">{ritualTitle || goal.title}</span>
         </div>
+        {onStartFocus && (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onStartFocus(goal.id, null, ritualTitle ?? goal.title, undefined); }}
+            className="shrink-0 flex items-center gap-1 px-2 py-1 rounded font-sans text-xs bg-moss-600 text-stone-50 hover:bg-moss-700 focus:outline-none focus:ring-2 focus:ring-moss-500/50"
+            aria-label={`Do ${ritualTitle || goal.title} now`}
+          >
+            <span aria-hidden>▶️</span>
+            <span>Do It Now</span>
+          </button>
+        )}
         {onSeedClick && !isRoutine && (
           <button
             type="button"
@@ -1754,6 +1776,7 @@ function TimeSlicer({
                             onCompostGoal={onCompostGoal}
                             onAddRoutineTime={onAddRoutineTime}
                             onPlantRoutineBlock={handlePlantRoutineBlock}
+                            onStartFocus={onStartFocus}
                           />
                         ))
                       )}
@@ -1765,7 +1788,7 @@ function TimeSlicer({
                     const routineSeeds = goalBank.filter((g) => g.type === 'routine');
                     const vitalitySeeds = goalBank.filter((g) => g.type === 'vitality');
                     const projectSeeds = goalBank.filter((g) => g._projectGoal);
-                    const chipProps = (goal) => ({ key: goal.id, goal, assignments, onSeedClick, onMilestoneCheck, onEditGoal, onCompostGoal, onAddRoutineTime, onPlantRoutineBlock: handlePlantRoutineBlock, onAddSubtask });
+                    const chipProps = (goal) => ({ key: goal.id, goal, assignments, onSeedClick, onMilestoneCheck, onEditGoal, onCompostGoal, onAddRoutineTime, onPlantRoutineBlock: handlePlantRoutineBlock, onAddSubtask, onStartFocus });
                     const sections = [
                       { id: 'kaizen', label: '🌱 Kaizen Goals', items: kaizenSeeds, color: 'text-moss-700', emptyText: 'No kaizen goals yet.' },
                       { id: 'routine', label: '🪨 Routines', items: routineSeeds, color: 'text-slate-700', emptyText: 'No routines.' },

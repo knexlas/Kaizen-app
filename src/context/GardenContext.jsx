@@ -279,6 +279,54 @@ export function GardenProvider({ children }) {
     return results;
   }, [googleUser?.uid]);
 
+  const addToCompost = useCallback(
+    async (text) => {
+      const trimmed = (text || '').trim();
+      if (!trimmed) return;
+      const uid = googleUser?.uid;
+      const incrementNutrients = () => setSoilNutrients((prev) => Math.min(20, prev + 1));
+      if (uid) {
+        try {
+          await addCompostItem(uid, trimmed);
+          incrementNutrients();
+        } catch (e) {
+          console.warn('addCompostItem failed, using local state', e);
+          const item = {
+            id: crypto.randomUUID?.() ?? `compost-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+            text: trimmed,
+            createdAt: new Date().toISOString(),
+          };
+          setCompost((prev) => [item, ...prev]);
+          incrementNutrients();
+        }
+      } else {
+        const item = {
+          id: crypto.randomUUID?.() ?? `compost-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+          text: trimmed,
+          createdAt: new Date().toISOString(),
+        };
+        setCompost((prev) => [item, ...prev]);
+        incrementNutrients();
+      }
+    },
+    [googleUser?.uid]
+  );
+
+  const removeFromCompost = useCallback(
+    (id) => {
+      const uid = googleUser?.uid;
+      if (uid) {
+        deleteCompostItem(uid, id).catch((e) => {
+          console.warn('deleteCompostItem failed', e);
+          setCompost((prev) => prev.filter((item) => item.id !== id));
+        });
+      } else {
+        setCompost((prev) => prev.filter((item) => item.id !== id));
+      }
+    },
+    [googleUser?.uid]
+  );
+
   // Save to localStorage when state changes
   useEffect(() => {
     if (!hydrated) return;
@@ -416,39 +464,6 @@ export function GardenProvider({ children }) {
     setSpiritPoints((p) => (p >= n ? p - n : p));
   }, []);
 
-  const addToCompost = useCallback(
-    async (text) => {
-      const trimmed = (text || '').trim();
-      if (!trimmed) return;
-      const uid = googleUser?.uid;
-      const incrementNutrients = () => setSoilNutrients((prev) => Math.min(20, prev + 1));
-      if (uid) {
-        try {
-          await addCompostItem(uid, trimmed);
-          incrementNutrients();
-        } catch (e) {
-          console.warn('addCompostItem failed, using local state', e);
-          const item = {
-            id: crypto.randomUUID?.() ?? `compost-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-            text: trimmed,
-            createdAt: new Date().toISOString(),
-          };
-          setCompost((prev) => [item, ...prev]);
-          incrementNutrients();
-        }
-      } else {
-        const item = {
-          id: crypto.randomUUID?.() ?? `compost-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-          text: trimmed,
-          createdAt: new Date().toISOString(),
-        };
-        setCompost((prev) => [item, ...prev]);
-        incrementNutrients();
-      }
-    },
-    [googleUser?.uid]
-  );
-
   const consumeSoilNutrients = useCallback((amount = 1) => {
     const n = Math.max(0, Math.floor(Number(amount) || 0));
     if (n <= 0) return true;
@@ -462,21 +477,6 @@ export function GardenProvider({ children }) {
     });
     return didConsume;
   }, []);
-
-  const removeFromCompost = useCallback(
-    (id) => {
-      const uid = googleUser?.uid;
-      if (uid) {
-        deleteCompostItem(uid, id).catch((e) => {
-          console.warn('deleteCompostItem failed', e);
-          setCompost((prev) => prev.filter((item) => item.id !== id));
-        });
-      } else {
-        setCompost((prev) => prev.filter((item) => item.id !== id));
-      }
-    },
-    [googleUser?.uid]
-  );
 
   // Gardener: on app open, if it's a new day → archive yesterday's tasks to Goal Bank (compost), clear today's assignments, reset evening mode. Morning check-in shows automatically (lastCheckInDate !== today).
   const gardenerHasRunRef = useRef(false);

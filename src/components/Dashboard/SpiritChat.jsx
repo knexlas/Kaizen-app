@@ -2,8 +2,52 @@ import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ThinkingDots } from './MochiSpirit';
 import { chatWithSpirit } from '../../services/geminiService';
+import { useGarden } from '../../context/GardenContext';
+import { extractActionCandidate, splitIntoSteps } from '../../services/aiActionExtractor';
+import { HOURS } from './TimeSlicer';
+
+const ERROR_PHRASES = ['try again', 'something rustled', 'tea is still steeping', 'wind is calm'];
+
+function isErrorLikeMessage(text) {
+  if (typeof text !== 'string') return true;
+  const lower = text.toLowerCase();
+  return ERROR_PHRASES.some((p) => lower.includes(p));
+}
+
+function AiActionChipsRow({ assistantText, onAction }) {
+  if (typeof assistantText !== 'string' || !assistantText.trim() || isErrorLikeMessage(assistantText)) return null;
+  const { title } = extractActionCandidate(assistantText);
+  const chips = [
+    { id: 'ADD_TINY_TASK', label: 'Add tiny task (5 min)' },
+    { id: 'SCHEDULE_NEXT', label: 'Schedule next slot' },
+    { id: 'START_FOCUS_5', label: 'Start 5-min focus' },
+    { id: 'BREAK_3_STEPS', label: 'Break into 3 steps' },
+    { id: 'SEND_TO_COMPOST', label: 'Send to compost' },
+  ];
+  return (
+    <div className="flex flex-wrap gap-2 mt-2" role="group" aria-label="Quick actions">
+      {chips.map((c) => (
+        <button
+          key={c.id}
+          type="button"
+          onClick={() => onAction(c.id, { title })}
+          className="px-3 py-1.5 rounded-full font-sans text-xs border border-stone-200 bg-white/90 text-stone-700 hover:bg-moss-50 hover:border-moss-300 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
+        >
+          {c.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function fireToast(message) {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('kaizen:toast', { detail: { message } }));
+  }
+}
 
 export default function SpiritChat({ open, onClose, context = {} }) {
+  const { addGoal, addToCompost, setAssignments, assignments } = useGarden();
   const [history, setHistory] = useState([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -11,6 +55,70 @@ export default function SpiritChat({ open, onClose, context = {} }) {
   const inputRef = useRef(null);
 
   const scrollToBottom = () => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+
+  const handleChipAction = (actionType, payload) => {
+    const title = (payload?.title || 'Tiny next step').trim() || 'Tiny next step';
+    const makeGoal = (t, mins = 5) => ({
+      id: `ai-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+      type: 'routine',
+      title: t,
+      estimatedMinutes: mins,
+      totalMinutes: 0,
+      createdAt: new Date().toISOString(),
+    });
+
+    switch (actionType) {
+      case 'ADD_TINY_TASK': {
+        const goal = makeGoal(title);
+        addGoal(goal);
+        const firstEmpty = HOURS.find((h) => !assignments[h]);
+        if (firstEmpty) setAssignments((prev) => ({ ...prev, [firstEmpty]: goal.id }));
+        fireToast('Added a tiny step 🌱');
+        break;
+      }
+      case 'SCHEDULE_NEXT': {
+        const goal = makeGoal(title);
+        addGoal(goal);
+        const firstEmpty = HOURS.find((h) => !assignments[h]);
+        if (firstEmpty) setAssignments((prev) => ({ ...prev, [firstEmpty]: goal.id }));
+        fireToast('Added to today. You can place it in your schedule.');
+        break;
+      }
+      case 'START_FOCUS_5': {
+        const goal = makeGoal(title);
+        addGoal(goal);
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('kaizen:startFocus', { detail: { goal, title, minutes: 5 } }));
+        }
+        fireToast('Starting 5 min focus 🌱');
+        break;
+      }
+      case 'BREAK_3_STEPS': {
+        const lastModel = history.filter((m) => m.role === 'model').pop();
+        const steps = splitIntoSteps(lastModel?.text || '', 3);
+        const toAdd = steps.length >= 2 ? steps : [title, 'Second step', 'Third step'].slice(0, 3);
+        const goalsToAdd = toAdd.map((stepTitle) => makeGoal(stepTitle));
+        goalsToAdd.forEach((g) => addGoal(g));
+        const emptySlots = HOURS.filter((h) => !assignments[h]).slice(0, goalsToAdd.length);
+        if (emptySlots.length > 0) {
+          setAssignments((prev) => {
+            const next = { ...prev };
+            emptySlots.forEach((slot, i) => { if (goalsToAdd[i]) next[slot] = goalsToAdd[i].id; });
+            return next;
+          });
+        }
+        fireToast(`Added ${goalsToAdd.length} tiny steps 🌱`);
+        break;
+      }
+      case 'SEND_TO_COMPOST': {
+        addToCompost(title);
+        fireToast('Moved to compost 🌿');
+        break;
+      }
+      default:
+        break;
+    }
+  };
 
   useEffect(() => {
     if (open) {
@@ -33,7 +141,9 @@ export default function SpiritChat({ open, onClose, context = {} }) {
       const newHistory = [...history, userMessage];
       const reply = await chatWithSpirit(newHistory, context);
       if (reply != null) {
-        setHistory((prev) => [...prev, { role: 'model', text: reply }]);
+        const text = typeof reply === 'string' ? reply : reply?.text;
+        const meta = typeof reply === 'object' && reply !== null ? reply.meta : undefined;
+        setHistory((prev) => [...prev, { role: 'model', text: text ?? '', ...(meta && { meta }) }]);
       } else {
         setHistory((prev) => [
           ...prev,
@@ -95,7 +205,7 @@ export default function SpiritChat({ open, onClose, context = {} }) {
             {history.map((msg, i) => (
               <div
                 key={i}
-                className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
               >
                 <div
                   className={`max-w-[85%] px-4 py-2.5 rounded-2xl font-sans text-sm ${
@@ -108,7 +218,17 @@ export default function SpiritChat({ open, onClose, context = {} }) {
                     <span className="text-stone-400 text-xs block mb-1" aria-hidden>Mochi</span>
                   )}
                   <p className="leading-relaxed whitespace-pre-wrap">{msg.text}</p>
+                  {msg.role === 'model' && msg.meta?.redactionCount > 0 && (
+                    <p className="text-stone-400 text-xs mt-2" aria-live="polite">
+                      Privacy note: removed {msg.meta.redactionCount} personal detail(s) before sending.
+                    </p>
+                  )}
                 </div>
+                {msg.role === 'model' && (
+                  <div className="max-w-[85%] w-full mt-1">
+                    <AiActionChipsRow assistantText={msg.text} onAction={handleChipAction} />
+                  </div>
+                )}
               </div>
             ))}
             {isLoading && (

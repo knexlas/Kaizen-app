@@ -1,8 +1,53 @@
 /**
  * Garden Brain: Gemini integration for the Mochi Spirit.
  * Requires VITE_GEMINI_API_KEY in .env (https://aistudio.google.com/apikey).
- * Tries multiple model versions in sequence for resilience.
+ * Optional VITE_GROQ_API_KEY for fallback (https://console.groq.com).
+ * Tries Gemini first; on rate limit/failure falls back to Groq (Llama-3).
  */
+
+import { redactUserText } from './redaction.js';
+
+/**
+ * Strip ```json / ``` markdown from model output so we can parse JSON safely.
+ * @param {string} text - Raw response text
+ * @returns {string} Trimmed JSON-ready string
+ */
+function sanitizeJsonResponse(text) {
+  if (typeof text !== 'string') return '';
+  let raw = text.trim();
+  raw = raw.replace(/^```json\s*/i, '').replace(/\s*```\s*$/g, '').trim();
+  return raw;
+}
+
+/**
+ * Call Groq API (Llama-3) as fallback when Gemini fails.
+ * @param {string} prompt - Full user/system prompt
+ * @returns {Promise<string>} Raw message content
+ */
+async function fetchFromGroq(prompt) {
+  const groqKey = typeof import.meta !== 'undefined' && import.meta.env?.VITE_GROQ_API_KEY;
+  if (!groqKey) throw new Error('No Groq key available.');
+
+  console.warn('🌿 Mochi is routing request to Groq (Fallback)...');
+  const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${groqKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: 'llama3-70b-8192',
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.7,
+    }),
+  });
+
+  if (!response.ok) throw new Error(`Groq API Error: ${response.status}`);
+  const data = await response.json();
+  const content = data?.choices?.[0]?.message?.content;
+  if (typeof content !== 'string') throw new Error('Groq returned no content');
+  return content;
+}
 
 const MODELS_TO_TRY = [
   'gemini-1.5-flash-002',
@@ -124,9 +169,10 @@ function buildContextNote(context) {
 
 /**
  * Chat with the Mochi Spirit (multi-turn). Uses context so Mochi knows weather, energy, goals.
+ * User messages are redacted (PII) before sending; only user input is redacted, not assistant output.
  * @param {Array<{ role: 'user' | 'model', text: string }>} history - Conversation so far
  * @param {{ logs?: Array, goals?: Array, energy?: number, weather?: string }} context - Garden state
- * @returns {Promise<string|null>} - Model reply or null
+ * @returns {Promise<{ text: string, meta?: { redactionCount: number } }|null>} - Reply and optional meta, or null
  */
 export async function chatWithSpirit(history, context) {
   const apiKey = getApiKey();
@@ -136,10 +182,18 @@ export async function chatWithSpirit(history, context) {
     const { GoogleGenerativeAI } = await import('@google/generative-ai');
     const genAI = new GoogleGenerativeAI(apiKey);
 
+    let totalRedactions = 0;
     const historyForPrompt =
       Array.isArray(history) && history.length > 0
         ? history
-            .map((m) => (m.role === 'user' ? 'Gardener: ' : 'Mochi: ') + (m.text || '').trim())
+            .map((m) => {
+              if (m.role === 'user') {
+                const { redactedText, redactionCount } = redactUserText((m.text || '').trim());
+                totalRedactions += redactionCount;
+                return 'Gardener: ' + redactedText;
+              }
+              return 'Mochi: ' + (m.text || '').trim();
+            })
             .join('\n')
         : '';
     const prompt =
@@ -152,7 +206,9 @@ export async function chatWithSpirit(history, context) {
     });
     const text = result?.response?.text?.();
     if (typeof text === 'string') {
-      return text.trim().replace(/\n+/g, ' ').slice(0, 320);
+      const reply = text.trim().replace(/\n+/g, ' ').slice(0, 320);
+      const meta = totalRedactions > 0 ? { redactionCount: totalRedactions } : undefined;
+      return { text: reply, ...(meta && { meta }) };
     }
     return null;
   } catch (err) {
@@ -229,7 +285,7 @@ export async function breakDownTask(taskTitle) {
     const text = result?.response?.text?.();
     if (typeof text !== 'string') return null;
 
-    let raw = text.trim();
+    let raw = sanitizeJsonResponse(text);
     const jsonMatch = raw.match(/\[[\s\S]*\]/);
     if (jsonMatch) raw = jsonMatch[0];
     const parsed = JSON.parse(raw);
@@ -237,8 +293,21 @@ export async function breakDownTask(taskTitle) {
     const strings = parsed.filter((s) => typeof s === 'string').map((s) => s.trim()).filter(Boolean);
     return strings.length > 0 ? strings : null;
   } catch (err) {
-    console.warn('Gemini breakDownTask:', err?.message || err);
-    return null;
+    console.warn('Gemini breakDownTask failed, trying Groq:', err?.message || err);
+    try {
+      const prompt = `Break down the task '${title.replace(/'/g, "\\'")}' into 3-5 very small, actionable subtasks (max 4 words each). Return ONLY a JSON array of strings, e.g., ["Draft outline", "Find sources"]. No other text or markdown.`;
+      const groqText = await fetchFromGroq(prompt);
+      let raw = sanitizeJsonResponse(groqText);
+      const jsonMatch = raw.match(/\[[\s\S]*\]/);
+      if (jsonMatch) raw = jsonMatch[0];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return null;
+      const strings = parsed.filter((s) => typeof s === 'string').map((s) => s.trim()).filter(Boolean);
+      return strings.length > 0 ? strings : null;
+    } catch (groqErr) {
+      console.warn('Groq breakDownTask fallback failed:', groqErr?.message || groqErr);
+      return null;
+    }
   }
 }
 
@@ -299,7 +368,7 @@ export async function processIncomingCompost(fileOrText) {
     const text = result?.response?.text?.();
     if (typeof text !== 'string') return null;
 
-    let raw = text.trim();
+    let raw = sanitizeJsonResponse(text);
     const jsonMatch = raw.match(/\[[\s\S]*\]/);
     if (jsonMatch) raw = jsonMatch[0];
     const parsed = JSON.parse(raw);
@@ -307,7 +376,22 @@ export async function processIncomingCompost(fileOrText) {
     const tasks = parsed.filter((s) => typeof s === 'string').map((s) => s.trim()).filter(Boolean);
     return tasks;
   } catch (err) {
-    console.warn('Gemini processIncomingCompost:', err?.message || err);
+    console.warn('Gemini processIncomingCompost failed:', err?.message || err);
+    const prompt = `${TASK_EXTRACT_PROMPT}\n\nInput:\n${input}`;
+    if (!parseImageInput(input).isImage) {
+      try {
+        const groqText = await fetchFromGroq(prompt);
+        let raw = sanitizeJsonResponse(groqText);
+        const jsonMatch = raw.match(/\[[\s\S]*\]/);
+        if (jsonMatch) raw = jsonMatch[0];
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) return null;
+        const tasks = parsed.filter((s) => typeof s === 'string').map((s) => s.trim()).filter(Boolean);
+        return tasks;
+      } catch (groqErr) {
+        console.warn('Groq processIncomingCompost fallback failed:', groqErr?.message || groqErr);
+      }
+    }
     return null;
   }
 }
@@ -374,40 +458,36 @@ export async function suggestGoalStructure(title, type = 'kaizen', currentMetric
       }
     `;
 
+  const safeFallback = () => ({
+    _fallback: true,
+    _reason: 'gemini_and_groq_failed',
+    strategy: 'Start small, stay consistent.',
+    vines: ['Research the basics', 'Set aside 15 minutes tomorrow', 'Track your first session'],
+    estimatedMinutes: 30,
+    targetHours: 3,
+    rituals: [{ title: 'Daily Practice', days: [1, 3, 5] }],
+    milestones: ['Complete first session', 'Build a 1-week streak', 'Reflect and adjust', 'Reach your first milestone'],
+    suggestedMetrics: [{ name: 'Sessions completed', unit: 'count', direction: 'higher' }],
+  });
+
   try {
     const { GoogleGenerativeAI } = await import('@google/generative-ai');
     const genAI = new GoogleGenerativeAI(apiKey);
-
     const result = await tryGenerate(genAI, prompt);
     const text = result?.response?.text?.();
-
-    if (!text) throw new Error("Empty response");
-
-    const cleanJson = text.replace(/```json/g, '').replace(/```/g, '').trim();
+    if (!text) throw new Error('Empty response');
+    const cleanJson = sanitizeJsonResponse(text);
     return JSON.parse(cleanJson);
-
-  } catch (err) {
-    console.error("Gemini Suggest Error:", err);
-    const msg = String(err?.message ?? err ?? '').toLowerCase();
-    let reason = 'unknown';
-    if (msg.includes('429') || msg.includes('quota') || msg.includes('rate')) {
-      reason = 'quota';
-      try { window.alert('Gemini free-tier quota reached for today. It resets in ~24 h, or you can add billing at ai.google.dev.'); } catch (_) {}
-    } else if (msg.includes('api_key_invalid') || msg.includes('api key not valid') || (msg.includes('403') && msg.includes('key'))) {
-      reason = 'key';
-      try { window.alert('Your Gemini API key may be invalid. Check VITE_GEMINI_API_KEY in your .env file.'); } catch (_) {}
+  } catch (geminiErr) {
+    console.warn('Gemini suggestGoalStructure failed, trying Groq fallback:', geminiErr?.message || geminiErr);
+    try {
+      const groqText = await fetchFromGroq(prompt);
+      const cleanJson = sanitizeJsonResponse(groqText);
+      return JSON.parse(cleanJson);
+    } catch (groqErr) {
+      console.error('Groq fallback also failed:', groqErr?.message || groqErr);
+      return safeFallback();
     }
-    return {
-      _fallback: true,
-      _reason: reason,
-      strategy: 'Start small, stay consistent.',
-      vines: ['Research the basics', 'Set aside 15 minutes tomorrow', 'Track your first session'],
-      estimatedMinutes: 30,
-      targetHours: 3,
-      rituals: [{ title: 'Daily Practice', days: [1, 3, 5] }],
-      milestones: ['Complete first session', 'Build a 1-week streak', 'Reflect and adjust', 'Reach your first milestone'],
-      suggestedMetrics: [{ name: 'Sessions completed', unit: 'count', direction: 'higher' }],
-    };
   }
 }
 
@@ -439,11 +519,7 @@ export async function generateWeeklyPlan(goals, calendarEvents = [], energyProfi
 
   const spoons = energyProfile.spoonCount ?? 8;
 
-  try {
-    const { GoogleGenerativeAI } = await import('@google/generative-ai');
-    const genAI = new GoogleGenerativeAI(apiKey);
-
-    const prompt = `
+  const prompt = `
 Act as a Kaizen weekly planner. Distribute these goals across Mon-Sun.
 
 Goals (JSON):
@@ -471,14 +547,24 @@ Return strict JSON (no markdown):
 }
 `;
 
+  try {
+    const { GoogleGenerativeAI } = await import('@google/generative-ai');
+    const genAI = new GoogleGenerativeAI(apiKey);
     const result = await tryGenerate(genAI, prompt);
     const text = result?.response?.text?.();
-    if (!text) throw new Error("Empty response");
-    const clean = text.replace(/```json/g, '').replace(/```/g, '').trim();
+    if (!text) throw new Error('Empty response');
+    const clean = sanitizeJsonResponse(text);
     return JSON.parse(clean);
   } catch (err) {
-    console.error("Gemini Weekly Plan Error:", err);
-    return null;
+    console.warn('Gemini generateWeeklyPlan failed, trying Groq:', err?.message || err);
+    try {
+      const groqText = await fetchFromGroq(prompt);
+      const clean = sanitizeJsonResponse(groqText);
+      return JSON.parse(clean);
+    } catch (groqErr) {
+      console.error('Groq generateWeeklyPlan fallback failed:', groqErr?.message || groqErr);
+      return null;
+    }
   }
 }
 
@@ -502,10 +588,7 @@ export async function generateMonthlyPlan(goals, monthIndex, year) {
 
   if (goalSummaries.length === 0) return null;
 
-  try {
-    const { GoogleGenerativeAI } = await import('@google/generative-ai');
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const prompt = `
+  const prompt = `
 Act as a Kaizen monthly planner for ${monthName} ${year}.
 
 Goals:
@@ -526,14 +609,24 @@ Return strict JSON (no markdown):
 }
 `;
 
+  try {
+    const { GoogleGenerativeAI } = await import('@google/generative-ai');
+    const genAI = new GoogleGenerativeAI(apiKey);
     const result = await tryGenerate(genAI, prompt);
     const text = result?.response?.text?.();
-    if (!text) throw new Error("Empty response");
-    const clean = text.replace(/```json/g, '').replace(/```/g, '').trim();
+    if (!text) throw new Error('Empty response');
+    const clean = sanitizeJsonResponse(text);
     return JSON.parse(clean);
   } catch (err) {
-    console.error("Gemini Monthly Plan Error:", err);
-    return null;
+    console.warn('Gemini generateMonthlyPlan failed, trying Groq:', err?.message || err);
+    try {
+      const groqText = await fetchFromGroq(prompt);
+      const clean = sanitizeJsonResponse(groqText);
+      return JSON.parse(clean);
+    } catch (groqErr) {
+      console.error('Groq generateMonthlyPlan fallback failed:', groqErr?.message || groqErr);
+      return null;
+    }
   }
 }
 
@@ -552,11 +645,7 @@ export async function sliceProject(projectName, deadline, description = '', exis
   const deadlineStr = deadline ? `Deadline: ${deadline}.` : 'No hard deadline — suggest a reasonable timeline.';
   const goalList = existingGoals.slice(0, 15).map((g) => `${g.id}: "${g.title}" (${g.type})`).join('\n');
 
-  try {
-    const { GoogleGenerativeAI } = await import('@google/generative-ai');
-    const genAI = new GoogleGenerativeAI(apiKey);
-
-    const prompt = `
+  const prompt = `
 Act as a Kaizen project planner. Break this project into manageable phases.
 
 Project: "${projectName}"
@@ -593,13 +682,23 @@ Guidelines:
 - "type" should be "kaizen" for project work or "routine" for recurring support tasks.
 `;
 
+  try {
+    const { GoogleGenerativeAI } = await import('@google/generative-ai');
+    const genAI = new GoogleGenerativeAI(apiKey);
     const result = await tryGenerate(genAI, prompt);
     const text = result?.response?.text?.();
-    if (!text) throw new Error("Empty response");
-    const clean = text.replace(/```json/g, '').replace(/```/g, '').trim();
+    if (!text) throw new Error('Empty response');
+    const clean = sanitizeJsonResponse(text);
     return JSON.parse(clean);
   } catch (err) {
-    console.error("Gemini Project Slice Error:", err);
-    return null;
+    console.warn('Gemini sliceProject failed, trying Groq:', err?.message || err);
+    try {
+      const groqText = await fetchFromGroq(prompt);
+      const clean = sanitizeJsonResponse(groqText);
+      return JSON.parse(clean);
+    } catch (groqErr) {
+      console.error('Groq sliceProject fallback failed:', groqErr?.message || groqErr);
+      return null;
+    }
   }
 }
