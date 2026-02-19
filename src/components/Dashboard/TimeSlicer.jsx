@@ -1,9 +1,10 @@
-import { useState, useMemo, useRef, useEffect } from 'react';
+import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { DndContext, useDraggable, useDroppable } from '@dnd-kit/core';
 import { motion, AnimatePresence } from 'framer-motion';
 import confetti from 'canvas-confetti';
 import { createGoogleEvent } from '../../services/googleCalendarService';
-import { suggestLoadLightening, generateDailyPlan } from '../../services/schedulerService';
+import { downloadICS } from '../../services/calendarSyncService';
+import { suggestLoadLightening, generateDailyPlan, autoFillDailyPlan, timeToMinutes } from '../../services/schedulerService';
 import { useGarden } from '../../context/GardenContext';
 import WoodenSpoon from '../WoodenSpoon';
 
@@ -363,7 +364,7 @@ function TimeSlot({
           </>
         ) : (
           <span className={`font-sans text-sm relative z-10 ${isSlotBlocked ? 'text-stone-500' : 'text-stone-400'}`}>
-            {isSlotBlocked ? 'No spoons left' : isMobile && onEmptySlotClick ? 'Tap to plant a seed' : 'Plant Seed'}
+            {isSlotBlocked ? 'No spoons left' : isMobile && onEmptySlotClick ? 'Tap to add' : 'Drag a seed here'}
           </span>
         )}
       </div>
@@ -468,7 +469,12 @@ function SeedChip({ goal, assignments = {}, onSeedClick, onMilestoneCheck, onEdi
       }`}
     >
       <div className="flex items-center gap-1 min-w-0">
-        <span {...listeners} {...attributes} className="flex-1 min-w-0 truncate">{goal.title}</span>
+        <div {...listeners} {...attributes} className="flex-1 min-w-0 flex flex-col">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-moss-600 mb-0.5 truncate">
+            {goal.domain || (isRoutine ? 'Routine' : goal.type || 'Kaizen')}
+          </span>
+          <span className="font-sans text-sm text-stone-900 font-medium truncate">{goal.title}</span>
+        </div>
         {onSeedClick && !isRoutine && (
           <button
             type="button"
@@ -659,7 +665,12 @@ function RitualSeedChip({ goal, ritualTitle, assignments = {}, onSeedClick, onMi
       }`}
     >
       <div className="flex items-center gap-1 min-w-0">
-        <span {...listeners} {...attributes} className="flex-1 min-w-0 truncate">{ritualTitle || goal.title}</span>
+        <div {...listeners} {...attributes} className="flex-1 min-w-0 flex flex-col">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-moss-600 mb-0.5 truncate">
+            {goal.title}
+          </span>
+          <span className="font-sans text-sm text-stone-900 font-medium truncate">{ritualTitle || goal.title}</span>
+        </div>
         {onSeedClick && !isRoutine && (
           <button
             type="button"
@@ -788,6 +799,470 @@ function RitualSeedChip({ goal, ritualTitle, assignments = {}, onSeedClick, onMi
   );
 }
 
+const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+function getWeekDates() {
+  const today = new Date();
+  const day = today.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  const monday = new Date(today);
+  monday.setDate(today.getDate() + diff);
+  return Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(monday);
+    d.setDate(monday.getDate() + i);
+    return d.toISOString().slice(0, 10);
+  });
+}
+
+function summarizeDayAssignments(dayAssign, goals) {
+  if (!dayAssign || typeof dayAssign !== 'object') return [];
+  const goalHours = {};
+  Object.values(dayAssign).forEach((a) => {
+    const gid = getGoalIdFromAssignment(a);
+    if (!gid) return;
+    goalHours[gid] = (goalHours[gid] || 0) + 1;
+  });
+  return Object.entries(goalHours).map(([gid, hours]) => {
+    const goal = goals.find((g) => g.id === gid);
+    return { goalId: gid, title: goal?.title ?? 'Task', hours, type: goal?.type ?? 'kaizen' };
+  });
+}
+
+function getWeekWeather(calendarEvents, dateStr) {
+  const dayEvents = (calendarEvents ?? []).filter((e) => {
+    const d = e.start ? new Date(e.start) : e.date ? new Date(e.date) : null;
+    return d && d.toISOString().slice(0, 10) === dateStr;
+  });
+  const count = dayEvents.length;
+  if (count >= 4) return { icon: 'storm', events: dayEvents };
+  if (count >= 2) return { icon: 'cloud', events: dayEvents };
+  return { icon: 'sun', events: dayEvents };
+}
+
+const WeatherBadge = ({ type }) => {
+  if (type === 'storm') return <span className="text-sm" title="Busy day">⛈️</span>;
+  if (type === 'cloud') return <span className="text-sm" title="Some events">🌤️</span>;
+  return <span className="text-sm" title="Clear day">☀️</span>;
+};
+
+function WeekView({ weekAssignments, goals, onDayClick, onPlanWeek, planningWeek, weekPreview, onConfirmWeekPlan, onDiscardWeekPlan, calendarEvents }) {
+  const dates = useMemo(() => getWeekDates(), []);
+  const todayStr = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const displayAssignments = weekPreview ?? weekAssignments;
+
+  const weekStats = useMemo(() => {
+    let totalPlanned = 0;
+    dates.forEach((d) => {
+      const da = displayAssignments[d] ?? {};
+      const s = summarizeDayAssignments(da, goals);
+      totalPlanned += s.reduce((sum, x) => sum + x.hours, 0);
+    });
+    return { totalPlanned };
+  }, [dates, displayAssignments, goals]);
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div>
+          <h3 className="font-serif text-stone-800 text-base">This Week</h3>
+          <p className="font-sans text-xs text-stone-400 mt-0.5">{weekStats.totalPlanned}h planned across the week</p>
+        </div>
+        <div className="flex items-center gap-2">
+          {weekPreview && onConfirmWeekPlan && (
+            <>
+              <button
+                type="button"
+                onClick={onDiscardWeekPlan}
+                className="px-3 py-1.5 rounded-lg border border-stone-300 bg-white font-sans text-sm text-stone-600 hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-stone-300/40 transition-colors"
+              >
+                Discard
+              </button>
+              <button
+                type="button"
+                onClick={onConfirmWeekPlan}
+                className="px-3 py-1.5 rounded-lg border border-moss-500 bg-moss-600 font-sans text-sm text-white hover:bg-moss-700 focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors"
+              >
+                Apply Plan
+              </button>
+            </>
+          )}
+          {!weekPreview && onPlanWeek && (
+            <button
+              type="button"
+              onClick={onPlanWeek}
+              disabled={planningWeek}
+              className="px-3 py-1.5 rounded-lg border border-moss-300 bg-moss-50 font-sans text-sm text-moss-800 hover:bg-moss-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40 disabled:opacity-60 transition-colors"
+            >
+              {planningWeek ? 'Planning...' : '✨ Plan My Week'}
+            </button>
+          )}
+        </div>
+      </div>
+      {weekPreview && (
+        <div className="px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 font-sans text-sm text-amber-800">
+          Preview — review the plan below, then <strong>Apply</strong> or <strong>Discard</strong>.
+        </div>
+      )}
+      <div className="grid grid-cols-7 gap-1.5">
+        {dates.map((dateStr, i) => {
+          const dayAssign = displayAssignments[dateStr] ?? {};
+          const summary = summarizeDayAssignments(dayAssign, goals);
+          const totalHours = summary.reduce((s, x) => s + x.hours, 0);
+          const isToday = dateStr === todayStr;
+          const isPast = dateStr < todayStr;
+          const dayNum = new Date(dateStr + 'T12:00:00').getDate();
+          const weather = getWeekWeather(calendarEvents, dateStr);
+          const eventCount = weather.events.length;
+          return (
+            <button
+              key={dateStr}
+              type="button"
+              onClick={() => onDayClick?.(dateStr)}
+              className={`flex flex-col rounded-xl p-2.5 min-h-[140px] border transition-all text-left focus:outline-none focus:ring-2 focus:ring-moss-500/40 group ${
+                isToday
+                  ? 'border-moss-500 bg-moss-50/80 ring-1 ring-moss-500/30 shadow-sm'
+                  : isPast
+                    ? 'border-stone-100 bg-stone-50/50 text-stone-400'
+                    : 'border-stone-200 bg-white hover:border-stone-300 hover:shadow-sm'
+              }`}
+            >
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-1">
+                  <WeatherBadge type={weather.icon} />
+                  <span className={`font-sans text-xs font-semibold ${isToday ? 'text-moss-700' : isPast ? 'text-stone-400' : 'text-stone-500'}`}>
+                    {DAY_LABELS[i]}
+                  </span>
+                </div>
+                <span className={`font-sans text-sm tabular-nums font-medium ${isToday ? 'text-moss-600' : isPast ? 'text-stone-300' : 'text-stone-400'}`}>
+                  {dayNum}
+                </span>
+              </div>
+              {eventCount > 0 && (
+                <div className="mb-1.5 px-1.5 py-0.5 rounded bg-amber-50 border border-amber-100">
+                  <span className="font-sans text-[10px] text-amber-700">
+                    {eventCount} event{eventCount > 1 ? 's' : ''}
+                  </span>
+                </div>
+              )}
+              {summary.length === 0 ? (
+                <span className="font-sans text-xs text-stone-300 mt-auto italic">No tasks</span>
+              ) : (
+                <div className="flex flex-col gap-0.5 flex-1">
+                  {summary.slice(0, 3).map((s) => (
+                    <div
+                      key={s.goalId}
+                      className={`px-1.5 py-0.5 rounded text-[10px] font-sans truncate ${
+                        s.type === 'routine' ? 'bg-slate-100 text-slate-600' : 'bg-moss-100 text-moss-700'
+                      }`}
+                      title={`${s.title} — ${s.hours}h`}
+                    >
+                      {s.title}
+                    </div>
+                  ))}
+                  {summary.length > 3 && (
+                    <span className="font-sans text-[10px] text-stone-400">+{summary.length - 3} more</span>
+                  )}
+                </div>
+              )}
+              <div className="mt-auto pt-1.5 flex items-center justify-between">
+                {totalHours > 0 ? (
+                  <span className="font-sans text-[10px] text-stone-400 tabular-nums">{totalHours}h</span>
+                ) : <span />}
+                <span className="font-sans text-[10px] text-stone-300 opacity-0 group-hover:opacity-100 transition-opacity">view →</span>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function MonthPlanView({ weekAssignments, goals, onDayClick, monthlyRoadmap, onPlanMonth, planningMonth, calendarEvents = [] }) {
+  const today = useMemo(() => new Date(), []);
+  const year = today.getFullYear();
+  const month = today.getMonth();
+  const todayStr = today.toISOString().slice(0, 10);
+  const firstDay = new Date(year, month, 1);
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const startDow = (firstDay.getDay() + 6) % 7;
+
+  const cells = useMemo(() => {
+    const arr = [];
+    for (let i = 0; i < startDow; i++) arr.push(null);
+    for (let d = 1; d <= daysInMonth; d++) {
+      const ds = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+      arr.push(ds);
+    }
+    return arr;
+  }, [year, month, startDow, daysInMonth]);
+
+  const monthStats = useMemo(() => {
+    let totalHours = 0;
+    let plannedDays = 0;
+    cells.forEach((dateStr) => {
+      if (!dateStr) return;
+      const da = weekAssignments[dateStr] ?? {};
+      const slots = Object.keys(da).length;
+      if (slots > 0) { plannedDays++; totalHours += slots; }
+    });
+    return { totalHours, plannedDays, daysInMonth };
+  }, [cells, weekAssignments, daysInMonth]);
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div>
+          <h3 className="font-serif text-stone-800 text-base">{MONTH_NAMES[month]} {year}</h3>
+          <p className="font-sans text-xs text-stone-400 mt-0.5">
+            {monthStats.totalHours}h across {monthStats.plannedDays} of {monthStats.daysInMonth} days
+          </p>
+        </div>
+        {onPlanMonth && (
+          <button
+            type="button"
+            onClick={onPlanMonth}
+            disabled={planningMonth}
+            className="px-3 py-1.5 rounded-lg border border-moss-300 bg-moss-50 font-sans text-sm text-moss-800 hover:bg-moss-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40 disabled:opacity-60 transition-colors"
+          >
+            {planningMonth ? 'Planning...' : '✨ Plan My Month'}
+          </button>
+        )}
+      </div>
+
+      {monthlyRoadmap && (
+        <div className="p-3 rounded-xl bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200">
+          <p className="font-sans text-sm font-medium text-amber-900 mb-1.5">Monthly Roadmap</p>
+          {monthlyRoadmap.summary && <p className="font-sans text-xs text-amber-700 mb-2">{monthlyRoadmap.summary}</p>}
+          {Array.isArray(monthlyRoadmap.weeks) && (
+            <div className="grid grid-cols-2 gap-2">
+              {monthlyRoadmap.weeks.map((w, i) => (
+                <div key={i} className="p-2 rounded-lg bg-white/60 border border-amber-100">
+                  <span className="font-sans text-[10px] font-semibold text-amber-600 uppercase tracking-wider">Week {i + 1}</span>
+                  <p className="font-sans text-xs text-amber-800 mt-0.5">
+                    {w.focus || Object.entries(w.goals || {}).map(([id, h]) => {
+                      const g = goals.find((x) => x.id === id);
+                      return `${g?.title ?? id}: ${h}h`;
+                    }).join(', ')}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="grid grid-cols-7 gap-1">
+        {DAY_LABELS.map((d) => (
+          <div key={d} className="text-center font-sans text-[10px] font-semibold text-stone-400 py-1">{d}</div>
+        ))}
+        {cells.map((dateStr, i) => {
+          if (!dateStr) return <div key={`empty-${i}`} />;
+          const dayAssign = weekAssignments[dateStr] ?? {};
+          const slotCount = Object.keys(dayAssign).length;
+          const weather = getWeekWeather(calendarEvents, dateStr);
+          const eventCount = weather.events.length;
+          const isToday = dateStr === todayStr;
+          const isPast = dateStr < todayStr;
+          const dayNum = new Date(dateStr + 'T12:00:00').getDate();
+          const density = slotCount === 0 ? 'none' : slotCount <= 3 ? 'light' : slotCount <= 6 ? 'medium' : 'heavy';
+          return (
+            <button
+              key={dateStr}
+              type="button"
+              onClick={() => onDayClick?.(dateStr)}
+              className={`relative aspect-square flex flex-col items-center justify-center rounded-lg font-sans text-xs transition-all focus:outline-none focus:ring-2 focus:ring-moss-500/30 group ${
+                isToday
+                  ? 'ring-2 ring-moss-500 font-bold text-moss-800 bg-moss-50'
+                  : isPast
+                    ? 'text-stone-400 bg-stone-50/50'
+                    : 'text-stone-600 hover:bg-stone-100'
+              }`}
+              title={`${slotCount > 0 ? slotCount + 'h planned' : 'No tasks'}${eventCount > 0 ? ' · ' + eventCount + ' event' + (eventCount > 1 ? 's' : '') : ''}`}
+            >
+              {dayNum}
+              <div className="flex gap-px mt-0.5">
+                {density !== 'none' && (
+                  <span className={`w-1.5 h-1.5 rounded-full ${
+                    density === 'light' ? 'bg-moss-400' : density === 'medium' ? 'bg-amber-400' : 'bg-red-400'
+                  }`} />
+                )}
+                {eventCount > 0 && (
+                  <span className={`w-1.5 h-1.5 rounded-full ${
+                    eventCount >= 4 ? 'bg-purple-500' : eventCount >= 2 ? 'bg-sky-400' : 'bg-sky-300'
+                  }`} />
+                )}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="flex items-center justify-center gap-3 pt-1 flex-wrap">
+        <div className="flex items-center gap-1.5">
+          <span className="w-2 h-2 rounded-full bg-moss-400" />
+          <span className="font-sans text-[10px] text-stone-500">Light</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="w-2 h-2 rounded-full bg-amber-400" />
+          <span className="font-sans text-[10px] text-stone-500">Moderate</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="w-2 h-2 rounded-full bg-red-400" />
+          <span className="font-sans text-[10px] text-stone-500">Heavy</span>
+        </div>
+        <span className="text-stone-300">|</span>
+        <div className="flex items-center gap-1.5">
+          <span className="w-2 h-2 rounded-full bg-sky-400" />
+          <span className="font-sans text-[10px] text-stone-500">Calendar</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DayDetailModal({ dateStr, dayAssignments, goals, onClose, onSwitchToDay, calendarEvents = [] }) {
+  if (!dateStr) return null;
+  const dateObj = new Date(dateStr + 'T12:00:00');
+  const label = dateObj.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+  const summary = summarizeDayAssignments(dayAssignments, goals);
+  const totalHours = summary.reduce((s, x) => s + x.hours, 0);
+  const filledHours = HOURS.filter((h) => dayAssignments[h]);
+  const dayCalEvents = (calendarEvents ?? []).filter((e) => {
+    const d = e.start ? new Date(e.start) : e.date ? new Date(e.date) : null;
+    return d && d.toISOString().slice(0, 10) === dateStr;
+  });
+
+  return (
+    <AnimatePresence>
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/30 backdrop-blur-sm"
+        onClick={onClose}
+      >
+        <motion.div
+          initial={{ scale: 0.95, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          exit={{ scale: 0.95, opacity: 0 }}
+          onClick={(e) => e.stopPropagation()}
+          className="bg-white rounded-2xl shadow-xl border border-stone-200 w-full max-w-md max-h-[80vh] flex flex-col"
+        >
+          <div className="px-5 py-4 border-b border-stone-100 flex items-center justify-between">
+            <div>
+              <h3 className="font-serif text-stone-900 text-lg">{label}</h3>
+              <p className="font-sans text-xs text-stone-500 mt-0.5">{totalHours}h planned · {filledHours.length} slots filled</p>
+            </div>
+            <button type="button" onClick={onClose} className="p-1.5 rounded-lg text-stone-400 hover:text-stone-700 hover:bg-stone-100" aria-label="Close">
+              <span className="text-lg leading-none">×</span>
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto px-5 py-3">
+            {dayCalEvents.length > 0 && (
+              <div className="mb-3">
+                <p className="font-sans text-[10px] font-semibold text-sky-600 uppercase tracking-wider mb-1.5">Calendar Events</p>
+                <div className="space-y-1">
+                  {dayCalEvents.map((ev, idx) => {
+                    const startTime = ev.start ? new Date(ev.start) : null;
+                    const timeLabel = startTime ? startTime.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) : '';
+                    return (
+                      <div key={ev.id || idx} className="flex items-center gap-3 py-1.5 px-3 rounded-lg bg-sky-50 border border-sky-100">
+                        <span className="font-mono text-xs text-sky-500 w-12 shrink-0">{timeLabel}</span>
+                        <span className="font-sans text-sm text-sky-800 flex-1 min-w-0 truncate">{ev.title}</span>
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-sans font-medium ${
+                          ev.type === 'storm' ? 'bg-red-100 text-red-600' : ev.type === 'sun' ? 'bg-amber-100 text-amber-600' : 'bg-sky-100 text-sky-600'
+                        }`}>{ev.type === 'storm' ? 'Busy' : ev.type === 'sun' ? 'Break' : 'Event'}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            {filledHours.length === 0 && dayCalEvents.length === 0 ? (
+              <p className="font-sans text-sm text-stone-400 py-8 text-center">Nothing planned yet.</p>
+            ) : filledHours.length === 0 ? null : (
+              <div className="space-y-1">
+                {filledHours.length > 0 && dayCalEvents.length > 0 && (
+                  <p className="font-sans text-[10px] font-semibold text-moss-600 uppercase tracking-wider mb-1.5">Kaizen Schedule</p>
+                )}
+                {HOURS.map((hour) => {
+                  const a = dayAssignments[hour];
+                  if (!a) return null;
+                  const gid = getGoalIdFromAssignment(a);
+                  const goal = goals.find((g) => g.id === gid);
+                  const ritualTitle = getRitualTitleFromAssignment(a);
+                  const isRoutine = a && typeof a === 'object' && a.type === 'routine';
+                  return (
+                    <div key={hour} className="flex items-center gap-3 py-2 px-3 rounded-lg hover:bg-stone-50">
+                      <span className="font-mono text-xs text-stone-400 w-12 shrink-0">{hour}</span>
+                      <div className="flex-1 min-w-0">
+                        <span className={`font-sans text-sm font-medium ${isRoutine ? 'text-slate-700' : 'text-stone-900'}`}>
+                          {goal?.title ?? 'Task'}
+                        </span>
+                        {ritualTitle && (
+                          <span className="font-sans text-xs text-stone-500 ml-2">· {ritualTitle}</span>
+                        )}
+                      </div>
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-sans font-medium ${
+                        isRoutine ? 'bg-slate-100 text-slate-600' : 'bg-moss-100 text-moss-700'
+                      }`}>
+                        {isRoutine ? 'Routine' : 'Kaizen'}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+          <div className="px-5 py-3 border-t border-stone-100 flex gap-2">
+            {onSwitchToDay && (
+              <button
+                type="button"
+                onClick={onSwitchToDay}
+                className="flex-1 py-2 rounded-lg bg-moss-600 text-white font-sans text-sm hover:bg-moss-700 transition-colors"
+              >
+                Edit this day
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 rounded-lg border border-stone-200 font-sans text-sm text-stone-600 hover:bg-stone-50 transition-colors"
+            >
+              Close
+            </button>
+          </div>
+        </motion.div>
+      </motion.div>
+    </AnimatePresence>
+  );
+}
+
+function ViewToggle({ value, onChange }) {
+  return (
+    <div className="inline-flex rounded-lg border border-stone-200 bg-stone-100 p-0.5">
+      {[
+        { id: 'day', label: 'Day' },
+        { id: 'week', label: 'Week' },
+        { id: 'month', label: 'Month' },
+      ].map(({ id, label }) => (
+        <button
+          key={id}
+          type="button"
+          onClick={() => onChange(id)}
+          className={`px-3 py-1 rounded-md font-sans text-sm transition-colors ${
+            value === id ? 'bg-white text-stone-900 shadow-sm font-medium' : 'text-stone-500 hover:text-stone-700'
+          }`}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function TimeSlicer({
   weather = 'sun',
   goals = [],
@@ -810,17 +1285,29 @@ function TimeSlicer({
   autoFillLoading = false,
   googleToken: googleTokenProp = null,
   hideCapacityOnMobile = false,
+  calendarEvents = [],
+  onPlanWeek,
+  onPlanMonth,
+  planningWeek = false,
+  weekPreview = null,
+  onConfirmWeekPlan,
+  onDiscardWeekPlan,
+  monthlyRoadmap = null,
 }) {
   const { googleToken: googleTokenContext } = useGarden();
   const googleToken = googleTokenProp ?? googleTokenContext ?? null;
 
+  const [viewMode, setViewMode] = useState('day'); // 'day' | 'week' | 'month'
+  const [editingDate, setEditingDate] = useState(null); // null = today, 'YYYY-MM-DD' = specific date
   const [internalAssignments, setInternalAssignments] = useState({});
   const [recentlyExportedSlot, setRecentlyExportedSlot] = useState(null);
   const [pendingRoutineDrop, setPendingRoutineDrop] = useState(null); // { time, goal, value }
   const [seedPickerTargetHour, setSeedPickerTargetHour] = useState(null);
   const [spoonsToast, setSpoonsToast] = useState(false);
+  const [autoPlanToast, setAutoPlanToast] = useState(false);
   const [now, setNow] = useState(() => new Date());
   const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < MOBILE_BREAKPOINT);
+  const { weekAssignments, loadWeekPlans, loadDayPlan, saveDayPlanForDate } = useGarden();
   const isControlled = onAssignmentsChange != null;
   const assignments = isControlled ? controlledAssignments ?? {} : internalAssignments;
 
@@ -836,6 +1323,10 @@ function TimeSlicer({
     window.addEventListener('resize', check);
     return () => window.removeEventListener('resize', check);
   }, []);
+
+  useEffect(() => {
+    if (viewMode === 'week' || viewMode === 'month') loadWeekPlans();
+  }, [viewMode, loadWeekPlans]);
 
   const applyAssignment = (time, value) => {
     const next = { ...assignments, [time]: value };
@@ -854,6 +1345,28 @@ function TimeSlicer({
     const t = setTimeout(() => setSpoonsToast(false), 4000);
     return () => clearTimeout(t);
   }, [spoonsToast]);
+
+  useEffect(() => {
+    if (!autoPlanToast) return;
+    const t = setTimeout(() => setAutoPlanToast(false), 3000);
+    return () => clearTimeout(t);
+  }, [autoPlanToast]);
+
+  const handleAutoPlanDay = () => {
+    const energyLevel =
+      typeof dailySpoonCount === 'number' && dailySpoonCount >= 1 && dailySpoonCount <= 12
+        ? dailySpoonCount
+        : dailyEnergyModifier < 0
+          ? 'low'
+          : dailyEnergyModifier > 0
+            ? 'high'
+            : 'normal';
+    const plan = autoFillDailyPlan(goals, calendarEvents, energyLevel);
+    const next = { ...assignments, ...plan };
+    if (isControlled) onAssignmentsChange(next);
+    else setInternalAssignments(next);
+    setAutoPlanToast(true);
+  };
 
   const baseCapacity = MAX_SLOTS_BY_WEATHER[weather] ?? 6;
   const maxSlots =
@@ -996,31 +1509,129 @@ function TimeSlicer({
     setSeedPickerTargetHour(null);
   };
 
+  const [inspectedDate, setInspectedDate] = useState(null);
+  const todayStr = useMemo(() => new Date().toISOString().slice(0, 10), []);
+
+  const handleDayClickFromWeek = useCallback((dateStr) => {
+    loadDayPlan(dateStr);
+    setInspectedDate(dateStr);
+  }, [loadDayPlan]);
+
+  const handleSwitchToInspectedDay = useCallback(() => {
+    const dateStr = inspectedDate;
+    setInspectedDate(null);
+    if (dateStr && dateStr !== todayStr) {
+      setEditingDate(dateStr);
+      const dayData = weekAssignments[dateStr] ?? {};
+      if (isControlled) onAssignmentsChange(dayData);
+      else setInternalAssignments(dayData);
+    } else {
+      setEditingDate(null);
+    }
+    setViewMode('day');
+  }, [inspectedDate, todayStr, weekAssignments, isControlled, onAssignmentsChange]);
+
+  const handleBackToToday = useCallback(() => {
+    if (editingDate && isControlled) {
+      saveDayPlanForDate(editingDate, assignments);
+    }
+    setEditingDate(null);
+    if (isControlled) onAssignmentsChange(weekAssignments[todayStr] ?? {});
+  }, [editingDate, isControlled, assignments, onAssignmentsChange, weekAssignments, todayStr, saveDayPlanForDate]);
+
   return (
     <div className="bg-stone-50 rounded-xl border border-stone-200 p-6">
-      <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
-        <div className="flex items-center gap-2">
-          <h2 className="font-serif text-stone-900 text-lg">Daily Schedule</h2>
-          {isLowEnergy && (
+      <div className="flex items-center justify-between gap-2 mb-4 flex-wrap">
+        <div className="flex items-center gap-3">
+          <h2 className="font-serif text-stone-900 text-lg">Schedule</h2>
+          <ViewToggle value={viewMode} onChange={(mode) => {
+            if (viewMode === 'day' && editingDate && editingDate !== todayStr) {
+              saveDayPlanForDate(editingDate, assignments);
+              setEditingDate(null);
+              if (isControlled) onAssignmentsChange(weekAssignments[todayStr] ?? {});
+            }
+            setViewMode(mode);
+          }} />
+          {viewMode === 'day' && isLowEnergy && (
             <span className="flex items-center gap-1 font-sans text-xs text-amber-700" title="Low energy — reduced capacity">
               <LowBatteryIcon />
               <span>Low battery</span>
             </span>
           )}
         </div>
-        {onAutoFillWeek && (
-          <button
-            type="button"
-            onClick={onAutoFillWeek}
-            disabled={autoFillLoading}
-            className="shrink-0 px-3 py-1.5 rounded-lg border border-moss-300 bg-moss-50 font-sans text-sm text-moss-800 hover:bg-moss-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40 disabled:opacity-60 disabled:pointer-events-none transition-colors"
-            aria-label="Auto-fill week with routine blocks"
-          >
-            {autoFillLoading ? '…' : '✨ Auto-Fill Week'}
-          </button>
+        {viewMode === 'day' && (
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleAutoPlanDay}
+              className="shrink-0 px-3 py-1.5 rounded-lg border border-moss-300 bg-moss-50 font-sans text-sm text-moss-800 hover:bg-moss-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors"
+              aria-label="Auto-plan day with Smart Plan"
+            >
+              ✨ Auto-Plan Day
+            </button>
+            {onAutoFillWeek && (
+              <button
+                type="button"
+                onClick={onAutoFillWeek}
+                disabled={autoFillLoading}
+                className="shrink-0 px-3 py-1.5 rounded-lg border border-moss-300 bg-moss-50 font-sans text-sm text-moss-800 hover:bg-moss-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40 disabled:opacity-60 disabled:pointer-events-none transition-colors"
+                aria-label="Auto-fill week with routine blocks"
+              >
+                {autoFillLoading ? '…' : '✨ Auto-Fill Week'}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                const dateStr = editingDate || new Date().toISOString().slice(0, 10);
+                const dayEvents = HOURS
+                  .filter((h) => assignments[h])
+                  .map((h) => {
+                    const gid = getGoalIdFromAssignment(assignments[h]);
+                    const goal = goals.find((g) => g.id === gid);
+                    const hourNum = parseInt(h);
+                    const startTime = new Date(dateStr + 'T' + h + ':00');
+                    const endTime = new Date(startTime.getTime() + 60 * 60 * 1000);
+                    return { id: 'kz-' + h, title: goal?.title || 'Kaizen Task', start: startTime, end: endTime };
+                  });
+                if (dayEvents.length === 0) return;
+                downloadICS(dayEvents, 'kaizen-' + dateStr + '.ics');
+              }}
+              className="shrink-0 px-3 py-1.5 rounded-lg border border-stone-200 bg-white font-sans text-xs text-stone-600 hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-stone-300/40 transition-colors"
+              title="Export day to .ics (works with Apple Calendar, Outlook, Google)"
+            >
+              Export .ics
+            </button>
+          </div>
         )}
       </div>
-      {!hideCapacityOnMobile && (
+
+      {viewMode === 'week' && (
+        <WeekView
+          weekAssignments={weekAssignments}
+          goals={goals}
+          onDayClick={handleDayClickFromWeek}
+          onPlanWeek={onPlanWeek}
+          planningWeek={planningWeek}
+          weekPreview={weekPreview}
+          onConfirmWeekPlan={onConfirmWeekPlan}
+          onDiscardWeekPlan={onDiscardWeekPlan}
+          calendarEvents={calendarEvents}
+        />
+      )}
+
+      {viewMode === 'month' && (
+        <MonthPlanView
+          weekAssignments={weekAssignments}
+          goals={goals}
+          onDayClick={handleDayClickFromWeek}
+          monthlyRoadmap={monthlyRoadmap}
+          onPlanMonth={onPlanMonth}
+          calendarEvents={calendarEvents}
+        />
+      )}
+
+      {viewMode === 'day' && !hideCapacityOnMobile && (
         <SpoonBattery
           used={filledCount}
           total={maxSlots}
@@ -1029,12 +1640,55 @@ function TimeSlicer({
         />
       )}
 
-      <DndContext onDragEnd={handleDragEnd}>
+      {viewMode === 'day' && <DndContext onDragEnd={handleDragEnd}>
+        {editingDate && editingDate !== todayStr && (
+          <div className="mb-3 px-4 py-2.5 rounded-xl bg-sky-50 border border-sky-200 flex items-center justify-between">
+            <div>
+              <span className="font-sans text-sm font-medium text-sky-800">
+                Editing: {new Date(editingDate + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}
+              </span>
+              <span className="font-sans text-xs text-sky-600 ml-2">(not today)</span>
+            </div>
+            <button
+              type="button"
+              onClick={handleBackToToday}
+              className="px-3 py-1 rounded-lg bg-sky-100 text-sky-700 font-sans text-xs font-medium hover:bg-sky-200 transition-colors"
+            >
+              ← Back to Today
+            </button>
+          </div>
+        )}
         <div className="grid grid-cols-1 md:grid-cols-[1fr_200px] gap-6">
           {/* Left — Bamboo Timeline (scrollable) */}
           <div className="flex gap-3 max-h-[70vh] md:max-h-[420px] overflow-y-auto overflow-x-hidden rounded-lg">
             <div className="shrink-0 w-px bg-stone-300 rounded-full self-stretch" />
             <div className="flex-1 relative min-h-0">
+              {/* Calendar events for this day */}
+              {(() => {
+                const targetDate = editingDate || new Date().toISOString().slice(0, 10);
+                const dayEvts = (calendarEvents ?? []).filter((e) => {
+                  const d = e.start ? new Date(e.start) : null;
+                  return d && d.toISOString().slice(0, 10) === targetDate;
+                });
+                if (dayEvts.length === 0) return null;
+                return (
+                  <div className="mb-2 px-2 py-2 rounded-lg bg-sky-50 border border-sky-100">
+                    <p className="font-sans text-[10px] font-semibold text-sky-600 uppercase tracking-wider mb-1">Calendar</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {dayEvts.map((ev, idx) => {
+                        const st = ev.start ? new Date(ev.start) : null;
+                        const tl = st ? st.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) : '';
+                        return (
+                          <span key={ev.id || idx} className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-white border border-sky-200 font-sans text-xs text-sky-800">
+                            <span className="text-sky-500 font-mono text-[10px]">{tl}</span>
+                            <span className="truncate max-w-[120px]">{ev.title}</span>
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
               <div className="space-y-0">
                 {HOURS.map((hour) => (
                   <TimeSlot
@@ -1082,7 +1736,7 @@ function TimeSlicer({
                     <h4 className="font-sans text-xs font-medium text-amber-800 mb-2">🌱 Today&apos;s Rituals</h4>
                     <div className="flex flex-wrap gap-2">
                       {todayRitualItems.length === 0 ? (
-                        <p className="font-sans text-xs text-stone-400">No rituals scheduled for today.</p>
+                        <p className="font-sans text-xs text-stone-400">No rituals today. Add routines to your goals to see them here.</p>
                       ) : (
                         todayRitualItems.map(({ goal, ritualTitle }) => (
                           <RitualSeedChip
@@ -1101,22 +1755,77 @@ function TimeSlicer({
                       )}
                     </div>
                   </div>
-                  <div>
-                    <h4 className="font-sans text-xs font-medium text-stone-600 mb-2">🌰 Goal Bank</h4>
-                    <div className="flex flex-wrap gap-2">
-                      {goalBank.length === 0 ? (
-                        <p className="font-sans text-xs text-stone-400">No other goals.</p>
-                      ) : (
-                        goalBank.map((goal) => <SeedChip key={goal.id} goal={goal} assignments={assignments} onSeedClick={onSeedClick} onMilestoneCheck={onMilestoneCheck} onEditGoal={onEditGoal} onCompostGoal={onCompostGoal} onAddRoutineTime={onAddRoutineTime} onPlantRoutineBlock={handlePlantRoutineBlock} onAddSubtask={onAddSubtask} />)
-                      )}
-                    </div>
-                  </div>
+                  {/* Categorized Seed Bag */}
+                  {(() => {
+                    const kaizenSeeds = goalBank.filter((g) => g.type !== 'routine' && g.type !== 'vitality' && !g._projectGoal);
+                    const routineSeeds = goalBank.filter((g) => g.type === 'routine');
+                    const vitalitySeeds = goalBank.filter((g) => g.type === 'vitality');
+                    const projectSeeds = goalBank.filter((g) => g._projectGoal);
+                    const chipProps = (goal) => ({ key: goal.id, goal, assignments, onSeedClick, onMilestoneCheck, onEditGoal, onCompostGoal, onAddRoutineTime, onPlantRoutineBlock: handlePlantRoutineBlock, onAddSubtask });
+                    const sections = [
+                      { id: 'kaizen', label: '🌱 Kaizen Goals', items: kaizenSeeds, color: 'text-moss-700', emptyText: 'No kaizen goals yet.' },
+                      { id: 'routine', label: '🪨 Routines', items: routineSeeds, color: 'text-slate-700', emptyText: 'No routines.' },
+                      { id: 'project', label: '🌻 Projects', items: projectSeeds, color: 'text-amber-700', emptyText: null },
+                      { id: 'vitality', label: '💧 Vitality', items: vitalitySeeds, color: 'text-sky-700', emptyText: null },
+                    ];
+                    const hasAny = goalBank.length > 0;
+                    if (!hasAny) return (
+                      <div className="py-2">
+                        <p className="font-sans text-xs text-stone-400 mb-2">No goals yet.</p>
+                        {onOpenGoalCreator && (
+                          <button type="button" onClick={onOpenGoalCreator} className="font-sans text-xs text-moss-600 hover:text-moss-700 underline underline-offset-2">
+                            + Create a goal
+                          </button>
+                        )}
+                      </div>
+                    );
+                    return sections.filter((s) => s.items.length > 0 || s.emptyText).map((section) => (
+                      <div key={section.id}>
+                        <h4 className={`font-sans text-xs font-medium ${section.color} mb-2`}>{section.label}</h4>
+                        {section.items.length === 0 ? (
+                          section.emptyText && <p className="font-sans text-xs text-stone-400 mb-1">{section.emptyText}</p>
+                        ) : (
+                          <div className="flex flex-wrap gap-2">
+                            {section.items.map((goal) => <SeedChip {...chipProps(goal)} />)}
+                          </div>
+                        )}
+                      </div>
+                    ));
+                  })()}
                 </>
               )}
             </div>
           </div>
         </div>
-      </DndContext>
+      </DndContext>}
+
+      {/* Day Detail Modal (from week/month click) */}
+      {inspectedDate && (
+        <DayDetailModal
+          dateStr={inspectedDate}
+          dayAssignments={weekAssignments[inspectedDate] ?? {}}
+          goals={goals}
+          calendarEvents={calendarEvents}
+          onClose={() => setInspectedDate(null)}
+          onSwitchToDay={handleSwitchToInspectedDay}
+        />
+      )}
+
+      {/* Auto-Plan toast */}
+      <AnimatePresence>
+        {autoPlanToast && (
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 4 }}
+            transition={{ duration: 0.25 }}
+            className="fixed bottom-6 left-4 right-4 z-50 mx-auto max-w-sm rounded-xl border border-moss-200 bg-moss-50/95 px-4 py-3 shadow-lg font-sans text-sm text-moss-900"
+            role="status"
+          >
+            Mochi has organized your day.
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Spoons exceeded toast */}
       <AnimatePresence>
@@ -1173,31 +1882,48 @@ function TimeSlicer({
                           onClick={() => handleSelectSeedForSlot(seedPickerTargetHour, goal, ritualTitle ?? undefined)}
                           className="w-full py-3 px-4 rounded-xl border-2 border-amber-200 bg-amber-50/80 font-sans text-sm text-stone-800 hover:bg-amber-100 hover:border-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-500/40 text-left transition-colors"
                         >
-                          {ritualTitle || goal.title}
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-moss-600 block mb-0.5">{goal.title}</span>
+                          <span className="font-medium">{ritualTitle || goal.title}</span>
                         </button>
                       ))}
                     </div>
                   </div>
                 )}
-                <div>
-                  <h3 className="font-sans text-xs font-medium text-stone-600 mb-2">🌰 Goal Bank</h3>
-                  {goalBank.length === 0 ? (
-                    <p className="font-sans text-xs text-stone-400 py-2">No other goals.</p>
-                  ) : (
-                    <div className="flex flex-col gap-2">
-                      {goalBank.map((goal) => (
-                        <button
-                          key={goal.id}
-                          type="button"
-                          onClick={() => handleSelectSeedForSlot(seedPickerTargetHour, goal)}
-                          className="w-full py-3 px-4 rounded-xl border border-stone-200 bg-white font-sans text-sm text-stone-800 hover:bg-stone-50 hover:border-stone-300 focus:outline-none focus:ring-2 focus:ring-moss-500/40 text-left transition-colors"
-                        >
-                          {goal.title}
-                        </button>
-                      ))}
+                {(() => {
+                  const kz = goalBank.filter((g) => g.type !== 'routine' && g.type !== 'vitality' && !g._projectGoal);
+                  const rt = goalBank.filter((g) => g.type === 'routine');
+                  const pr = goalBank.filter((g) => g._projectGoal);
+                  const vt = goalBank.filter((g) => g.type === 'vitality');
+                  const sections = [
+                    { id: 'k', label: '🌱 Kaizen', items: kz, border: 'border-moss-200', bg: 'bg-moss-50/60', badge: 'text-moss-600' },
+                    { id: 'r', label: '🪨 Routines', items: rt, border: 'border-slate-200', bg: 'bg-slate-50/60', badge: 'text-slate-600' },
+                    { id: 'p', label: '🌻 Projects', items: pr, border: 'border-amber-200', bg: 'bg-amber-50/60', badge: 'text-amber-600' },
+                    { id: 'v', label: '💧 Vitality', items: vt, border: 'border-sky-200', bg: 'bg-sky-50/60', badge: 'text-sky-600' },
+                  ].filter((s) => s.items.length > 0);
+                  if (sections.length === 0) return (
+                    <div><p className="font-sans text-xs text-stone-400 py-2">No goals yet. Create one to get started.</p></div>
+                  );
+                  return sections.map((s) => (
+                    <div key={s.id}>
+                      <h3 className={`font-sans text-xs font-medium ${s.badge} mb-2`}>{s.label}</h3>
+                      <div className="flex flex-col gap-2">
+                        {s.items.map((goal) => (
+                          <button
+                            key={goal.id}
+                            type="button"
+                            onClick={() => handleSelectSeedForSlot(seedPickerTargetHour, goal)}
+                            className={`w-full py-3 px-4 rounded-xl border ${s.border} ${s.bg} font-sans text-sm text-stone-800 hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-moss-500/40 text-left transition-colors`}
+                          >
+                            <span className={`text-[10px] font-bold uppercase tracking-wider ${s.badge} block mb-0.5`}>
+                              {goal._projectGoal ? goal._projectName || 'Project' : goal.domain || goal.type || 'Kaizen'}
+                            </span>
+                            <span className="font-medium">{goal.title}</span>
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                  )}
-                </div>
+                  ));
+                })()}
               </div>
               <div className="p-4 border-t border-stone-200/80">
                 <button

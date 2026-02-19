@@ -1,9 +1,41 @@
 /**
- * Garden Brain: Gemini 1.5 integration for the Mochi Spirit.
+ * Garden Brain: Gemini integration for the Mochi Spirit.
  * Requires VITE_GEMINI_API_KEY in .env (https://aistudio.google.com/apikey).
+ * Tries multiple model versions in sequence for resilience.
  */
 
-const MODEL = 'gemini-1.5-flash';
+const MODELS_TO_TRY = [
+  'gemini-1.5-flash-002',
+  'gemini-1.5-flash-8b',
+  'gemini-1.5-flash-001',
+  'gemini-1.5-pro-002',
+  'gemini-pro',
+];
+const MODEL = MODELS_TO_TRY[0];
+
+/**
+ * Try generating content across all models in MODELS_TO_TRY.
+ * Falls through to the next model on 404/429/model-not-found errors.
+ * @param {object} genAI - GoogleGenerativeAI instance
+ * @param {string|Array} content - prompt string or multipart content array
+ * @param {object} opts - extra options passed to getGenerativeModel (e.g. systemInstruction)
+ */
+async function tryGenerate(genAI, content, opts = {}) {
+  let lastErr;
+  for (const modelName of MODELS_TO_TRY) {
+    try {
+      const model = genAI.getGenerativeModel({ model: modelName, ...opts });
+      const result = await model.generateContent(content);
+      return result;
+    } catch (err) {
+      lastErr = err;
+      const msg = String(err?.message ?? '').toLowerCase();
+      const isModelErr = msg.includes('404') || msg.includes('not found') || msg.includes('429') || msg.includes('quota') || msg.includes('deprecated');
+      if (!isModelErr) throw err;
+    }
+  }
+  throw lastErr;
+}
 
 const SYSTEM_INSTRUCTIONS = `You are the Mochi Spirit, a deeply empathetic and comforting companion in a productivity garden.
 
@@ -103,10 +135,6 @@ export async function chatWithSpirit(history, context) {
   try {
     const { GoogleGenerativeAI } = await import('@google/generative-ai');
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({
-      model: MODEL,
-      systemInstruction: SYSTEM_INSTRUCTIONS + '\n\nSystem Note (current context): ' + buildContextNote(context || {}),
-    });
 
     const historyForPrompt =
       Array.isArray(history) && history.length > 0
@@ -119,7 +147,9 @@ export async function chatWithSpirit(history, context) {
         ? `${historyForPrompt}\n\nMochi, reply in character (2 sentences max):`
         : 'The gardener is about to send a message. Reply in character (2 sentences max) when they do.';
 
-    const result = await model.generateContent(prompt);
+    const result = await tryGenerate(genAI, prompt, {
+      systemInstruction: SYSTEM_INSTRUCTIONS + '\n\nSystem Note (current context): ' + buildContextNote(context || {}),
+    });
     const text = result?.response?.text?.();
     if (typeof text === 'string') {
       return text.trim().replace(/\n+/g, ' ').slice(0, 320);
@@ -145,7 +175,6 @@ export async function generateSpiritInsight(logs, goals, upcomingPlan) {
   try {
     const { GoogleGenerativeAI } = await import('@google/generative-ai');
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: MODEL });
 
     const anonymizedLogs = anonymizeLogs(logs ?? []);
     const logsText = formatLast10Logs(anonymizedLogs);
@@ -166,7 +195,7 @@ ${planText}
 Give one short Mochi Spirit insight (2 sentences max): find a pattern or gentle contradiction, and encourage them with seeds/weather/tea.`;
 
     const prompt = SYSTEM_INSTRUCTIONS + '\n\n' + userPrompt;
-    const result = await model.generateContent(prompt);
+    const result = await tryGenerate(genAI, prompt);
     const text = result?.response?.text?.();
     if (typeof text === 'string') {
       return text.trim().replace(/\n+/g, ' ').slice(0, 320);
@@ -193,11 +222,10 @@ export async function breakDownTask(taskTitle) {
   try {
     const { GoogleGenerativeAI } = await import('@google/generative-ai');
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: MODEL });
 
     const prompt = `Break down the task '${title.replace(/'/g, "\\'")}' into 3-5 very small, actionable subtasks (max 4 words each). Return ONLY a JSON array of strings, e.g., ["Draft outline", "Find sources"]. No other text or markdown.`;
 
-    const result = await model.generateContent(prompt);
+    const result = await tryGenerate(genAI, prompt);
     const text = result?.response?.text?.();
     if (typeof text !== 'string') return null;
 
@@ -253,25 +281,19 @@ export async function processIncomingCompost(fileOrText) {
   try {
     const { GoogleGenerativeAI } = await import('@google/generative-ai');
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: MODEL });
 
     const { isImage, mimeType, data } = parseImageInput(input);
     let result;
 
     if (isImage && data) {
       const parts = [
-        {
-          inlineData: {
-            mimeType: mimeType || 'image/png',
-            data,
-          },
-        },
+        { inlineData: { mimeType: mimeType || 'image/png', data } },
         { text: TASK_EXTRACT_PROMPT },
       ];
-      result = await model.generateContent(parts);
+      result = await tryGenerate(genAI, parts);
     } else {
       const prompt = `${TASK_EXTRACT_PROMPT}\n\nInput:\n${input}`;
-      result = await model.generateContent(prompt);
+      result = await tryGenerate(genAI, prompt);
     }
 
     const text = result?.response?.text?.();
@@ -290,42 +312,294 @@ export async function processIncomingCompost(fileOrText) {
   }
 }
 
-/**
- * Suggests a structure for a new goal based on its title and type.
- * Returns JSON: { estimatedMinutes, targetHours, rituals: [{title, days}], milestones: [{title}] }
- */
 export async function suggestGoalStructure(title, type = 'kaizen', currentMetric, targetMetric) {
   const apiKey = getApiKey();
-  if (!apiKey) return null;
+  if (!apiKey) {
+    console.error("Missing API Key");
+    return null;
+  }
+
+  const isRoutine = type === 'routine';
+
+  const prompt = isRoutine
+    ? `
+      Act as a Kaizen productivity coach for recurring habits.
+      User Routine: "${title}".
+
+      This is a recurring habit/routine (not a project). Suggest a plan in strict JSON (no markdown).
+
+      Requirements:
+      1. "strategy": One sentence on how to build this habit sustainably.
+      2. "vines": Array of 3-5 small setup tasks to get started (e.g. "Buy equipment", "Block calendar time", "Prepare workspace").
+      3. "rituals": 1-2 recurring schedules with a descriptive name and days 0-6 (0=Sun). Use names like "Morning Session", "Evening Wind Down", "Sunday Reset", etc.
+      4. "estimatedMinutes": Typical session length (15, 30, 45, 60, 90).
+      5. "targetHours": Weekly hour commitment (integer).
+      6. "suggestedMetrics": 1-3 measurable metrics. Each: { "name": string, "unit": string, "direction": "higher"|"lower" }.
+
+      Example for "Daily Meditation":
+      {
+        "strategy": "Start with just 5 minutes and build up gradually.",
+        "vines": ["Download a meditation app", "Set a morning alarm 10 min early", "Find a quiet spot"],
+        "estimatedMinutes": 15,
+        "targetHours": 3,
+        "rituals": [{"title": "Morning Session", "days": [1, 2, 3, 4, 5]}, {"title": "Sunday Reset", "days": [0]}],
+        "suggestedMetrics": [{"name": "Session streak", "unit": "days", "direction": "higher"}, {"name": "Session duration", "unit": "min", "direction": "higher"}]
+      }
+    `
+    : `
+      Act as a Kaizen productivity coach.
+      User Goal: "${title}" (${type}).
+      ${currentMetric ? `Current: ${currentMetric}, Target: ${targetMetric}` : ''}
+
+      Create a comprehensive plan in strict JSON format (no markdown).
+
+      Requirements:
+      1. "strategy": One sentence of strategic advice.
+      2. "vines": Array of 3-5 small, immediate subtasks (e.g. "Buy shoes", "Download app").
+      3. "rituals": 1-2 recurring habits (title + days 0-6).
+      4. "milestones": EXACTLY 4 progressive milestones.
+      5. "estimatedMinutes": Session duration (15, 30, 45, 60).
+      6. "targetHours": Weekly goal (integer).
+      7. "suggestedMetrics": 1-3 measurable metrics to track progress. Each: { "name": string, "unit": string, "direction": "higher"|"lower" }.
+
+      Example Output:
+      {
+        "strategy": "Focus on consistency before intensity.",
+        "vines": ["Research gear", "Clear schedule", "First 10m walk"],
+        "estimatedMinutes": 45,
+        "targetHours": 5,
+        "rituals": [{"title": "Morning Run", "days": [1, 3, 5]}],
+        "milestones": ["Week 1: Walk 5k", "Week 4: Run 2k continuous", "Week 8: Run 5k", "Week 12: Run 10k"],
+        "suggestedMetrics": [{"name": "Distance", "unit": "km", "direction": "higher"}, {"name": "Weight", "unit": "kg", "direction": "lower"}]
+      }
+    `;
 
   try {
     const { GoogleGenerativeAI } = await import('@google/generative-ai');
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: MODEL });
+
+    const result = await tryGenerate(genAI, prompt);
+    const text = result?.response?.text?.();
+
+    if (!text) throw new Error("Empty response");
+
+    const cleanJson = text.replace(/```json/g, '').replace(/```/g, '').trim();
+    return JSON.parse(cleanJson);
+
+  } catch (err) {
+    console.error("Gemini Suggest Error:", err);
+    const msg = String(err?.message ?? err ?? '').toLowerCase();
+    let reason = 'unknown';
+    if (msg.includes('429') || msg.includes('quota') || msg.includes('rate')) {
+      reason = 'quota';
+      try { window.alert('Gemini free-tier quota reached for today. It resets in ~24 h, or you can add billing at ai.google.dev.'); } catch (_) {}
+    } else if (msg.includes('api_key_invalid') || msg.includes('api key not valid') || (msg.includes('403') && msg.includes('key'))) {
+      reason = 'key';
+      try { window.alert('Your Gemini API key may be invalid. Check VITE_GEMINI_API_KEY in your .env file.'); } catch (_) {}
+    }
+    return {
+      _fallback: true,
+      _reason: reason,
+      strategy: 'Start small, stay consistent.',
+      vines: ['Research the basics', 'Set aside 15 minutes tomorrow', 'Track your first session'],
+      estimatedMinutes: 30,
+      targetHours: 3,
+      rituals: [{ title: 'Daily Practice', days: [1, 3, 5] }],
+      milestones: ['Complete first session', 'Build a 1-week streak', 'Reflect and adjust', 'Reach your first milestone'],
+      suggestedMetrics: [{ name: 'Sessions completed', unit: 'count', direction: 'higher' }],
+    };
+  }
+}
+
+/**
+ * AI Weekly Planner: distributes goals across Mon-Sun based on targets, rituals, and energy.
+ * Returns { monday: [{ goalId, hours }], tuesday: [...], ... }
+ */
+export async function generateWeeklyPlan(goals, calendarEvents = [], energyProfile = {}) {
+  const apiKey = getApiKey();
+  if (!apiKey) { console.error("Missing API Key"); return null; }
+
+  const routineGoals = goals.filter((g) => g.type === 'routine' || g.type === 'kaizen');
+  if (routineGoals.length === 0) return null;
+
+  const goalSummaries = routineGoals.map((g) => ({
+    id: g.id,
+    title: g.title,
+    type: g.type,
+    targetHours: g.targetHours ?? 5,
+    ritualDays: (g.rituals ?? []).flatMap((r) => r.days ?? []),
+    estimatedMinutes: g.estimatedMinutes ?? 60,
+    energyType: g.energyType ?? 'maintenance',
+  }));
+
+  const eventSummary = (calendarEvents ?? []).slice(0, 20).map((e) => {
+    const start = e.start ? new Date(e.start) : null;
+    return start ? `${start.toLocaleDateString('en-US', { weekday: 'short' })} ${start.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}` : '';
+  }).filter(Boolean).join('; ');
+
+  const spoons = energyProfile.spoonCount ?? 8;
+
+  try {
+    const { GoogleGenerativeAI } = await import('@google/generative-ai');
+    const genAI = new GoogleGenerativeAI(apiKey);
 
     const prompt = `
-      The user wants to start a "${type}" goal named "${title}".
-      ${currentMetric && targetMetric ? `They are tracking a metric from ${currentMetric} to ${targetMetric}.` : ''}
-      
-      Act as a Kaizen expert. Return a JSON object (no markdown) with:
-      1. "estimatedMinutes" (number, 15/30/60/90) for a typical session.
-      2. "targetHours" (number) weekly commitment.
-      3. "rituals" (array of {title, days[]}) where days are 0-6 (Sun-Sat). Suggest 1-2 rituals.
-      4. "milestones" (array of strings). If tracking a metric, break the gap into 3-5 progressive steps. If not, break the project into small kaizen steps.
-      
-      Keep it encouraging but realistic.
-    `;
+Act as a Kaizen weekly planner. Distribute these goals across Mon-Sun.
 
-    const result = await model.generateContent(prompt);
+Goals (JSON):
+${JSON.stringify(goalSummaries, null, 2)}
+
+Calendar (busy times): ${eventSummary || 'None'}
+Energy level: ${spoons} spoons out of 12 (${spoons <= 4 ? 'low' : spoons >= 9 ? 'high' : 'normal'} energy).
+
+Rules:
+- Respect ritualDays: if a goal has ritualDays [1,3,5] (Mon=1, Sun=0), schedule it on those days.
+- Total hours per goal across the week should roughly match targetHours.
+- Max ${Math.min(spoons, 10)} hours of work per day.
+- High-focus tasks in the morning, lighter tasks in the afternoon.
+- Leave at least 1 day lighter for rest.
+
+Return strict JSON (no markdown):
+{
+  "monday": [{ "goalId": "...", "hours": 2 }],
+  "tuesday": [...],
+  "wednesday": [...],
+  "thursday": [...],
+  "friday": [...],
+  "saturday": [...],
+  "sunday": [...]
+}
+`;
+
+    const result = await tryGenerate(genAI, prompt);
     const text = result?.response?.text?.();
-    if (!text) return null;
-
-    let raw = text.trim();
-    const jsonMatch = raw.match(/\{[\s\S]*\}/);
-    if (jsonMatch) raw = jsonMatch[0];
-    return JSON.parse(raw);
+    if (!text) throw new Error("Empty response");
+    const clean = text.replace(/```json/g, '').replace(/```/g, '').trim();
+    return JSON.parse(clean);
   } catch (err) {
-    console.warn('Gemini suggestGoalStructure:', err);
+    console.error("Gemini Weekly Plan Error:", err);
+    return null;
+  }
+}
+
+/**
+ * AI Monthly Planner: creates a high-level roadmap for the month.
+ * Returns { summary, weeks: [{ focus, goals: { goalId: hours } }] }
+ */
+export async function generateMonthlyPlan(goals, monthIndex, year) {
+  const apiKey = getApiKey();
+  if (!apiKey) { console.error("Missing API Key"); return null; }
+
+  const monthName = ['January','February','March','April','May','June','July','August','September','October','November','December'][monthIndex];
+  const goalSummaries = goals.filter((g) => g.type === 'routine' || g.type === 'kaizen').map((g) => ({
+    id: g.id,
+    title: g.title,
+    type: g.type,
+    weeklyTargetHours: g.targetHours ?? 5,
+    monthlyTarget: g.schedulerSettings?.monthlyTarget ?? null,
+    milestones: (g.milestones ?? []).filter((m) => !m.completed).map((m) => m.title).slice(0, 4),
+  }));
+
+  if (goalSummaries.length === 0) return null;
+
+  try {
+    const { GoogleGenerativeAI } = await import('@google/generative-ai');
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const prompt = `
+Act as a Kaizen monthly planner for ${monthName} ${year}.
+
+Goals:
+${JSON.stringify(goalSummaries, null, 2)}
+
+Create a 4-week roadmap. For each week, specify which goals to focus on and hour targets.
+Consider milestones and suggest when to aim for them.
+
+Return strict JSON (no markdown):
+{
+  "summary": "Brief 1-sentence month overview",
+  "weeks": [
+    { "focus": "Description of week focus", "goals": { "goalId": hoursTarget, ... } },
+    { "focus": "...", "goals": { ... } },
+    { "focus": "...", "goals": { ... } },
+    { "focus": "...", "goals": { ... } }
+  ]
+}
+`;
+
+    const result = await tryGenerate(genAI, prompt);
+    const text = result?.response?.text?.();
+    if (!text) throw new Error("Empty response");
+    const clean = text.replace(/```json/g, '').replace(/```/g, '').trim();
+    return JSON.parse(clean);
+  } catch (err) {
+    console.error("Gemini Monthly Plan Error:", err);
+    return null;
+  }
+}
+
+/**
+ * AI Project Planner: slices a project into phases, milestones, and tasks with a timeline.
+ * @param {string} projectName
+ * @param {string|null} deadline - ISO date string or null
+ * @param {string} description - optional project description
+ * @param {Array} existingGoals - existing goals that could be linked
+ * @returns {{ summary, phases: [{ title, weekRange, tasks: [{ title, estimatedHours, type }], milestone }], suggestedLinks: [{ taskTitle, goalId, goalTitle }] }}
+ */
+export async function sliceProject(projectName, deadline, description = '', existingGoals = []) {
+  const apiKey = getApiKey();
+  if (!apiKey) { console.error("Missing API Key"); return null; }
+
+  const deadlineStr = deadline ? `Deadline: ${deadline}.` : 'No hard deadline — suggest a reasonable timeline.';
+  const goalList = existingGoals.slice(0, 15).map((g) => `${g.id}: "${g.title}" (${g.type})`).join('\n');
+
+  try {
+    const { GoogleGenerativeAI } = await import('@google/generative-ai');
+    const genAI = new GoogleGenerativeAI(apiKey);
+
+    const prompt = `
+Act as a Kaizen project planner. Break this project into manageable phases.
+
+Project: "${projectName}"
+${description ? `Description: ${description}` : ''}
+${deadlineStr}
+
+Existing goals the user already has:
+${goalList || 'None yet.'}
+
+Return strict JSON (no markdown):
+{
+  "summary": "1-sentence project overview",
+  "totalWeeks": number,
+  "phases": [
+    {
+      "title": "Phase name",
+      "weekRange": "Week 1-2",
+      "tasks": [
+        { "title": "Task name", "estimatedHours": 5, "type": "kaizen" }
+      ],
+      "milestone": "What success looks like at the end of this phase"
+    }
+  ],
+  "suggestedLinks": [
+    { "taskTitle": "A task that maps to an existing goal", "goalId": "id-from-list", "goalTitle": "title" }
+  ]
+}
+
+Guidelines:
+- Break into 3-6 phases.
+- Each phase has 2-5 concrete tasks.
+- Tasks should be small enough to finish in 1-2 weeks.
+- If a task maps to an existing goal, include it in suggestedLinks.
+- "type" should be "kaizen" for project work or "routine" for recurring support tasks.
+`;
+
+    const result = await tryGenerate(genAI, prompt);
+    const text = result?.response?.text?.();
+    if (!text) throw new Error("Empty response");
+    const clean = text.replace(/```json/g, '').replace(/```/g, '').trim();
+    return JSON.parse(clean);
+  } catch (err) {
+    console.error("Gemini Project Slice Error:", err);
     return null;
   }
 }

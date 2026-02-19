@@ -67,13 +67,13 @@ const DURATION_OPTIONS = [
 const DAY_LETTERS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 /** Built-in ritual names for the creatable select. Custom ones live in userSettings.ritualCategories. */
-const DEFAULT_RITUAL_OPTIONS = ['Morning Heavy', 'Afternoon Heavy', 'Balanced'];
+const DEFAULT_RITUAL_OPTIONS = ['Morning Heavy', 'Afternoon Heavy', 'Balanced', 'Evening Wind Down', 'Sunday Reset'];
 
 function ritualNameToPreference(ritualName) {
   const n = (ritualName || '').trim();
   if (n === 'Morning Heavy') return 'morning';
   if (n === 'Afternoon Heavy') return 'afternoon';
-  if (n === 'Balanced') return 'balanced';
+  if (n === 'Balanced' || n === 'Evening Wind Down' || n === 'Sunday Reset') return 'balanced';
   return 'balanced';
 }
 
@@ -120,6 +120,8 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
   const [linkedVitalityId, setLinkedVitalityId] = useState('');
   const [toast, setToast] = useState(null);
   const [isSuggesting, setIsSuggesting] = useState(false);
+  const [suggestedMetrics, setSuggestedMetrics] = useState([]);
+  const [linkedMetrics, setLinkedMetrics] = useState([]); // selected metric names
   // Routine: Schedule mode (Solid vs Liquid) and settings
   const [scheduleMode, setScheduleMode] = useState('liquid');
   const [solidStart, setSolidStart] = useState('09:00');
@@ -280,18 +282,39 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
       );
 
       if (suggestion) {
+        const isFallback = suggestion._fallback === true;
+        const fallbackReason = suggestion._reason;
+        if (isFallback) { delete suggestion._fallback; delete suggestion._reason; }
+
         if (suggestion.estimatedMinutes) setEstimatedMinutes(suggestion.estimatedMinutes);
         if (suggestion.targetHours) setTargetHours(suggestion.targetHours);
 
-        if (Array.isArray(suggestion.rituals)) {
+        if (goalType === 'routine' && Array.isArray(suggestion.rituals) && suggestion.rituals[0]?.title) {
+          setRitualName(suggestion.rituals[0].title);
+        }
+        if (Array.isArray(suggestion.rituals) && goalType === 'kaizen') {
           const newRituals = suggestion.rituals.map((r) => newRitual({ title: r.title, days: r.days }));
           setRituals(newRituals.length ? newRituals : [newRitual()]);
         }
 
+        if (Array.isArray(suggestion.vines)) {
+          setVines(suggestion.vines.map((t) => newVine({ title: typeof t === 'string' ? t : t.title, estimatedHours: 0.5 })));
+        }
         if (Array.isArray(suggestion.milestones)) {
           setMilestones(suggestion.milestones.map((t) => newMilestone(t)));
         }
-        setToast('Plan sprouted!');
+        if (Array.isArray(suggestion.suggestedMetrics) && suggestion.suggestedMetrics.length > 0) {
+          setSuggestedMetrics(suggestion.suggestedMetrics);
+        }
+        if (suggestion.strategy && goalType === 'kaizen') setNotes(suggestion.strategy);
+
+        setToast(
+          isFallback
+            ? fallbackReason === 'quota'
+              ? 'Free-tier quota reached for today. Default plan applied — try again tomorrow.'
+              : "Default plan applied (Mochi couldn't connect). Try again for a custom plan."
+            : 'Plan sprouted!'
+        );
       } else {
         setToast('Mochi is meditating... try again?');
       }
@@ -352,7 +375,41 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
       notes: isRoutine || isVitality ? '' : notes.trim(),
       ...((isRoutine || goalType === 'kaizen') && { subtasks: vines.map((v) => ({ id: v.id, title: v.title, estimatedHours: Number(v.estimatedHours) || 0, completedHours: 0, deadline: v.deadline || null, color: null })) }),
       ...(goalType === 'kaizen' && linkedVitalityId && { linkedVitalityGoalId: linkedVitalityId }),
+      ...(linkedMetrics.length > 0 && { linkedMetrics: linkedMetrics.map((name) => {
+        const found = suggestedMetrics.find((m) => m.name === name);
+        return found ? { name: found.name, unit: found.unit, direction: found.direction } : { name, unit: '', direction: 'higher' };
+      }) }),
     };
+
+    // Auto-create vitality goals for linked metrics that don't have an existing tracker
+    if (linkedMetrics.length > 0 && onSave) {
+      linkedMetrics.forEach((metricName) => {
+        const hasExisting = (existingVitalityGoals || []).some(
+          (vg) => vg.title.toLowerCase().includes(metricName.toLowerCase()) || metricName.toLowerCase().includes(vg.title.toLowerCase())
+        );
+        if (!hasExisting) {
+          const metricDef = suggestedMetrics.find((m) => m.name === metricName);
+          const vitalityGoal = {
+            id: crypto.randomUUID?.() ?? `goal-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            type: 'vitality',
+            title: metricName,
+            domain: domain || 'body',
+            metricSettings: {
+              metricName: metricName,
+              unit: metricDef?.unit ?? '',
+              direction: metricDef?.direction ?? 'higher',
+            },
+            metrics: [],
+            tributaryGoalIds: [goal.id],
+          };
+          onSave(vitalityGoal);
+          if (!goal.linkedVitalityGoalId) {
+            goal.linkedVitalityGoalId = vitalityGoal.id;
+          }
+        }
+      });
+    }
+
     onSave?.(goal);
     onClose?.();
     setGoalType(null);
@@ -372,6 +429,8 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
     setLiquidPeriod('week');
     setRitualName('Balanced');
     setTrackingChoice('');
+    setSuggestedMetrics([]);
+    setLinkedMetrics([]);
     setMetricName('');
     setMetricUnit('');
     setMetricCurrentValue('');
@@ -410,7 +469,12 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
             {showTypeChoice && (
               <div className="p-6 pb-8">
                 <h2 className="font-serif text-stone-900 text-xl mb-2">What are you adding?</h2>
-                <p className="font-sans text-stone-500 text-sm mb-6">Choose how you want to grow.</p>
+                <p className="font-sans text-stone-500 text-sm mb-4">Choose how you want to grow.</p>
+                <div className="mb-4 p-3 rounded-xl bg-stone-100/80 border border-stone-200">
+                  <p className="font-sans text-xs text-stone-600">
+                    <strong className="text-stone-700">Seed</strong> = goal + steps + optional practice days (rituals). &middot; <strong className="text-stone-700">Rock</strong> = recurring habit, weekly target. &middot; <strong className="text-stone-700">Vitality</strong> = one number to track.
+                  </p>
+                </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   <button
                     type="button"
@@ -456,9 +520,23 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
             {/* Step 1: Form — Kaizen or Routine */}
             {showForm && (
             <form onSubmit={handleSubmit} className="p-6 pb-8" noValidate>
-              <h2 className="font-serif text-stone-900 text-xl mb-6">
-                {goalType === 'routine' ? 'Place a Rock' : goalType === 'vitality' ? 'Track a Metric' : 'Plant a Seed'}
-              </h2>
+              <div className="flex items-center gap-3 mb-6">
+                <h2 className="font-serif text-stone-900 text-xl flex-1">
+                  {goalType === 'routine' ? 'Place a Rock' : goalType === 'vitality' ? 'Track a Metric' : 'Plant a Seed'}
+                </h2>
+                <div className="flex items-center gap-1.5">
+                  {['Type', 'Details', 'Save'].map((label, i) => (
+                    <div key={label} className="flex items-center gap-1.5">
+                      <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-sans font-bold ${
+                        i === 0 ? 'bg-moss-500 text-white' : i === 1 ? 'bg-moss-500 text-white' : 'bg-stone-200 text-stone-500'
+                      }`}>
+                        {i === 0 ? '✓' : i + 1}
+                      </div>
+                      {i < 2 && <div className={`w-3 h-0.5 ${i === 0 ? 'bg-moss-400' : 'bg-stone-200'}`} />}
+                    </div>
+                  ))}
+                </div>
+              </div>
 
               {/* Name */}
               <label className="block font-sans text-sm font-medium text-stone-600 mb-1">Name</label>
@@ -787,6 +865,17 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
                     />
                     <span className="font-sans text-sm font-medium text-stone-700 w-10">{targetHours}h</span>
                   </div>
+                  <div className="flex flex-wrap gap-2 items-center mb-4">
+                    <button
+                      type="button"
+                      onClick={handleSuggest}
+                      disabled={isSuggesting}
+                      className="font-sans text-sm text-moss-600 font-medium hover:text-moss-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      ✨ Suggest based on Title
+                    </button>
+                    <span className="font-sans text-xs text-stone-400">Session length, target hours, and subtasks from Mochi.</span>
+                  </div>
                 </>
               )}
 
@@ -826,9 +915,10 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
                 <span className="font-sans text-sm font-medium text-stone-700 w-10">{targetHours}h</span>
               </div>
 
-              {/* Rituals */}
-              <div className="mb-4">
-                <label className="font-sans text-sm font-medium text-stone-600">Rituals</label>
+              {/* Rituals = when you practice this Seed (Kaizen only) */}
+              <div className="mb-2 mt-4 pt-4 border-t border-stone-200">
+                <label className="font-sans text-sm font-medium text-stone-700 block">Practice schedule (rituals)</label>
+                <p className="font-sans text-xs text-stone-500 mt-0.5">Which days do you want to work on this? Rituals show up in your schedule as recurring blocks.</p>
               </div>
               <div className="space-y-3 mb-4">
                 {rituals.map((r) => (
@@ -881,6 +971,7 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
                 >
                   ✨ Suggest based on Title
                 </button>
+                <p className="font-sans text-xs text-stone-400 w-full mt-1">Change the title and run again for a new plan.</p>
               </div>
 
               {/* Milestones (Break it down) */}
@@ -929,6 +1020,43 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
                   + Add Milestone
                 </button>
               </div>
+
+              {/* AI-Suggested Metrics */}
+              {suggestedMetrics.length > 0 && (goalType === 'kaizen' || goalType === 'routine') && (
+                <div className="mb-4">
+                  <label className="block font-sans text-sm font-medium text-stone-600 mb-2">Track a Metric</label>
+                  <p className="font-sans text-xs text-stone-400 mb-2">AI-suggested metrics for this goal. Tap to link. If no matching tracker exists, one will be created for you.</p>
+                  <div className="flex flex-wrap gap-2">
+                    {suggestedMetrics.map((m, idx) => {
+                      const isLinked = linkedMetrics.includes(m.name);
+                      const hasExistingVitality = (existingVitalityGoals || []).some(
+                        (vg) => vg.title.toLowerCase().includes(m.name.toLowerCase()) || m.name.toLowerCase().includes(vg.title.toLowerCase())
+                      );
+                      return (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => {
+                            setLinkedMetrics((prev) =>
+                              isLinked ? prev.filter((n) => n !== m.name) : [...prev, m.name]
+                            );
+                          }}
+                          className={`px-3 py-1.5 rounded-full font-sans text-sm border transition-colors ${
+                            isLinked
+                              ? 'bg-moss-100 border-moss-500 text-moss-800 ring-1 ring-moss-500/30'
+                              : 'bg-white border-stone-200 text-stone-600 hover:border-moss-300 hover:text-moss-700'
+                          }`}
+                        >
+                          {m.direction === 'higher' ? '↑' : '↓'} {m.name} ({m.unit})
+                          {isLinked && !hasExistingVitality && (
+                            <span className="ml-1 text-[10px] text-moss-600">+ new tracker</span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
 
               {/* Notes */}
               <label className="block font-sans text-sm font-medium text-stone-600 mb-2">Strategy &amp; Constraints</label>
@@ -1031,7 +1159,7 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
                   onClick={() => goalType != null ? setGoalType(null) : onClose?.()}
                   className="flex-1 py-3 font-sans text-stone-600 hover:text-stone-900 hover:bg-stone-100 rounded-lg transition-colors"
                 >
-                  {goalType != null ? 'Back' : 'Cancel'}
+                  {goalType != null ? '← Change Type' : 'Cancel'}
                 </button>
                 <button
                   type="submit"

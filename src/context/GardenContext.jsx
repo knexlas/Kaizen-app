@@ -3,6 +3,7 @@ import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../firebase/firebaseConfig';
 import { subscribeToCompost, addCompostItem, deleteCompostItem, subscribeToDailyPlan, saveDailyPlan, getDailyPlan } from '../firebase/services';
 import { loginWithGoogle, logoutUser } from '../services/authService';
+import { loginWithMicrosoft, logoutMicrosoft, fetchOutlookEvents, getAccessTokenSilently } from '../services/microsoftCalendarService';
 const STORAGE_KEY = 'gardenData';
 const LAST_OPEN_DATE_KEY = 'gardenLastOpenDate';
 const CLOUD_DEBOUNCE_MS = 2000;
@@ -49,6 +50,8 @@ export function GardenProvider({ children }) {
   const [compost, setCompost] = useState(defaultData.compost);
   const [assignments, setAssignments] = useState({}); // daily schedule { [hour]: goalId | assignmentObject }
   const [planDate, setPlanDate] = useState(() => todayString()); // current date for plan subscription (updates so we re-sub at midnight)
+  const [weekAssignments, setWeekAssignments] = useState({}); // cache: { [dateStr]: { [hour]: assignment } }
+  const weekAssignmentsRef = useRef({});
   const [eveningMode, setEveningMode] = useState('none'); // 'none' | 'sleep' | 'night-owl'
   const [spiritPoints, setSpiritPoints] = useState(defaultData.spiritPoints);
   const [embers, setEmbers] = useState(defaultData.embers ?? 100);
@@ -62,6 +65,8 @@ export function GardenProvider({ children }) {
 
   const [googleUser, setGoogleUser] = useState(null);
   const [googleToken, setGoogleToken] = useState(null);
+  const [msUser, setMsUser] = useState(null);
+  const [msToken, setMsToken] = useState(null);
 
   const connectCalendar = useCallback(async () => {
     try {
@@ -79,6 +84,31 @@ export function GardenProvider({ children }) {
     await logoutUser();
     setGoogleUser(null);
     setGoogleToken(null);
+  }, []);
+
+  const connectOutlook = useCallback(async () => {
+    try {
+      const { accessToken, account } = await loginWithMicrosoft();
+      setMsUser(account);
+      setMsToken(accessToken);
+      return { ok: true };
+    } catch (e) {
+      console.error("Outlook connection failed", e);
+      const message = e?.message || String(e);
+      return { ok: false, error: message };
+    }
+  }, []);
+
+  const disconnectOutlook = useCallback(async () => {
+    try { await logoutMicrosoft(); } catch (_) {}
+    setMsUser(null);
+    setMsToken(null);
+  }, []);
+
+  const refreshOutlookToken = useCallback(async () => {
+    const token = await getAccessTokenSilently();
+    if (token) setMsToken(token);
+    return token;
   }, []);
 
   useEffect(() => {
@@ -183,6 +213,69 @@ export function GardenProvider({ children }) {
     };
   }, [googleUser?.uid, hydrated, planDate, assignments]);
 
+  // Keep weekAssignments cache in sync with today's assignments
+  useEffect(() => {
+    weekAssignmentsRef.current = { ...weekAssignmentsRef.current, [planDate]: assignments };
+    setWeekAssignments((prev) => ({ ...prev, [planDate]: assignments }));
+  }, [planDate, assignments]);
+
+  const loadDayPlan = useCallback(async (dateStr) => {
+    if (weekAssignmentsRef.current[dateStr]) return weekAssignmentsRef.current[dateStr];
+    const uid = googleUser?.uid;
+    if (!uid) return {};
+    try {
+      const { assignments: a } = await getDailyPlan(uid, dateStr);
+      weekAssignmentsRef.current = { ...weekAssignmentsRef.current, [dateStr]: a };
+      setWeekAssignments((prev) => ({ ...prev, [dateStr]: a }));
+      return a;
+    } catch (e) {
+      console.warn('loadDayPlan failed', e);
+      return {};
+    }
+  }, [googleUser?.uid]);
+
+  const saveDayPlanForDate = useCallback(async (dateStr, dayAssignments) => {
+    weekAssignmentsRef.current = { ...weekAssignmentsRef.current, [dateStr]: dayAssignments };
+    setWeekAssignments((prev) => ({ ...prev, [dateStr]: dayAssignments }));
+    if (dateStr === planDate) {
+      setAssignments(dayAssignments);
+      return;
+    }
+    const uid = googleUser?.uid;
+    if (!uid) return;
+    try {
+      await saveDailyPlan(uid, dateStr, dayAssignments);
+    } catch (e) {
+      console.warn('saveDayPlanForDate failed', e);
+    }
+  }, [googleUser?.uid, planDate]);
+
+  const loadWeekPlans = useCallback(async () => {
+    const uid = googleUser?.uid;
+    if (!uid) return {};
+    const today = new Date();
+    const day = today.getDay();
+    const diff = day === 0 ? -6 : 1 - day;
+    const monday = new Date(today);
+    monday.setDate(today.getDate() + diff);
+    const results = {};
+    const promises = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(monday);
+      d.setDate(monday.getDate() + i);
+      const ds = d.toISOString().slice(0, 10);
+      if (weekAssignmentsRef.current[ds]) {
+        results[ds] = weekAssignmentsRef.current[ds];
+      } else {
+        promises.push(getDailyPlan(uid, ds).then(({ assignments: a }) => { results[ds] = a; }));
+      }
+    }
+    if (promises.length > 0) await Promise.all(promises);
+    weekAssignmentsRef.current = { ...weekAssignmentsRef.current, ...results };
+    setWeekAssignments((prev) => ({ ...prev, ...results }));
+    return results;
+  }, [googleUser?.uid]);
+
   // Save to localStorage when state changes
   useEffect(() => {
     if (!hydrated) return;
@@ -261,6 +354,17 @@ export function GardenProvider({ children }) {
       { id, type, x: x ?? '50%', y: y ?? '50%', ...(variant != null ? { variant } : {}) },
     ]);
   }, []);
+
+  /** Buy an item from the shop: deduct price from currency and add decoration. Returns true if purchased, false otherwise. */
+  const buyItem = useCallback((item) => {
+    const price = Number(item?.price ?? item?.cost ?? 0);
+    if (price <= 0 || embers < price) return false;
+    setEmbers((p) => p - price);
+    const id = crypto.randomUUID?.() ?? `dec-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    const type = item?.type ?? 'path';
+    setDecorations((prev) => [...prev, { id, type, x: '50%', y: '50%' }]);
+    return true;
+  }, [embers]);
 
   /** Deduct embers only if balance is sufficient. Returns true if deduction was made, false otherwise. */
   const spendEmbers = useCallback((amount) => {
@@ -699,6 +803,11 @@ export function GardenProvider({ children }) {
     googleToken,
     connectCalendar,
     disconnectCalendar,
+    msUser,
+    msToken,
+    connectOutlook,
+    disconnectOutlook,
+    refreshOutlookToken,
     cloudSaveStatus,
     spiritConfig,
     setSpiritConfig,
@@ -707,6 +816,10 @@ export function GardenProvider({ children }) {
     removeFromCompost,
     assignments,
     setAssignments,
+    weekAssignments,
+    loadDayPlan,
+    saveDayPlanForDate,
+    loadWeekPlans,
     eveningMode,
     setEveningMode,
     spiritPoints,
@@ -720,6 +833,7 @@ export function GardenProvider({ children }) {
     removeDecoration,
     spendEmbers,
     earnEmbers,
+    buyItem,
     decorationCosts: { lantern: 15, bench: 25, pond: 40, path: 10, bush: 20 },
     metrics,
     addMetric,

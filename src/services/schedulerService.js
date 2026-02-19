@@ -457,7 +457,15 @@ export function generateDailyPlan(goals, maxSlotsOrModifier = 0) {
     typeof maxSlotsOrModifier === 'number' && maxSlotsOrModifier >= 1 && maxSlotsOrModifier <= 12
       ? maxSlotsOrModifier
       : Math.max(1, 6 + (Number(maxSlotsOrModifier) || 0));
-  const availableSlotsToday = [{ dayIndex: todayDayIndex, start: '06:00', end: '23:00' }];
+
+  const now = new Date();
+  const currentHour = now.getHours();
+  const startHour = Math.max(6, currentHour + 1);
+  const startStr = `${String(startHour).padStart(2, '0')}:00`;
+
+  if (startHour >= 23) return {};
+
+  const availableSlotsToday = [{ dayIndex: todayDayIndex, start: startStr, end: '23:00' }];
 
   const entriesByCategory = { work: [], nourishment: [] };
 
@@ -532,4 +540,176 @@ export function generateDailyPlan(goals, maxSlotsOrModifier = 0) {
     assignments[hour] = value;
   });
   return assignments;
+}
+
+/**
+ * Smart Plan: auto-fill today's schedule using gaps from calendar and goals.
+ * @param {Array} goals - All goals (filters to Routine + Kaizen)
+ * @param {Array} calendarEvents - Weekly events: { start, end } (ISO) or { dayIndex, start, end }
+ * @param {string|number} energyLevel - 'high' | 'low' | 'normal', or spoon count (1–12), or modifier (-2, 0, 1)
+ * @returns {Object} assignments - { '09:00': value, ... } compatible with TimeSlicer
+ */
+export function autoFillDailyPlan(goals, calendarEvents, energyLevel = 'normal') {
+  const todayDayIndex = new Date().getDay();
+  const workStart = 9 * 60; // 09:00
+  const workEnd = 18 * 60; // 18:00 (6 PM)
+
+  const options = {
+    weekStartDate: getDefaultWeekStart(),
+    startHour: 9,
+    endHour: 18,
+  };
+
+  const openSlots = findAvailableSlots(calendarEvents ?? [], [], options)
+    .filter((s) => s.dayIndex === todayDayIndex);
+
+  const slotHours = [];
+  for (const slot of openSlots) {
+    let cursor = timeToMinutes(slot.start);
+    const endMins = timeToMinutes(slot.end);
+    while (cursor + 60 <= endMins) {
+      slotHours.push(minutesToTime(cursor));
+      cursor += 60;
+    }
+  }
+
+  if (slotHours.length === 0) return {};
+
+  const eligibleGoals = (goals ?? []).filter(
+    (g) => g?.id && (g.type === 'routine' || g.type === 'kaizen')
+  );
+  if (eligibleGoals.length === 0) return {};
+
+  const energyStr = String(energyLevel).toLowerCase();
+  const isHigh =
+    energyStr === 'high' ||
+    (typeof energyLevel === 'number' && energyLevel >= 9);
+  const isLow =
+    energyStr === 'low' ||
+    (typeof energyLevel === 'number' && energyLevel <= 4);
+
+  const sorted = [...eligibleGoals].sort((a, b) => {
+    const minsA = Number(a?.estimatedMinutes) || 60;
+    const minsB = Number(b?.estimatedMinutes) || 60;
+    const adminA = getEnergyType(a) === 'maintenance' ? 1 : 0;
+    const adminB = getEnergyType(b) === 'maintenance' ? 1 : 0;
+    if (isHigh) {
+      return minsB - minsA;
+    }
+    if (isLow) {
+      if (adminA !== adminB) return adminA - adminB;
+      return minsA - minsB;
+    }
+    return 0;
+  });
+
+  const assignments = {};
+  let goalIdx = 0;
+  const maxSlots = Math.min(
+    slotHours.length,
+    typeof energyLevel === 'number' && energyLevel >= 1 && energyLevel <= 12
+      ? energyLevel
+      : isLow
+        ? Math.min(4, slotHours.length)
+        : slotHours.length
+  );
+
+  for (let i = 0; i < maxSlots && goalIdx < sorted.length; i++) {
+    const hour = slotHours[i];
+    const goal = sorted[goalIdx++];
+    if (goal.type === 'routine') {
+      assignments[hour] = {
+        id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `s-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        parentGoalId: goal.id,
+        title: goal.title,
+        type: 'routine',
+        duration: 60,
+      };
+    } else {
+      assignments[hour] = goal.id;
+    }
+  }
+
+  return assignments;
+}
+
+const DAY_NAMES_TO_INDEX = { sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6 };
+
+/**
+ * Convert AI weekly plan into concrete daily assignments for each day.
+ * @param {Object} weekPlan - { monday: [{ goalId, hours }], ... } from AI
+ * @param {Array} goals - All goals
+ * @param {Array} calendarEvents - Weekly calendar events
+ * @returns {Object} { 'YYYY-MM-DD': { '09:00': assignment, ... }, ... }
+ */
+export function materializeWeeklyPlan(weekPlan, goals, calendarEvents = []) {
+  if (!weekPlan || typeof weekPlan !== 'object') return {};
+
+  const today = new Date();
+  const todayDay = today.getDay();
+  const diff = todayDay === 0 ? -6 : 1 - todayDay;
+  const monday = new Date(today);
+  monday.setDate(today.getDate() + diff);
+
+  const goalMap = new Map((goals ?? []).map((g) => [g.id, g]));
+  const result = {};
+
+  const dayOrder = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+
+  for (let i = 0; i < 7; i++) {
+    const dayName = dayOrder[i];
+    const dayItems = weekPlan[dayName];
+    if (!Array.isArray(dayItems) || dayItems.length === 0) continue;
+
+    const d = new Date(monday);
+    d.setDate(monday.getDate() + i);
+    const dateStr = d.toISOString().slice(0, 10);
+    const dayIndex = d.getDay();
+
+    const options = { weekStartDate: getDefaultWeekStart(), startHour: DEFAULT_HOUR_START, endHour: DEFAULT_HOUR_END };
+    const openSlots = findAvailableSlots(calendarEvents ?? [], [], options)
+      .filter((s) => s.dayIndex === dayIndex);
+
+    const slotHours = [];
+    for (const slot of openSlots) {
+      let cursor = timeToMinutes(slot.start);
+      const endMins = timeToMinutes(slot.end);
+      while (cursor + 60 <= endMins) {
+        slotHours.push(minutesToTime(cursor));
+        cursor += 60;
+      }
+    }
+
+    const dayAssignments = {};
+    let slotIdx = 0;
+
+    for (const item of dayItems) {
+      const goalId = item.goalId;
+      const hours = Math.max(1, Math.round(item.hours ?? 1));
+      const goal = goalMap.get(goalId);
+      if (!goal) continue;
+
+      for (let h = 0; h < hours && slotIdx < slotHours.length; h++) {
+        const hour = slotHours[slotIdx++];
+        if (goal.type === 'routine') {
+          dayAssignments[hour] = {
+            id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `s-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+            parentGoalId: goal.id,
+            title: goal.title,
+            type: 'routine',
+            duration: 60,
+            _autoGenerated: true,
+          };
+        } else {
+          dayAssignments[hour] = goal.id;
+        }
+      }
+    }
+
+    if (Object.keys(dayAssignments).length > 0) {
+      result[dateStr] = dayAssignments;
+    }
+  }
+
+  return result;
 }

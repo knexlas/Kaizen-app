@@ -173,7 +173,7 @@ function ActivityHeatmap({ days, maxMins }) {
           return <rect key={d.date} x={x} y={y} width={cellSize} height={cellSize} rx={2} fill={fill} />;
         })}
       </svg>
-      <p className="font-sans text-xs text-stone-500 mt-2">Less → More</p>
+      <p className="font-sans text-xs text-stone-500 mt-2">Lighter = less focus · Darker = more focus</p>
     </div>
   );
 }
@@ -198,8 +198,8 @@ export default function AnalyticsView() {
 
   return (
     <div className="space-y-8">
-      <h2 className="font-serif text-stone-900 text-xl">Wisdom</h2>
-      <p className="font-sans text-sm text-stone-600">Your progress over time.</p>
+      <h2 className="font-serif text-stone-900 text-xl">Insights</h2>
+      <p className="font-sans text-sm text-stone-600">Your progress over time — patterns, focus, and growth.</p>
 
       <TotalHarvest totalMinutes={totalMinutes} />
 

@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useGarden } from '../../context/GardenContext';
 import { useEnergy } from '../../context/EnergyContext';
 import GoalCreator from '../Goals/GoalCreator';
+import ProjectPlanner from '../Projects/ProjectPlanner';
 import GoalEditor from '../Goals/GoalEditor';
 import TimeSlicer, { HOURS, MAX_SLOTS_BY_WEATHER } from './TimeSlicer';
 import CompassWidget from './CompassWidget';
@@ -10,14 +11,14 @@ import CommandPalette from './CommandPalette';
 import MochiSpiritWithDialogue, { MochiSpirit, getSpiritGreeting, getPlanReaction } from './MochiSpirit';
 import SpiritChat from './SpiritChat';
 import CompostHeap from './CompostHeap';
-import { generateSpiritInsight } from '../../services/geminiService';
+import { generateSpiritInsight, generateWeeklyPlan, generateMonthlyPlan } from '../../services/geminiService';
+import { importICSFile, downloadICS, CALENDAR_PROVIDERS } from '../../services/calendarSyncService';
+import { fetchOutlookEvents } from '../../services/microsoftCalendarService';
 import { getStoredBriefing, setStoredBriefing } from '../../services/spiritBriefingStorage';
 import MorningCheckIn from './MorningCheckIn';
 import EveningWindDown from './EveningWindDown';
 import FocusSession from '../Focus/FocusSession';
 import TeaCeremony from '../Focus/TeaCeremony';
-import WeeklyMap from './WeeklyMap';
-import MonthlyTerrain from './MonthlyTerrain';
 import GardenWalk from '../Garden/GardenWalk';
 import JournalView from './JournalView';
 import AnalyticsView from './AnalyticsView';
@@ -26,7 +27,7 @@ import SpiritBuilder from '../Onboarding/SpiritBuilder';
 import SpiritGuideTour from '../Onboarding/SpiritGuideTour';
 import SpiritOrigins from '../Onboarding/SpiritOrigins';
 import { fetchGoogleEvents } from '../../services/googleCalendarService';
-import { findAvailableSlots, generateLiquidSchedule, generateSolidSchedule, getDefaultWeekStart, getStormWarnings, timeToMinutes, minutesToTime, generateDailyPlan } from '../../services/schedulerService';
+import { findAvailableSlots, generateLiquidSchedule, generateSolidSchedule, getDefaultWeekStart, getStormWarnings, timeToMinutes, minutesToTime, generateDailyPlan, materializeWeeklyPlan } from '../../services/schedulerService';
 
 // --- Icons ---
 const SunIcon = () => (
@@ -66,8 +67,8 @@ const DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Satu
 const TODAY_MVP = 'Monday';
 const TODAY_INDEX = DAY_NAMES.indexOf(TODAY_MVP);
 
-/** Garden Level: 1 = Seedling (Focus, Garden, Settings), 2 = Sprout (+ Journal), 3 = Bloom (+ Wisdom, Map). */
-const TAB_LEVELS = { focus: 1, garden: 1, settings: 1, journal: 2, wisdom: 3, map: 3 };
+/** All tabs available from day one. */
+const TAB_LEVELS = { focus: 1, garden: 1, settings: 1, journal: 1, insights: 1 };
 const LOCKED_TAB_TOAST = 'Keep growing to unlock this area.';
 
 /** Minutes logged this month for a goal (from logs). */
@@ -119,17 +120,37 @@ function getLatestMetricValue(goal) {
   return sorted[0]?.value;
 }
 
-/** Projected hours at end of month based on current pace. Returns { projectedHours, onTrack }. */
+/** Projected hours at end of month. Returns { projectedHours, onTrack, daysRemaining, hoursPerDayNeeded, encouragement }. */
 function getMonthlyProjection(minutesLogged, monthlyTargetHours) {
   const now = new Date();
   const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
   const dayOfMonth = now.getDate();
   const daysElapsed = Math.max(1, dayOfMonth);
+  const daysRemaining = Math.max(1, daysInMonth - dayOfMonth);
   const hoursLogged = minutesLogged / 60;
   const pace = hoursLogged / daysElapsed;
   const projectedHours = Math.round(pace * daysInMonth * 10) / 10;
   const onTrack = projectedHours >= monthlyTargetHours;
-  return { projectedHours, onTrack };
+  const hoursLeft = Math.max(0, monthlyTargetHours - hoursLogged);
+  const hoursPerDayNeeded = Math.round((hoursLeft / daysRemaining) * 10) / 10;
+  const pctComplete = monthlyTargetHours > 0 ? Math.round((hoursLogged / monthlyTargetHours) * 100) : 0;
+
+  let encouragement;
+  if (hoursLogged === 0 && dayOfMonth <= 3) {
+    encouragement = 'The month is fresh. One small step today starts the path.';
+  } else if (hoursLogged === 0) {
+    encouragement = `Still time — ${hoursPerDayNeeded}h/day gets you there. Start with just 15 minutes.`;
+  } else if (onTrack) {
+    encouragement = `On pace for ${projectedHours}h. Steady wins.`;
+  } else if (pctComplete >= 60) {
+    encouragement = `Almost there — ${hoursPerDayNeeded}h/day to finish strong.`;
+  } else if (daysRemaining > daysInMonth / 2) {
+    encouragement = `Plenty of time. ${hoursPerDayNeeded}h/day is all it takes.`;
+  } else {
+    encouragement = `A little behind, but ${hoursPerDayNeeded}h/day closes the gap. You've got this.`;
+  }
+
+  return { projectedHours, onTrack, daysRemaining, hoursPerDayNeeded, encouragement };
 }
 
 function getWeather(events) {
@@ -146,7 +167,7 @@ function getRitualForToday(goal, dayIndex) {
 }
 
 function GardenDashboard() {
-  const { goals, weeklyEvents, logs, addGoal, updateGoalProgress, updateGoalMilestone, editGoal, deleteGoal, addSubtask, updateSubtask, deleteSubtask, updateSubtaskProgress, lastCheckInDate, completeMorningCheckIn, dailyEnergyModifier, dailySpoonCount, addLog, logMetric, googleUser, connectCalendar, disconnectCalendar, googleToken, updateWeeklyEvents, cloudSaveStatus, spiritConfig, setSpiritConfig, compost, addToCompost, removeFromCompost, assignments, setAssignments, eveningMode, setEveningMode, userSettings, addRitualCategory } = useGarden();
+  const { goals, weeklyEvents, logs, addGoal, updateGoalProgress, updateGoalMilestone, editGoal, deleteGoal, addSubtask, updateSubtask, deleteSubtask, updateSubtaskProgress, lastCheckInDate, completeMorningCheckIn, dailyEnergyModifier, dailySpoonCount, addLog, logMetric, googleUser, connectCalendar, disconnectCalendar, googleToken, updateWeeklyEvents, cloudSaveStatus, spiritConfig, setSpiritConfig, compost, addToCompost, removeFromCompost, assignments, setAssignments, eveningMode, setEveningMode, userSettings, addRitualCategory, saveDayPlanForDate, msUser, msToken, connectOutlook, disconnectOutlook, refreshOutlookToken } = useGarden();
   const [today, setToday] = useState(() => new Date().toISOString().slice(0, 10));
   const needsMorningCheckIn = lastCheckInDate !== today;
 
@@ -177,8 +198,7 @@ function GardenDashboard() {
     const interval = setInterval(tick, 60 * 1000);
     return () => clearInterval(interval);
   }, []);
-  const [activeTab, setActiveTab] = useState('focus'); // 'focus' | 'map'
-  const [mapViewMode, setMapViewMode] = useState('week'); // 'week' | 'month'
+  const [activeTab, setActiveTab] = useState('focus');
   const [selectedDate, setSelectedDate] = useState(TODAY_INDEX); // dayIndex 0=Mon .. 6=Sun
   const [isPlanting, setIsPlanting] = useState(false);
   const [activeSession, setActiveSession] = useState(null);
@@ -187,14 +207,21 @@ function GardenDashboard() {
   const [configDurationCustom, setConfigDurationCustom] = useState(false);
   const [showTeaCeremony, setShowTeaCeremony] = useState(false);
   const [completedTask, setCompletedTask] = useState(null);
+  const [metricPrompt, setMetricPrompt] = useState(null); // { goalId, metricName, unit, vitalityGoalId? }
+  const [metricPromptValue, setMetricPromptValue] = useState('');
   const [seedForMilestones, setSeedForMilestones] = useState(null);
   const [editingGoal, setEditingGoal] = useState(null);
   const [fertilizerToast, setFertilizerToast] = useState(false);
   const [growthToast, setGrowthToast] = useState(null);
   const [calendarConnectedToast, setCalendarConnectedToast] = useState(false);
   const [autoFillLoading, setAutoFillLoading] = useState(false);
+  const [showCalendarMenu, setShowCalendarMenu] = useState(false);
+  const [planningWeek, setPlanningWeek] = useState(false);
+  const [weekPreview, setWeekPreview] = useState(null); // { [dateStr]: { [hour]: assignment } } for review before saving
+  const [monthlyRoadmap, setMonthlyRoadmap] = useState(null);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [showSpiritMirror, setShowSpiritMirror] = useState(false);
+  const [showProjectPlanner, setShowProjectPlanner] = useState(false);
   const [goalCreatorInitialTitle, setGoalCreatorInitialTitle] = useState('');
   const [goalCreatorInitialSubtasks, setGoalCreatorInitialSubtasks] = useState([]);
   const [now, setNow] = useState(() => new Date());
@@ -294,9 +321,9 @@ function GardenDashboard() {
     [deleteGoal, clearAssignmentsForGoal]
   );
 
-  /** Auto-Fill Week: clear auto-generated routine blocks, fetch Google events, run scheduler, fill today's slots. */
+  /** Auto-Fill Week: clear auto-generated routine blocks, fetch calendar events, run scheduler, fill today's slots. */
   const handleAutoFillWeek = useCallback(async () => {
-    if (!googleToken) {
+    if (!googleToken && !msToken) {
       return;
     }
     setAutoFillLoading(true);
@@ -314,11 +341,13 @@ function GardenDashboard() {
         return next;
       });
 
-      const [fetchedEvents] = await Promise.all([
-        fetchGoogleEvents(googleToken, weekStart, weekEnd),
-      ]);
-      const eventsForScheduler = Array.isArray(fetchedEvents) ? fetchedEvents : [];
-      updateWeeklyEvents(eventsForScheduler);
+      const fetches = [];
+      if (googleToken) fetches.push(fetchGoogleEvents(googleToken, weekStart, weekEnd).catch(() => []));
+      if (msToken) fetches.push(fetchOutlookEvents(msToken, weekStart, weekEnd).catch(() => []));
+      const results = await Promise.all(fetches);
+      const allEvents = results.flat();
+      updateWeeklyEvents(allEvents);
+      const eventsForScheduler = allEvents;
 
       setAssignments((prev) => {
         const todayDayIndex = new Date().getDay();
@@ -381,6 +410,41 @@ function GardenDashboard() {
       setAutoFillLoading(false);
     }
   }, [googleToken, goals, updateWeeklyEvents]);
+
+  const handlePlanWeek = useCallback(async () => {
+    setPlanningWeek(true);
+    try {
+      const evts = Array.isArray(weeklyEvents) ? weeklyEvents : [];
+      const energyProfile = { spoonCount: dailySpoonCount ?? 8 };
+      const weekPlan = await generateWeeklyPlan(goals, evts, energyProfile);
+      if (!weekPlan) { setPlanningWeek(false); return; }
+      const materialized = materializeWeeklyPlan(weekPlan, goals, evts);
+      setWeekPreview(materialized);
+    } catch (e) {
+      console.warn('Plan My Week failed', e);
+    } finally {
+      setPlanningWeek(false);
+    }
+  }, [goals, weeklyEvents, dailySpoonCount]);
+
+  const handleConfirmWeekPlan = useCallback(async () => {
+    if (!weekPreview) return;
+    const saves = Object.entries(weekPreview).map(([dateStr, dayAssigns]) =>
+      saveDayPlanForDate(dateStr, dayAssigns)
+    );
+    await Promise.all(saves);
+    setWeekPreview(null);
+  }, [weekPreview, saveDayPlanForDate]);
+
+  const handleDiscardWeekPlan = useCallback(() => {
+    setWeekPreview(null);
+  }, []);
+
+  const handlePlanMonth = useCallback(async () => {
+    const now = new Date();
+    const roadmap = await generateMonthlyPlan(goals, now.getMonth(), now.getFullYear());
+    if (roadmap) setMonthlyRoadmap(roadmap);
+  }, [goals]);
 
   const handleGardenGoalClick = useCallback((goal) => {
     setSeedForMilestones(goal);
@@ -564,6 +628,10 @@ function GardenDashboard() {
     setIsPlanting(false);
   };
 
+  const handleProjectGoals = useCallback((goalsToCreate) => {
+    goalsToCreate.forEach((g) => addGoal(g));
+  }, [addGoal]);
+
   const handleStartSession = (goalId, hour, ritualTitle, subtaskId) => {
     const goal = goals.find((g) => g.id === goalId);
     if (goal) setSessionConfigTarget({ goal: { ...goal }, hour, ritualTitle: ritualTitle ?? null, subtaskId: subtaskId ?? null });
@@ -623,6 +691,22 @@ function GardenDashboard() {
       setShowSpiritDialogue(false);
       setJustFinishedSession(false);
     }, 5000);
+
+    // Post-session metric prompt
+    const goal = goals.find((g) => g.id === taskId);
+    if (goal) {
+      if (goal.linkedVitalityGoalId) {
+        const vg = goals.find((g2) => g2.id === goal.linkedVitalityGoalId);
+        if (vg) {
+          setMetricPrompt({ goalId: goal.id, metricName: vg.title, unit: vg.metricSettings?.unit ?? '', vitalityGoalId: vg.id });
+          setMetricPromptValue('');
+        }
+      } else if (Array.isArray(goal.linkedMetrics) && goal.linkedMetrics.length > 0) {
+        const first = goal.linkedMetrics[0];
+        setMetricPrompt({ goalId: goal.id, metricName: first.name, unit: first.unit ?? '' });
+        setMetricPromptValue('');
+      }
+    }
   };
 
   /** Chain: User finishes SpiritOrigins → close it → show Tour so Spirit explains the Compass. */
@@ -635,23 +719,6 @@ function GardenDashboard() {
     setSpiritConfig({ name: 'Mochi', type: 'mochi' });
     setShowSpiritOrigins(false);
   };
-
-  const handleSelectDate = (dayIndex) => {
-    setSelectedDate(dayIndex);
-  };
-
-  const weekDateLabels = useMemo(() => {
-    const base = new Date(today + 'T12:00:00');
-    const dayOfWeek = base.getDay();
-    const daysUntilMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-    const monday = new Date(base);
-    monday.setDate(base.getDate() - daysUntilMonday);
-    return Array.from({ length: 7 }, (_, i) => {
-      const d = new Date(monday);
-      d.setDate(monday.getDate() + i);
-      return d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
-    });
-  }, [today]);
 
   const handleMilestoneCheck = (goalId, milestoneId, completed) => {
     updateGoalMilestone(goalId, milestoneId, completed);
@@ -764,56 +831,115 @@ function GardenDashboard() {
             </div>
             <span className="hidden sm:inline opacity-50 select-none" aria-hidden>•</span>
             {!isOnline ? (
-              <span
-                className="flex items-center gap-1 font-sans text-xs text-stone-500 bg-stone-200/80 px-2 py-1 rounded-full"
-                title="Offline"
-                aria-label="Offline mode"
-              >
-                Offline
-              </span>
-            ) : googleUser ? (
-              <button
-                type="button"
-                onClick={() => {
-                  if (window.confirm('Disconnect Google Calendar? Your events will no longer sync.')) {
-                    disconnectCalendar();
-                  }
-                }}
-                className="flex items-center gap-1.5 py-1 px-2 rounded-full text-moss-700 font-sans text-xs hover:bg-moss-100/60 focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors"
-                title={`Synced · ${googleUser.email ?? 'Google'}`}
-                aria-label="Calendar synced; click to disconnect"
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
-                  <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z" />
-                  <path d="M9 12l2 2 4-4" />
-                </svg>
-                <span className="hidden md:inline">Synced</span>
-              </button>
+              <span className="flex items-center gap-1 font-sans text-xs text-stone-500 bg-stone-200/80 px-2 py-1 rounded-full" title="Offline">Offline</span>
             ) : (
-              <button
-                type="button"
-                onClick={async () => {
-                  const ok = await connectCalendar();
-                  if (ok) setCalendarConnectedToast(true);
-                }}
-                className="flex items-center gap-1.5 py-1 px-2 rounded-full text-stone-500 font-sans text-xs hover:text-stone-800 hover:underline focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors"
-                aria-label="Sync Google Calendar"
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                  <polyline points="7 10 12 15 17 10" />
-                  <line x1="12" y1="15" x2="12" y2="3" />
-                </svg>
-                <span className="hidden md:inline">Sync</span>
-              </button>
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setShowCalendarMenu((v) => !v)}
+                  className={`flex items-center gap-1.5 py-1 px-2.5 rounded-full font-sans text-xs transition-colors focus:outline-none focus:ring-2 focus:ring-moss-500/40 ${
+                    googleUser || msUser
+                      ? 'text-moss-700 hover:bg-moss-100/60'
+                      : 'text-stone-500 hover:text-stone-800 hover:bg-stone-100'
+                  }`}
+                  aria-label="Calendar sync options"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
+                    <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z" />
+                    {(googleUser || msUser) && <path d="M9 12l2 2 4-4" />}
+                  </svg>
+                  <span className="hidden md:inline">{googleUser || msUser ? 'Synced' : 'Sync'}</span>
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0"><polyline points="6 9 12 15 18 9" /></svg>
+                </button>
+                {showCalendarMenu && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setShowCalendarMenu(false)} />
+                    <div className="absolute top-full mt-1 right-0 z-50 w-56 rounded-xl bg-white border border-stone-200 shadow-lg overflow-hidden">
+                      <div className="px-3 py-2 bg-stone-50 border-b border-stone-100">
+                        <p className="font-sans text-[10px] font-semibold text-stone-500 uppercase tracking-wider">Calendar Sync</p>
+                      </div>
+                      <div className="py-1">
+                        {/* Google Calendar */}
+                        {googleUser ? (
+                          <button type="button" onClick={() => { if (window.confirm('Disconnect Google Calendar?')) { disconnectCalendar(); setShowCalendarMenu(false); } }} className="w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-stone-50 transition-colors">
+                            <span className="w-6 h-6 rounded-full bg-red-100 flex items-center justify-center text-[11px] font-bold text-red-600 shrink-0">G</span>
+                            <div className="flex-1 min-w-0">
+                              <span className="font-sans text-sm text-stone-800 block">Google Calendar</span>
+                              <span className="font-sans text-[10px] text-moss-600 truncate block">{googleUser.email || 'Connected'}</span>
+                            </div>
+                            <span className="shrink-0 w-2 h-2 rounded-full bg-moss-500" title="Connected" />
+                          </button>
+                        ) : (
+                          <button type="button" onClick={async () => { const ok = await connectCalendar(); if (ok) { setCalendarConnectedToast(true); setShowCalendarMenu(false); } }} className="w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-stone-50 transition-colors">
+                            <span className="w-6 h-6 rounded-full bg-stone-100 flex items-center justify-center text-[11px] font-bold text-stone-500 shrink-0">G</span>
+                            <span className="font-sans text-sm text-stone-600">Connect Google</span>
+                          </button>
+                        )}
+                        {/* Outlook */}
+                        {msUser ? (
+                          <button type="button" onClick={() => { if (window.confirm('Disconnect Outlook?')) { disconnectOutlook(); setShowCalendarMenu(false); } }} className="w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-stone-50 transition-colors">
+                            <span className="w-6 h-6 rounded-full bg-blue-100 flex items-center justify-center text-[11px] font-bold text-blue-600 shrink-0">O</span>
+                            <div className="flex-1 min-w-0">
+                              <span className="font-sans text-sm text-stone-800 block">Outlook</span>
+                              <span className="font-sans text-[10px] text-moss-600 truncate block">{msUser.username || 'Connected'}</span>
+                            </div>
+                            <span className="shrink-0 w-2 h-2 rounded-full bg-moss-500" title="Connected" />
+                          </button>
+                        ) : (
+                          <>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              try {
+                                const result = await connectOutlook();
+                                if (result?.ok) {
+                                  setCalendarConnectedToast(true);
+                                  setShowCalendarMenu(false);
+                                  return;
+                                }
+                                const err = result?.error || 'Connection failed';
+                                const hint = typeof window !== 'undefined' && window.location?.origin
+                                  ? '\n\nRedirect URI to add in Azure: ' + window.location.origin
+                                  : '';
+                                window.alert(err + hint);
+                              } catch (e) {
+                                const err = e?.message || String(e);
+                                const hint = typeof window !== 'undefined' && window.location?.origin
+                                  ? '\n\nRedirect URI to add in Azure: ' + window.location.origin
+                                  : '';
+                                window.alert(err + hint);
+                              }
+                            }}
+                            className="w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-stone-50 transition-colors"
+                          >
+                            <span className="w-6 h-6 rounded-full bg-stone-100 flex items-center justify-center text-[11px] font-bold text-stone-500 shrink-0">O</span>
+                            <span className="font-sans text-sm text-stone-600">Connect Outlook</span>
+                          </button>
+                          <p className="px-3 py-1.5 font-sans text-[10px] text-stone-400 border-t border-stone-100">
+                            Requires Azure app: add <code className="bg-stone-100 px-1 rounded">VITE_MS_CLIENT_ID</code> to .env and set SPA redirect URI to <span className="break-all">{typeof window !== 'undefined' && window.location?.origin ? window.location.origin : 'your app URL'}</span>
+                          </p>
+                          </>
+                        )}
+                        {/* .ics Import */}
+                        <button type="button" onClick={async () => { try { const imported = await importICSFile(); if (imported.length > 0) { updateWeeklyEvents([...events, ...imported]); setCalendarConnectedToast(true); } } catch (e) { console.warn('ICS import failed', e); } setShowCalendarMenu(false); }} className="w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-stone-50 transition-colors">
+                          <span className="w-6 h-6 rounded-full bg-stone-100 flex items-center justify-center text-[11px] shrink-0">+</span>
+                          <div className="flex-1 min-w-0">
+                            <span className="font-sans text-sm text-stone-600 block">Import .ics file</span>
+                            <span className="font-sans text-[10px] text-stone-400">Apple Calendar, Thunderbird, etc.</span>
+                          </div>
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
             )}
-            {isOnline && googleUser && cloudSaveStatus === 'saved' && (
+            {isOnline && (googleUser || msUser) && cloudSaveStatus === 'saved' && (
               <>
                 <span className="hidden sm:inline opacity-50 select-none" aria-hidden>•</span>
                 <span
                   className="flex items-center gap-1 font-sans text-xs text-moss-600"
                   title="Saved to cloud"
-                  aria-label="Saved to cloud"
                 >
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
                     <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z" />
@@ -825,7 +951,7 @@ function GardenDashboard() {
             )}
           </div>
 
-          {/* Right: Toolbelt – Wisdom, Inbox, Mirror, Evening, Settings */}
+          {/* Right: Toolbelt – Chat, Inbox, Mirror, Evening, Settings */}
           <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
             <button
               id="tour-wisdom"
@@ -836,13 +962,13 @@ function GardenDashboard() {
                   ? 'bg-moss-900/40 text-moss-200 hover:bg-moss-800/50'
                   : 'bg-moss-100/80 text-moss-800 hover:bg-moss-200/80'
               }`}
-              aria-label="Chat with Mochi (Wisdom)"
-              title="Wisdom"
+              aria-label="Chat with Mochi"
+              title="Chat"
             >
               <span className="inline-flex w-7 h-8 items-center justify-center [&_svg]:w-7 [&_svg]:h-8" aria-hidden>
                 <MochiSpirit />
               </span>
-              <span className="hidden lg:inline text-xs font-medium">Wisdom</span>
+              <span className="hidden lg:inline text-xs font-medium">Chat</span>
             </button>
             <button
               id="tour-compost"
@@ -920,8 +1046,7 @@ function GardenDashboard() {
               { id: 'focus', label: 'Daily Focus' },
               { id: 'garden', label: 'My Garden' },
               { id: 'journal', label: 'Journal' },
-              { id: 'wisdom', label: 'Wisdom' },
-              { id: 'map', label: 'Weekly Map' },
+              { id: 'insights', label: 'Insights' },
               { id: 'settings', label: 'Settings' },
             ]
               .filter(({ id }) => eveningMode !== 'night-owl' || (id !== 'garden' && id !== 'settings'))
@@ -930,7 +1055,7 @@ function GardenDashboard() {
                 return (
                   <button
                     key={id}
-                    id={id === 'garden' ? 'tour-garden-tab' : undefined}
+                    id={id === 'garden' ? 'tour-garden-tab' : id === 'journal' ? 'tour-journal-tab' : undefined}
                     type="button"
                     onClick={() => {
                       if (locked) {
@@ -967,8 +1092,7 @@ function GardenDashboard() {
               { id: 'focus', label: 'Focus', icon: '🎯' },
               { id: 'garden', label: 'Garden', icon: '🌱' },
               { id: 'journal', label: 'Journal', icon: '📔' },
-              { id: 'wisdom', label: 'Wisdom', icon: '📊' },
-              { id: 'map', label: 'Map', icon: '🗺️' },
+              { id: 'insights', label: 'Insights', icon: '📊' },
               { id: 'settings', label: 'Settings', icon: '⚙️' },
             ]
               .filter(({ id }) => eveningMode !== 'night-owl' || (id !== 'garden' && id !== 'settings'))
@@ -977,7 +1101,7 @@ function GardenDashboard() {
                 return (
                   <button
                     key={id}
-                    id={id === 'garden' ? 'tour-garden-tab' : undefined}
+                    id={id === 'garden' ? 'tour-garden-tab' : id === 'journal' ? 'tour-journal-tab' : undefined}
                     type="button"
                     onClick={() => {
                       if (locked) {
@@ -1050,6 +1174,15 @@ function GardenDashboard() {
                 </ul>
               </div>
             )}
+            <div id="tour-goal-types" className="mb-4 p-3 rounded-xl bg-stone-100 border border-stone-200">
+              <p className="font-sans text-xs font-medium text-stone-600 mb-2">How goals work here</p>
+              <ul className="font-sans text-xs text-stone-600 space-y-1 list-none">
+                <li><span className="font-medium text-moss-700">Seed (Kaizen)</span> — goal with steps; add rituals for practice days.</li>
+                <li><span className="font-medium text-stone-700">Rock (Routine)</span> — recurring habit, weekly target.</li>
+                <li><span className="font-medium text-amber-700">Project</span> — phases and milestones; use &quot;Plan a Project&quot;.</li>
+                <li><span className="font-medium text-sky-700">Vitality</span> — track one number (e.g. sleep, weight); appears in Ponds.</li>
+              </ul>
+            </div>
             <div id="tour-timeline">
             <TimeSlicer
               weather={weather}
@@ -1060,6 +1193,7 @@ function GardenDashboard() {
               dailySpoonCount={todaySpoonCount}
               assignments={assignments}
               onAssignmentsChange={setAssignments}
+              calendarEvents={events}
               onStartFocus={handleStartSession}
               hideCapacityOnMobile={isMobileNav}
               onSeedClick={(goal) => setSeedForMilestones(goal)}
@@ -1073,6 +1207,13 @@ function GardenDashboard() {
               onOpenGoalCreator={() => setIsPlanting(true)}
               autoFillLoading={autoFillLoading}
               googleToken={googleToken}
+              onPlanWeek={handlePlanWeek}
+              onPlanMonth={handlePlanMonth}
+              planningWeek={planningWeek}
+              weekPreview={weekPreview}
+              onConfirmWeekPlan={handleConfirmWeekPlan}
+              onDiscardWeekPlan={handleDiscardWeekPlan}
+              monthlyRoadmap={monthlyRoadmap}
             />
             </div>
             <button
@@ -1081,6 +1222,13 @@ function GardenDashboard() {
               className="mt-6 py-2.5 px-4 rounded-lg border-2 border-dashed border-stone-200 text-stone-500 font-sans text-sm hover:border-moss-500 hover:text-moss-600 transition-colors"
             >
               + Plant a Seed
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowProjectPlanner(true)}
+              className="mt-2 py-2.5 px-4 rounded-lg border-2 border-dashed border-stone-200 text-stone-500 font-sans text-sm hover:border-amber-500 hover:text-amber-600 transition-colors"
+            >
+              📋 Plan a Project
             </button>
 
             {/* Ponds: Vitality goals grouped by domain + their tributary Rocks */}
@@ -1101,7 +1249,7 @@ function GardenDashboard() {
                   <div className="space-y-4">
                     {domainOrder.filter((d) => byDomain[d]).map((domainId) => {
                       const { vitality, tributaryIds } = byDomain[domainId];
-                      const tributaryRocks = (goals ?? []).filter((g) => g.type === 'routine' && tributaryIds.has(g.id));
+                      const tributaryRocks = (goals ?? []).filter((g) => (g.type === 'routine' && tributaryIds.has(g.id)) || vitality.some((v) => g.linkedVitalityGoalId === v.id));
                       const pondLabel = POND_LABELS[domainId] ?? domainId;
                       return (
                         <div
@@ -1114,38 +1262,99 @@ function GardenDashboard() {
                           <div className="p-4 space-y-3">
                             {vitality.map((goal) => {
                               const latest = getLatestMetricValue(goal);
+                              const ms = goal.metricSettings ?? {};
+                              const unit = ms.unit || '';
+                              const target = ms.targetValue;
+                              const current = latest ?? ms.currentValue ?? 0;
+                              const direction = ms.direction ?? 'higher';
+                              const entries = Array.isArray(goal.metrics) ? goal.metrics.slice(-7) : [];
+                              const hasTarget = target != null && target !== 0;
+                              let progressPct = 0;
+                              if (hasTarget) {
+                                const start = ms.currentValue ?? 0;
+                                const range = Math.abs(target - start);
+                                const moved = direction === 'lower' ? start - current : current - start;
+                                progressPct = range > 0 ? Math.max(0, Math.min(100, (moved / range) * 100)) : 0;
+                              }
                               return (
-                                <div key={goal.id} className="flex items-center gap-2 font-sans text-sm group">
-                                  <span className="text-stone-500 shrink-0">💧</span>
-                                  <span className="text-stone-800 font-medium">{goal.title}:</span>
-                                  <span className="text-stone-600 flex-1 min-w-0">
-                                    {latest != null ? `${latest}${goal.metricSettings?.unit ? ` ${goal.metricSettings.unit}` : ''}` : '—'}
-                                    {goal.metricSettings?.targetValue != null && (
-                                      <span className="text-stone-400"> → {goal.metricSettings.targetValue}{goal.metricSettings?.unit ? ` ${goal.metricSettings.unit}` : ''}</span>
-                                    )}
-                                  </span>
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      const raw = window.prompt(`Update value for ${goal.title}:`);
-                                      if (raw != null && raw.trim() !== '') {
-                                        const num = parseFloat(raw.trim());
+                                <div key={goal.id} className="rounded-lg border border-stone-100 bg-stone-50/50 p-3">
+                                  <div className="flex items-center gap-2 mb-2">
+                                    <span className="text-lg">💧</span>
+                                    <span className="font-sans text-sm font-medium text-stone-800 flex-1">{goal.title}</span>
+                                    <span className="font-sans text-lg font-bold text-stone-900 tabular-nums">
+                                      {latest != null ? latest : '—'}
+                                    </span>
+                                    {unit && <span className="font-sans text-xs text-stone-500">{unit}</span>}
+                                  </div>
+                                  {hasTarget && (
+                                    <div className="mb-2">
+                                      <div className="flex items-center justify-between mb-1">
+                                        <span className="font-sans text-[10px] text-stone-400">
+                                          {direction === 'lower' ? 'Goal: lower to' : 'Goal: reach'} {target} {unit}
+                                        </span>
+                                        <span className="font-sans text-[10px] text-stone-500 font-medium">{Math.round(progressPct)}%</span>
+                                      </div>
+                                      <div className="h-2 w-full rounded-full bg-stone-200 overflow-hidden">
+                                        <div
+                                          className={`h-full rounded-full transition-all duration-500 ${progressPct >= 100 ? 'bg-moss-500' : progressPct >= 50 ? 'bg-sky-400' : 'bg-amber-400'}`}
+                                          style={{ width: Math.min(progressPct, 100) + '%' }}
+                                        />
+                                      </div>
+                                    </div>
+                                  )}
+                                  {entries.length > 1 && (
+                                    <div className="flex items-end gap-px h-8 mb-2">
+                                      {(() => {
+                                        const vals = entries.map((e) => e.value);
+                                        const mn = Math.min(...vals);
+                                        const mx = Math.max(...vals);
+                                        const range = mx - mn || 1;
+                                        return vals.map((v, idx) => (
+                                          <div
+                                            key={idx}
+                                            className="flex-1 rounded-sm bg-sky-300/70"
+                                            style={{ height: Math.max(4, ((v - mn) / range) * 28) + 'px' }}
+                                            title={`${entries[idx].date}: ${v} ${unit}`}
+                                          />
+                                        ));
+                                      })()}
+                                    </div>
+                                  )}
+                                  <div className="flex items-center gap-2">
+                                    <input
+                                      type="number"
+                                      step="any"
+                                      placeholder={latest != null ? String(latest) : '0'}
+                                      className="flex-1 py-1.5 px-2 rounded-md border border-stone-200 bg-white font-sans text-sm text-stone-800 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-moss-500/40 focus:border-moss-500 tabular-nums"
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                          const num = parseFloat(e.target.value);
+                                          if (!Number.isNaN(num)) {
+                                            logMetric(goal.id, num);
+                                            e.target.value = '';
+                                            setRecordedToast(true);
+                                            setTimeout(() => setRecordedToast(false), 2500);
+                                          }
+                                        }
+                                      }}
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        const input = e.currentTarget.previousElementSibling;
+                                        const num = parseFloat(input.value);
                                         if (!Number.isNaN(num)) {
                                           logMetric(goal.id, num);
+                                          input.value = '';
                                           setRecordedToast(true);
                                           setTimeout(() => setRecordedToast(false), 2500);
                                         }
-                                      }
-                                    }}
-                                    className="shrink-0 p-1.5 rounded-md text-stone-400 hover:text-moss-600 hover:bg-moss-50 focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors"
-                                    title={`Update value for ${goal.title}`}
-                                    aria-label={`Update value for ${goal.title}`}
-                                  >
-                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                                      <path d="M12 5v14" />
-                                      <path d="M5 12h14" />
-                                    </svg>
-                                  </button>
+                                      }}
+                                      className="shrink-0 py-1.5 px-3 rounded-md bg-moss-600 text-white font-sans text-xs font-medium hover:bg-moss-700 focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors"
+                                    >
+                                      Log
+                                    </button>
+                                  </div>
                                 </div>
                               );
                             })}
@@ -1185,13 +1394,14 @@ function GardenDashboard() {
                       const minutesLogged = getMinutesThisMonthForGoal(logs ?? [], goal.id);
                       const hoursLogged = Math.round((minutesLogged / 60) * 10) / 10;
                       const fillPercent = targetHours > 0 ? Math.min(100, (hoursLogged / targetHours) * 100) : 0;
-                      const { projectedHours, onTrack } = getMonthlyProjection(minutesLogged, targetHours);
+                      const { onTrack, encouragement, daysRemaining } = getMonthlyProjection(minutesLogged, targetHours);
+                      const ringColor = onTrack ? '#4A5D23' : fillPercent > 0 ? '#d97706' : '#a8a29e';
                       return (
                         <div
                           key={goal.id}
-                          className="flex items-center gap-4 p-4 rounded-xl border border-stone-200 bg-white shadow-sm"
+                          className="flex items-center gap-4 p-4 rounded-xl border border-stone-200 bg-white shadow-sm max-w-md w-full"
                         >
-                          <div className="shrink-0 relative w-16 h-16" aria-hidden>
+                          <div className="shrink-0 relative w-16 h-16 flex items-center justify-center" aria-hidden>
                             <svg viewBox="0 0 36 36" className="w-16 h-16 -rotate-90">
                               <circle cx="18" cy="18" r="14" fill="none" stroke="#e7e5e4" strokeWidth="3" />
                               <circle
@@ -1199,23 +1409,24 @@ function GardenDashboard() {
                                 cy="18"
                                 r="14"
                                 fill="none"
-                                stroke="#4A5D23"
+                                stroke={ringColor}
                                 strokeWidth="3"
                                 strokeDasharray={`${(fillPercent / 100) * 88} 88`}
                                 strokeLinecap="round"
                                 className="transition-all duration-500"
                               />
                             </svg>
+                            <span className="absolute font-sans text-xs font-semibold text-stone-600 tabular-nums">
+                              {Math.round(fillPercent)}%
+                            </span>
                           </div>
-                          <div className="min-w-0">
+                          <div className="min-w-0 flex-1">
                             <p className="font-sans font-medium text-stone-800 truncate">{goal.title}</p>
                             <p className="font-sans text-sm text-stone-500 mt-0.5">
-                              {hoursLogged}h logged / {targetHours}h target
+                              {hoursLogged}h of {targetHours}h · {daysRemaining} days left
                             </p>
-                            <p className={`font-sans text-xs mt-1 ${onTrack ? 'text-moss-600' : 'text-red-600'}`}>
-                              {onTrack
-                                ? `At this pace, you will hit ${projectedHours} hours.`
-                                : 'You are falling behind.'}
+                            <p className={`font-sans text-xs mt-1 ${onTrack ? 'text-moss-600' : 'text-amber-700'}`}>
+                              {encouragement}
                             </p>
                           </div>
                         </div>
@@ -1227,46 +1438,9 @@ function GardenDashboard() {
             })()}
           </>
         )}
-        {activeTab === 'map' && (
-          <div className="w-full">
-            <div className="flex items-center gap-2 mb-4">
-              <span className="font-sans text-sm text-stone-500">View:</span>
-              <div className="inline-flex rounded-lg border border-stone-200 bg-stone-50 p-0.5">
-                <button
-                  type="button"
-                  onClick={() => setMapViewMode('week')}
-                  className={`px-3 py-1.5 rounded-md font-sans text-sm transition-colors ${
-                    mapViewMode === 'week' ? 'bg-stone-800 text-stone-50' : 'text-stone-600 hover:text-stone-900'
-                  }`}
-                >
-                  Week View
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setMapViewMode('month')}
-                  className={`px-3 py-1.5 rounded-md font-sans text-sm transition-colors ${
-                    mapViewMode === 'month' ? 'bg-stone-800 text-stone-50' : 'text-stone-600 hover:text-stone-900'
-                  }`}
-                >
-                  Month View
-                </button>
-              </div>
-            </div>
-            {mapViewMode === 'week' ? (
-              <WeeklyMap
-                weeklyPlan={events}
-                selectedDate={selectedDate}
-                onSelectDate={handleSelectDate}
-                weekDateLabels={weekDateLabels}
-              />
-            ) : (
-              <MonthlyTerrain googleToken={googleToken} />
-            )}
-          </div>
-        )}
         {activeTab === 'garden' && (
           <div className="w-full">
-            <GardenWalk goals={goals} onCompost={handleCompostGoal} onGoalClick={handleGardenGoalClick} />
+            <GardenWalk goals={goals} onCompost={handleCompostGoal} onGoalClick={handleGardenGoalClick} onOpenGoalCreator={() => setIsPlanting(true)} onEditGoal={editGoal} />
           </div>
         )}
         {activeTab === 'journal' && (
@@ -1274,7 +1448,7 @@ function GardenDashboard() {
             <JournalView />
           </div>
         )}
-        {activeTab === 'wisdom' && (
+        {activeTab === 'insights' && (
           <div className="w-full">
             <AnalyticsView />
           </div>
@@ -1336,6 +1510,12 @@ function GardenDashboard() {
         existingVitalityGoals={(goals ?? []).filter((g) => g.type === 'vitality')}
         ritualCategories={userSettings?.ritualCategories ?? []}
         onAddRitualCategory={addRitualCategory}
+      />
+
+      <ProjectPlanner
+        open={showProjectPlanner}
+        onClose={() => setShowProjectPlanner(false)}
+        onCreateGoals={handleProjectGoals}
       />
 
       <GoalEditor
@@ -1627,6 +1807,70 @@ function GardenDashboard() {
           Recorded.
         </motion.div>
       )}
+
+      {/* Post-session metric prompt */}
+      <AnimatePresence>
+        {metricPrompt && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm"
+            onClick={() => setMetricPrompt(null)}
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white rounded-2xl shadow-xl p-6 max-w-sm w-full mx-4 border border-stone-200"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 className="font-serif text-stone-900 text-lg mb-1">Log your progress</h3>
+              <p className="font-sans text-sm text-stone-500 mb-4">
+                How's your <span className="font-medium text-moss-700">{metricPrompt.metricName}</span> today?
+              </p>
+              <div className="flex items-center gap-2 mb-4">
+                <input
+                  type="number"
+                  step="any"
+                  value={metricPromptValue}
+                  onChange={(e) => setMetricPromptValue(e.target.value)}
+                  placeholder="Enter value"
+                  className="flex-1 py-2 px-3 rounded-lg border border-stone-200 bg-stone-50 font-sans text-sm focus:outline-none focus:ring-2 focus:ring-moss-500/40 focus:border-moss-500"
+                  autoFocus
+                />
+                {metricPrompt.unit && (
+                  <span className="font-sans text-sm text-stone-500">{metricPrompt.unit}</span>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setMetricPrompt(null)}
+                  className="flex-1 py-2 rounded-lg border border-stone-200 font-sans text-sm text-stone-600 hover:bg-stone-50 transition-colors"
+                >
+                  Skip
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const val = parseFloat(metricPromptValue);
+                    if (!isNaN(val)) {
+                      if (metricPrompt.vitalityGoalId) {
+                        logMetric(metricPrompt.vitalityGoalId, val);
+                      }
+                    }
+                    setMetricPrompt(null);
+                  }}
+                  className="flex-1 py-2 rounded-lg bg-moss-600 font-sans text-sm text-white hover:bg-moss-700 transition-colors"
+                >
+                  Log it
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <SpiritGuideTour
         open={showTour}

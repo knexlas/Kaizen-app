@@ -8,8 +8,12 @@ const TOUR_STEPS = [
     message: (name) => `Welcome, ${name}. This is your Compass. It shows you the one thing that matters right now.`,
   },
   {
+    targetId: 'tour-goal-types',
+    message: () => 'Here’s how things work: Seeds (Kaizen) are goals with steps and optional practice days. Rocks (Routines) are recurring habits with a weekly target. Projects are bigger goals with phases and milestones — use "Plan a Project" to slice them up. Vitality goals are single numbers you track (sleep, weight, etc.) and they show up in your Ponds below.',
+  },
+  {
     targetId: 'tour-timeline',
-    message: () => 'This is your Day. We plan it together based on your energy, not just your to-do list.',
+    message: () => 'This is your Day. We plan it together based on your energy, not just your to-do list. Switch to Week or Month view for the bigger picture.',
   },
   {
     targetId: 'tour-battery',
@@ -17,7 +21,7 @@ const TOUR_STEPS = [
   },
   {
     targetId: 'tour-ponds',
-    message: () => 'These are your Vitality Ponds. Track your health and spirit here.',
+    message: () => 'These are your Vitality Ponds. Any Vitality goal you create (e.g. sleep, weight) appears here. Log numbers and watch your progress.',
   },
   {
     targetId: 'tour-compost',
@@ -25,11 +29,15 @@ const TOUR_STEPS = [
   },
   {
     targetId: 'tour-garden-tab',
-    message: () => 'And this is your Garden. Every goal you complete grows something beautiful here.',
+    message: () => 'This is your Garden. Every goal you nurture — Seeds, Rocks, Projects — grows here. Projects look different (amber) and grow by completing milestones, not just time spent.',
+  },
+  {
+    targetId: 'tour-journal-tab',
+    message: () => 'Your Journal. After each session, you\'ll reflect here. Small notes become big insights over time.',
   },
   {
     targetId: 'tour-wisdom',
-    message: () => 'I am always here. Click this if you need advice, or just want to chat.',
+    message: () => 'And I am always here. Click me if you need advice, a plan, or just want to chat. When creating goals, try "Suggest based on Title" — Mochi can plan for you. Change the title and suggest again for a fresh plan!',
   },
 ];
 
