@@ -1,12 +1,41 @@
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useGarden } from '../../context/GardenContext';
+
+function CompostEmptyNote() {
+  const [showHow, setShowHow] = useState(false);
+  return (
+    <div className="py-8 text-center">
+      <p className="font-sans text-sm text-stone-500 italic mb-2">
+        Your mind is clear. If a distraction appears, throw it here.
+      </p>
+      <p className="font-sans text-sm text-stone-600 mb-2">
+        Compost is where &ldquo;not today&rdquo; goes—no shame.
+      </p>
+      <button
+        type="button"
+        onClick={() => setShowHow((v) => !v)}
+        className="font-sans text-xs font-medium text-moss-700 hover:text-moss-800 underline underline-offset-1 focus:outline-none focus:ring-2 focus:ring-moss-500/40 rounded"
+      >
+        How compost works
+      </button>
+      {showHow && (
+        <p className="mt-3 p-3 rounded-lg bg-amber-50/80 border border-amber-200/80 font-sans text-xs text-stone-600 text-left max-w-sm mx-auto">
+          Dump ideas or tasks here when you don&apos;t want to do them today. You can plant them later or break them into steps.
+        </p>
+      )}
+    </div>
+  );
+}
+import { useReward } from '../../context/RewardContext';
+import { buildReward } from '../../services/dopamineEngine';
 import { breakDownTask, processIncomingCompost } from '../../services/geminiService';
 
 const MOBILE_BREAKPOINT = 640;
 
 export default function CompostHeap({ open, onClose, onPlant, onPrism }) {
   const { compost = [], addToCompost, removeFromCompost } = useGarden();
+  const { pushReward } = useReward();
   const [quickCapture, setQuickCapture] = useState('');
   const [prismLoadingId, setPrismLoadingId] = useState(null);
   const [scanning, setScanning] = useState(false);
@@ -30,7 +59,10 @@ export default function CompostHeap({ open, onClose, onPlant, onPrism }) {
     e.preventDefault();
     const text = quickCapture.trim();
     if (!text || !addToCompost) return;
-    addToCompost(text);
+    addToCompost(text).then(() => {
+      const reward = buildReward({ type: 'COMPOST_ADDED', payload: { textLength: text.length } });
+      if (reward) pushReward(reward);
+    });
     setQuickCapture('');
   };
 
@@ -58,7 +90,13 @@ export default function CompostHeap({ open, onClose, onPlant, onPrism }) {
       if (!base64) return;
       const tasks = await processIncomingCompost(base64);
       if (Array.isArray(tasks) && tasks.length > 0) {
-        tasks.forEach((task) => addToCompost(task));
+        tasks.forEach((task) => {
+          const text = typeof task === 'string' ? task : (task?.text ?? '');
+          addToCompost(text).then(() => {
+            const reward = buildReward({ type: 'COMPOST_ADDED', payload: { textLength: text.length } });
+            if (reward) pushReward(reward);
+          });
+        });
       }
     } finally {
       setScanning(false);
@@ -186,9 +224,7 @@ export default function CompostHeap({ open, onClose, onPlant, onPrism }) {
           {/* List: organic pile (paper scraps / leaves) */}
           <div className="flex-1 overflow-y-auto p-4">
             {compost.length === 0 ? (
-              <p className="font-sans text-sm text-stone-500 italic py-8 text-center">
-                Your mind is clear. If a distraction appears, throw it here.
-              </p>
+              <CompostEmptyNote />
             ) : (
               <ul className="space-y-3">
                 {compost.map((item, index) => (

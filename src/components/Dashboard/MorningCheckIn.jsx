@@ -110,7 +110,7 @@ function Sparkline({ data }) {
   );
 }
 
-export default function MorningCheckIn({ onComplete, goals = [], logMetric, yesterdayPlan = null }) {
+export default function MorningCheckIn({ onComplete, onDismiss, goals = [], logMetric, yesterdayPlan = null }) {
   const { setDailySpoonCount } = useEnergy();
   const [step, setStep] = useState('energy');
   const [selectedSpoonCount, setSelectedSpoonCount] = useState(null);
@@ -179,8 +179,18 @@ export default function MorningCheckIn({ onComplete, goals = [], logMetric, yest
         initial={{ scale: 0.96, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         exit={{ scale: 0.96, opacity: 0 }}
-        className="bg-stone-50 rounded-2xl border border-stone-200 shadow-xl max-w-md w-full p-6"
+        className="relative bg-stone-50 rounded-2xl border border-stone-200 shadow-xl max-w-md w-full p-6"
       >
+        {onDismiss && (
+          <button
+            type="button"
+            onClick={onDismiss}
+            aria-label="Close"
+            className="absolute top-3 right-3 w-8 h-8 flex items-center justify-center rounded-lg text-stone-400 hover:text-stone-600 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
+          >
+            ×
+          </button>
+        )}
         <AnimatePresence mode="wait">
           {step === 'energy' && (
             <motion.div

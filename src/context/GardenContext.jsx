@@ -29,6 +29,7 @@ const defaultData = {
   logs: [],
   spiritConfig: null, // { name, type: 'mochi'|'ember'|'nimbus' } from Spirit Builder (or legacy { head, body, color, name })
   compost: [], // Inbox: { id, text, createdAt }
+  soilNutrients: 0, // 0–20; +1 per compost item added; consumed on focus complete for bonus
   spiritPoints: 0, // 1 per minute of focus
   embers: 100, // currency for decorations; new users start with 100 (enough for a bench)
   decorations: [], // { id, type, x, y, variant? }
@@ -48,6 +49,7 @@ export function GardenProvider({ children }) {
   const [logs, setLogs] = useState(defaultData.logs);
   const [spiritConfig, setSpiritConfigState] = useState(defaultData.spiritConfig);
   const [compost, setCompost] = useState(defaultData.compost);
+  const [soilNutrients, setSoilNutrients] = useState(defaultData.soilNutrients ?? 0);
   const [assignments, setAssignments] = useState({}); // daily schedule { [hour]: goalId | assignmentObject }
   const [planDate, setPlanDate] = useState(() => todayString()); // current date for plan subscription (updates so we re-sub at midnight)
   const [weekAssignments, setWeekAssignments] = useState({}); // cache: { [dateStr]: { [hour]: assignment } }
@@ -158,6 +160,7 @@ export function GardenProvider({ children }) {
           if (Array.isArray(data.logs)) setLogs(data.logs);
           if (data.spiritConfig && typeof data.spiritConfig === 'object') setSpiritConfigState(data.spiritConfig);
           // Compost is sourced from subscribeToCompost when uid exists; do not overwrite from garden/data
+          if (typeof data.soilNutrients === 'number') setSoilNutrients(Math.min(20, Math.max(0, data.soilNutrients)));
           if (typeof data.spiritPoints === 'number') setSpiritPoints(data.spiritPoints);
           if (typeof data.embers === 'number') setEmbers(data.embers);
           if (Array.isArray(data.decorations)) setDecorations(data.decorations);
@@ -280,12 +283,12 @@ export function GardenProvider({ children }) {
   useEffect(() => {
     if (!hydrated) return;
     try {
-      const data = { goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, logs, spiritConfig, compost, spiritPoints, embers, decorations, metrics };
+      const data = { goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, logs, spiritConfig, compost, soilNutrients, spiritPoints, embers, decorations, metrics };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     } catch (e) {
       console.warn('GardenContext: failed to save gardenData', e);
     }
-  }, [hydrated, goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, logs, spiritConfig, compost, spiritPoints, embers, decorations, metrics]);
+  }, [hydrated, goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, logs, spiritConfig, compost, soilNutrients, spiritPoints, embers, decorations, metrics]);
 
   // Debounced save to Firestore when goals, logs, weeklyEvents change (and user is logged in)
   useEffect(() => {
@@ -311,6 +314,7 @@ export function GardenProvider({ children }) {
           logs,
           spiritConfig: spiritConfig ?? null,
           compost: compost ?? [],
+          soilNutrients: soilNutrients ?? 0,
           spiritPoints: spiritPoints ?? 0,
           embers: embers ?? 100,
           decorations: decorations ?? [],
@@ -336,7 +340,7 @@ export function GardenProvider({ children }) {
         savedIdleTimeoutRef.current = null;
       }
     };
-  }, [hydrated, googleUser?.uid, goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, logs, spiritConfig, compost, spiritPoints, embers, decorations, metrics]);
+  }, [hydrated, googleUser?.uid, goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, logs, spiritConfig, compost, soilNutrients, spiritPoints, embers, decorations, metrics]);
 
   const addLog = useCallback((log) => {
     const mins = Number(log?.minutes) || 0;
@@ -417,9 +421,11 @@ export function GardenProvider({ children }) {
       const trimmed = (text || '').trim();
       if (!trimmed) return;
       const uid = googleUser?.uid;
+      const incrementNutrients = () => setSoilNutrients((prev) => Math.min(20, prev + 1));
       if (uid) {
         try {
           await addCompostItem(uid, trimmed);
+          incrementNutrients();
         } catch (e) {
           console.warn('addCompostItem failed, using local state', e);
           const item = {
@@ -428,6 +434,7 @@ export function GardenProvider({ children }) {
             createdAt: new Date().toISOString(),
           };
           setCompost((prev) => [item, ...prev]);
+          incrementNutrients();
         }
       } else {
         const item = {
@@ -436,10 +443,25 @@ export function GardenProvider({ children }) {
           createdAt: new Date().toISOString(),
         };
         setCompost((prev) => [item, ...prev]);
+        incrementNutrients();
       }
     },
     [googleUser?.uid]
   );
+
+  const consumeSoilNutrients = useCallback((amount = 1) => {
+    const n = Math.max(0, Math.floor(Number(amount) || 0));
+    if (n <= 0) return true;
+    let didConsume = false;
+    setSoilNutrients((prev) => {
+      if (prev >= n) {
+        didConsume = true;
+        return prev - n;
+      }
+      return prev;
+    });
+    return didConsume;
+  }, []);
 
   const removeFromCompost = useCallback(
     (id) => {
@@ -517,6 +539,80 @@ export function GardenProvider({ children }) {
 
     archiveYesterday();
   }, [hydrated, googleUser?.uid, goals, addToCompost]);
+
+  /** Shame-free reset: archive current plan into compost, clear today's plan, show morning check-in again. */
+  const gentleResetToToday = useCallback(({ gapDays } = {}) => {
+    const getGoalId = (a) => {
+      if (a == null) return null;
+      if (typeof a === 'string') return a;
+      return a?.goalId ?? a?.parentGoalId ?? null;
+    };
+    const getTitle = (a, goalId) => {
+      if (a && typeof a === 'object' && a.title) return a.title;
+      const g = (goals ?? []).find((goal) => goal.id === goalId);
+      return g?.title ?? goalId ?? 'Task';
+    };
+    const titles = new Set();
+    Object.values(assignments || {}).forEach((val) => {
+      const goalId = getGoalId(val);
+      const title = getTitle(val, goalId);
+      if (title && !titles.has(title)) {
+        titles.add(title);
+        addToCompost(title);
+      }
+    });
+    if (titles.size === 0) {
+      addToCompost('Gentle restart: archived unfinished items from the last session.');
+    }
+    setAssignments({});
+    setLastCheckInDate(yesterdayString());
+    const today = todayString();
+    const uid = googleUser?.uid;
+    if (uid) {
+      saveDailyPlan(uid, today, {}).catch((e) => console.warn('gentleResetToToday: saveDailyPlan failed', e));
+    }
+  }, [assignments, goals, addToCompost, setAssignments, googleUser?.uid]);
+
+  /** Archive plan items from past dates into compost so today stays light. Returns count archived. */
+  const archiveStalePlanItems = useCallback(async ({ olderThanDays = 1 } = {}) => {
+    const uid = googleUser?.uid;
+    if (!uid || olderThanDays < 1) return 0;
+    const today = todayString();
+    const getGoalId = (a) => {
+      if (a == null) return null;
+      if (typeof a === 'string') return a;
+      return a?.goalId ?? a?.parentGoalId ?? null;
+    };
+    const getTitle = (a, goalId) => {
+      if (a && typeof a === 'object' && a.title) return a.title;
+      const g = (goals ?? []).find((goal) => goal.id === goalId);
+      return g?.title ?? goalId ?? 'Task';
+    };
+    let totalArchived = 0;
+    for (let d = 1; d <= olderThanDays; d++) {
+      const past = new Date(today + 'T12:00:00');
+      past.setDate(past.getDate() - d);
+      const dateStr = past.toISOString().slice(0, 10);
+      try {
+        const { assignments: dayAssignments } = await getDailyPlan(uid, dateStr);
+        if (!dayAssignments || typeof dayAssignments !== 'object') continue;
+        const titles = new Set();
+        Object.values(dayAssignments).forEach((val) => {
+          const goalId = getGoalId(val);
+          const title = getTitle(val, goalId);
+          if (title && !titles.has(title)) {
+            titles.add(title);
+            addToCompost(title);
+            totalArchived += 1;
+          }
+        });
+        await saveDailyPlan(uid, dateStr, {});
+      } catch (e) {
+        console.warn('archiveStalePlanItems: failed for', dateStr, e);
+      }
+    }
+    return totalArchived;
+  }, [googleUser?.uid, goals, addToCompost]);
 
   const FERTILIZER_BONUS_MINUTES = 15;
 
@@ -733,6 +829,7 @@ export function GardenProvider({ children }) {
     if (Array.isArray(data.logs)) setLogs(data.logs);
     if (data.spiritConfig !== undefined) setSpiritConfigState(data.spiritConfig && typeof data.spiritConfig === 'object' ? data.spiritConfig : null);
     if (Array.isArray(data.compost)) setCompost(data.compost);
+    if (typeof data.soilNutrients === 'number') setSoilNutrients(Math.min(20, Math.max(0, data.soilNutrients)));
     if (typeof data.spiritPoints === 'number') setSpiritPoints(data.spiritPoints);
     if (typeof data.embers === 'number') setEmbers(data.embers);
     if (Array.isArray(data.decorations)) setDecorations(data.decorations);
@@ -751,6 +848,7 @@ export function GardenProvider({ children }) {
     setLogs(defaultData.logs);
     setSpiritConfigState(defaultData.spiritConfig);
     setCompost(defaultData.compost);
+    setSoilNutrients(defaultData.soilNutrients ?? 0);
     setAssignments({});
     setSpiritPoints(defaultData.spiritPoints);
     setEmbers(defaultData.embers ?? 100);
@@ -814,8 +912,12 @@ export function GardenProvider({ children }) {
     compost,
     addToCompost,
     removeFromCompost,
+    soilNutrients,
+    consumeSoilNutrients,
     assignments,
     setAssignments,
+    gentleResetToToday,
+    archiveStalePlanItems,
     weekAssignments,
     loadDayPlan,
     saveDayPlanForDate,

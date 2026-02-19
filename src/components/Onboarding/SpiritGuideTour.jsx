@@ -137,7 +137,15 @@ export default function SpiritGuideTour({ open = true, onComplete }) {
         <div className="mb-[-20px] z-10 relative">
           <MochiSpiritWithDialogue message={null} showBubble={false} />
         </div>
-        <div className="bg-white p-6 pt-8 rounded-2xl shadow-2xl border-2 border-stone-100 relative z-0 w-full">
+        <div className="relative bg-white p-6 pt-8 rounded-2xl shadow-2xl border-2 border-stone-100 z-0 w-full">
+          <button
+            type="button"
+            onClick={() => onComplete?.()}
+            aria-label="Close"
+            className="absolute top-3 right-3 w-8 h-8 flex items-center justify-center rounded-lg text-stone-400 hover:text-stone-600 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
+          >
+            ×
+          </button>
           <p className="font-serif text-lg text-moss-800 mb-6 text-center">{msg}</p>
           <div className="flex justify-between items-center">
             <button

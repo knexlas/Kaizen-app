@@ -84,6 +84,13 @@ export default function EveningWindDown({
     onClose?.();
   };
 
+  const handleDismiss = () => {
+    setStep('intro');
+    setGratitude('');
+    setSelectedFocusId(null);
+    onClose?.();
+  };
+
   if (!open) return null;
 
   return (
@@ -97,8 +104,16 @@ export default function EveningWindDown({
         <motion.div
           initial={{ scale: 0.95, opacity: 0, y: 20 }}
           animate={{ scale: 1, opacity: 1, y: 0 }}
-          className="w-full max-w-md bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl overflow-hidden text-slate-100"
+          className="relative w-full max-w-md bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl overflow-hidden text-slate-100"
         >
+          <button
+            type="button"
+            onClick={handleDismiss}
+            aria-label="Close"
+            className="absolute top-3 right-3 z-10 w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-700/60 focus:outline-none focus:ring-2 focus:ring-indigo-400/50"
+          >
+            ×
+          </button>
           {step === 'intro' && (
             <div className="p-8 text-center">
               <span className="text-4xl mb-4 block" aria-hidden>🌖</span>

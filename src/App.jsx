@@ -1,13 +1,19 @@
 import { useState, useEffect } from 'react';
 import { EnergyProvider } from './context/EnergyContext';
 import { useGarden, todayString } from './context/GardenContext';
+import { getSettings } from './services/userSettings';
+import { useReward } from './context/RewardContext';
 import { generateDailyPlan } from './services/schedulerService';
+import { buildReward } from './services/dopamineEngine';
 import { useTheme } from './context/ThemeContext';
 import SundayRitualController from './components/Rituals/SundayRitualController';
 import GardenDashboard from './components/Dashboard/GardenDashboard';
 import MorningCheckIn from './components/Dashboard/MorningCheckIn';
 import WelcomeGarden from './components/Onboarding/WelcomeGarden';
+import WelcomeOnboarding from './components/Onboarding/WelcomeOnboarding';
 import SeasonParticles from './components/SeasonParticles';
+
+const ONBOARDING_COMPLETE_KEY = 'kaizen_onboarding_complete';
 
 /** YYYY-MM-DD for this week's Sunday (same week as today). */
 function getThisWeekSundayString() {
@@ -28,6 +34,7 @@ function yesterdayString() {
 
 function App() {
   const [view, setView] = useState('loading');
+  const [onboardingComplete, setOnboardingComplete] = useState(true);
   const {
     hydrated,
     lastCheckInDate,
@@ -43,7 +50,9 @@ function App() {
     markSundayRitualComplete,
     assignments,
     setAssignments,
+    addGoal,
   } = useGarden();
+  const { pushReward } = useReward();
 
   const isAuthed = !!googleUser?.uid;
   const hasOnboarded = userSettings?.hasOnboarded === true;
@@ -53,6 +62,16 @@ function App() {
       ? { modifier: dailyEnergyModifier, spoonCount: dailySpoonCount }
       : null;
   const { theme } = useTheme();
+  const [a11y, setA11y] = useState(() => getSettings());
+
+  useEffect(() => {
+    const fn = () => setA11y(getSettings());
+    window.addEventListener('accessibility-settings-changed', fn);
+    return () => window.removeEventListener('accessibility-settings-changed', fn);
+  }, []);
+
+  const textSizeClass = a11y.textSize === 'sm' ? 'text-sm' : a11y.textSize === 'lg' ? 'text-lg' : 'text-base';
+  const a11yClasses = [textSizeClass, a11y.highContrast ? 'hc' : '', a11y.lowStim ? 'lowstim' : ''].filter(Boolean).join(' ');
 
   useEffect(() => {
     if (!hydrated) return;
@@ -70,6 +89,21 @@ function App() {
     }
   }, [hydrated, lastCheckInDate, lastSundayRitualDate]);
 
+  useEffect(() => {
+    if (!hydrated) return;
+    try {
+      setOnboardingComplete(localStorage.getItem(ONBOARDING_COMPLETE_KEY) === 'true');
+    } catch (_) {}
+  }, [hydrated]);
+
+  const handleOnboardingComplete = (action) => {
+    try {
+      localStorage.setItem(ONBOARDING_COMPLETE_KEY, 'true');
+    } catch (_) {}
+    setOnboardingComplete(true);
+    if (action === 'set_spoons') setView('intro');
+  };
+
   const handleRitualComplete = (plan) => {
     updateWeeklyEvents(Array.isArray(plan) ? plan : plan?.events ?? []);
     markSundayRitualComplete();
@@ -78,6 +112,8 @@ function App() {
 
   const handleIntroComplete = (modifier, spoonCount) => {
     completeMorningCheckIn(spoonCount);
+    const reward = buildReward({ type: 'MORNING_CHECKIN_DONE', payload: { spoonCount } });
+    if (reward) pushReward(reward);
     const hasAnyAssignment = Object.keys(assignments || {}).length > 0;
     if (!hasAnyAssignment) {
       const plan = generateDailyPlan(goals, spoonCount);
@@ -88,8 +124,8 @@ function App() {
 
   return (
     <EnergyProvider>
-      <div className={`min-h-screen font-sans relative ${theme.containerClass}`}>
-        <SeasonParticles particleType={theme.particleType} />
+      <div className={`min-h-screen font-sans relative ${theme.containerClass} ${a11yClasses}`}>
+        {!a11y.lowStim && <SeasonParticles particleType={theme.particleType} />}
         <div className="relative z-10">
           {view === 'loading' && (
             <div className="flex min-h-screen items-center justify-center text-stone-500">
@@ -109,6 +145,16 @@ function App() {
           )}
           {view === 'dashboard' && (
             <GardenDashboard />
+          )}
+
+          {/* Validation-first onboarding (ADHD/disability); show before morning check-in on first launch */}
+          {hydrated && !onboardingComplete && (
+            <WelcomeOnboarding
+              open={!onboardingComplete}
+              onClose={() => {}}
+              onComplete={handleOnboardingComplete}
+              addGoal={addGoal}
+            />
           )}
 
           {/* Onboarding overlay (blocks interaction until finished) */}

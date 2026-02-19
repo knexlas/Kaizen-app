@@ -6,6 +6,8 @@ import { createGoogleEvent } from '../../services/googleCalendarService';
 import { downloadICS } from '../../services/calendarSyncService';
 import { suggestLoadLightening, generateDailyPlan, autoFillDailyPlan, timeToMinutes } from '../../services/schedulerService';
 import { useGarden } from '../../context/GardenContext';
+import { getSettings } from '../../services/userSettings';
+import { shouldReduceMotion } from '../../services/motion';
 import WoodenSpoon from '../WoodenSpoon';
 
 const HOUR_START = 6;
@@ -158,6 +160,7 @@ function TimeSlot({
   now = null,
   isMobile = false,
   onEmptySlotClick,
+  disableConfetti = false,
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: hour });
   const goalId = getGoalIdFromAssignment(assignment);
@@ -198,7 +201,7 @@ function TimeSlot({
 
   const triggerHarvestConfetti = (e) => {
     try {
-      if (typeof window === 'undefined') return;
+      if (disableConfetti || typeof window === 'undefined') return;
       const prefersReducedMotion = !!window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
       if (prefersReducedMotion) return;
 
@@ -1705,6 +1708,7 @@ function TimeSlicer({
                     now={now}
                     isMobile={isMobile}
                     onEmptySlotClick={isMobile ? (h) => { if (filledCount >= maxSlots) { setSpoonsToast(true); return; } setSeedPickerTargetHour(h); } : undefined}
+                    disableConfetti={getSettings().lowStim || shouldReduceMotion(getSettings())}
                   />
                 ))}
               </div>
@@ -1712,9 +1716,9 @@ function TimeSlicer({
           </div>
 
           {/* Right — Seed Bag */}
-          <div className="border border-stone-200 rounded-lg bg-white/60 p-4">
-            <h3 className="font-serif text-stone-800 text-sm mb-3">Seed Bag</h3>
-            <div className="flex flex-col gap-4">
+          <div className="border border-stone-200 rounded-lg bg-white/60 p-4 flex flex-col min-h-0">
+            <h3 className="font-serif text-stone-800 text-sm mb-3 shrink-0">Seed Bag</h3>
+            <div className="flex flex-col gap-4 min-h-0 max-h-[60vh] overflow-y-auto">
               {todayRitualItems.length === 0 && goalBank.length === 0 ? (
                 <div className="py-6 text-center">
                   <p className="font-sans text-sm text-stone-500 mb-3">

@@ -1,9 +1,21 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useGarden } from '../../context/GardenContext';
+import { useTheme } from '../../context/ThemeContext';
 import { useEnergy } from '../../context/EnergyContext';
+import { useReward } from '../../context/RewardContext';
+import { buildReward } from '../../services/dopamineEngine';
+import { getSettings } from '../../services/userSettings';
+import { pickStarterTask } from '../../services/startAssist';
+import { localISODate, diffDays } from '../../services/dateUtils';
+import StartAssistModal from '../StartAssist/StartAssistModal';
+import GentleRestartModal from '../Onboarding/GentleRestartModal';
+import GuidedEmptyState from '../EmptyStates/GuidedEmptyState';
+import AccessibilitySettingsModal from '../Settings/AccessibilitySettingsModal';
 import GoalCreator from '../Goals/GoalCreator';
 import ProjectPlanner from '../Projects/ProjectPlanner';
+import HorizonsGantt from '../Horizons/HorizonsGantt';
+import HorizonsMetrics from '../Horizons/HorizonsMetrics';
 import GoalEditor from '../Goals/GoalEditor';
 import TimeSlicer, { HOURS, MAX_SLOTS_BY_WEATHER } from './TimeSlicer';
 import CompassWidget from './CompassWidget';
@@ -20,6 +32,7 @@ import EveningWindDown from './EveningWindDown';
 import FocusSession from '../Focus/FocusSession';
 import TeaCeremony from '../Focus/TeaCeremony';
 import GardenWalk from '../Garden/GardenWalk';
+import GardenWalkOverlay from '../Garden3D/GardenWalkOverlay';
 import JournalView from './JournalView';
 import AnalyticsView from './AnalyticsView';
 import SettingsView from './SettingsView';
@@ -68,7 +81,7 @@ const TODAY_MVP = 'Monday';
 const TODAY_INDEX = DAY_NAMES.indexOf(TODAY_MVP);
 
 /** All tabs available from day one. */
-const TAB_LEVELS = { focus: 1, garden: 1, settings: 1, journal: 1, insights: 1 };
+const TAB_LEVELS = { focus: 1, horizons: 1, garden: 1, settings: 1, journal: 1, insights: 1 };
 const LOCKED_TAB_TOAST = 'Keep growing to unlock this area.';
 
 /** Minutes logged this month for a goal (from logs). */
@@ -167,7 +180,10 @@ function getRitualForToday(goal, dayIndex) {
 }
 
 function GardenDashboard() {
-  const { goals, weeklyEvents, logs, addGoal, updateGoalProgress, updateGoalMilestone, editGoal, deleteGoal, addSubtask, updateSubtask, deleteSubtask, updateSubtaskProgress, lastCheckInDate, completeMorningCheckIn, dailyEnergyModifier, dailySpoonCount, addLog, logMetric, googleUser, connectCalendar, disconnectCalendar, googleToken, updateWeeklyEvents, cloudSaveStatus, spiritConfig, setSpiritConfig, compost, addToCompost, removeFromCompost, assignments, setAssignments, eveningMode, setEveningMode, userSettings, addRitualCategory, saveDayPlanForDate, msUser, msToken, connectOutlook, disconnectOutlook, refreshOutlookToken } = useGarden();
+  const { goals, weeklyEvents, logs, addGoal, updateGoalProgress, updateGoalMilestone, editGoal, deleteGoal, addSubtask, updateSubtask, deleteSubtask, updateSubtaskProgress, lastCheckInDate, completeMorningCheckIn, dailyEnergyModifier, dailySpoonCount, addLog, logMetric, googleUser, connectCalendar, disconnectCalendar, googleToken, updateWeeklyEvents, cloudSaveStatus, spiritConfig, setSpiritConfig, compost, addToCompost, removeFromCompost, soilNutrients, consumeSoilNutrients, earnEmbers, assignments, setAssignments, gentleResetToToday, archiveStalePlanItems, eveningMode, setEveningMode, userSettings, addRitualCategory, saveDayPlanForDate, msUser, msToken, connectOutlook, disconnectOutlook, refreshOutlookToken } = useGarden();
+  const { pushReward } = useReward();
+  const { darkMode: themeDarkMode, setDarkModeOverride } = useTheme();
+  const isDark = themeDarkMode || eveningMode === 'night-owl';
   const [today, setToday] = useState(() => new Date().toISOString().slice(0, 10));
   const needsMorningCheckIn = lastCheckInDate !== today;
 
@@ -222,6 +238,19 @@ function GardenDashboard() {
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [showSpiritMirror, setShowSpiritMirror] = useState(false);
   const [showProjectPlanner, setShowProjectPlanner] = useState(false);
+  const [horizonsView, setHorizonsView] = useState('planning'); // 'planning' | 'metrics'
+  const [showStartAssistModal, setShowStartAssistModal] = useState(false);
+  const [startAssistSuggestedTask, setStartAssistSuggestedTask] = useState(null);
+  const [startAssistNoTasks, setStartAssistNoTasks] = useState(false);
+  const [showGentleRestart, setShowGentleRestart] = useState(false);
+  const gentleRestartGapDaysRef = useRef(0);
+  const [staleArchivedCount, setStaleArchivedCount] = useState(0);
+  const hasRunArchiveStaleRef = useRef(false);
+  const [hydrated, setHydrated] = useState(false);
+  const [showAccessibilityModal, setShowAccessibilityModal] = useState(false);
+  const [showMorningCheckInModal, setShowMorningCheckInModal] = useState(false);
+  const [showGardenWalk, setShowGardenWalk] = useState(false);
+  const [gardenWalkMode, setGardenWalkMode] = useState('helpStart');
   const [goalCreatorInitialTitle, setGoalCreatorInitialTitle] = useState('');
   const [goalCreatorInitialSubtasks, setGoalCreatorInitialSubtasks] = useState([]);
   const [now, setNow] = useState(() => new Date());
@@ -234,6 +263,7 @@ function GardenDashboard() {
   const [showEveningModal, setShowEveningModal] = useState(false);
   const [showEveningNudgeToast, setShowEveningNudgeToast] = useState(false);
   const eveningNudgeShownRef = useRef(null); // date string when nudge was shown
+  const eveningModalAutoOpenedRef = useRef(null); // date string when evening modal was auto-opened
   const [lockedTabToast, setLockedTabToast] = useState(null);
   const [recordedToast, setRecordedToast] = useState(false);
   const [showTour, setShowTour] = useState(false);
@@ -278,6 +308,14 @@ function GardenDashboard() {
     if (eveningNudgeShownRef.current === today) return;
     eveningNudgeShownRef.current = today;
     setShowEveningNudgeToast(true);
+  }, [now, today, eveningMode]);
+
+  /** Auto-open evening modal once per day around 20:00 when still in 'none'. */
+  useEffect(() => {
+    if (now.getHours() < 20 || eveningMode !== 'none') return;
+    if (eveningModalAutoOpenedRef.current === today) return;
+    eveningModalAutoOpenedRef.current = today;
+    setShowEveningModal(true);
   }, [now, today, eveningMode]);
 
   /** In night-owl mode, keep user on focus-friendly tabs (hide Garden/Settings). */
@@ -546,12 +584,15 @@ function GardenDashboard() {
 
   const loadLightenedTimeoutRef = useRef(null);
   const loadLightenedToastRef = useRef(null);
-  const handleLoadLightened = useCallback(() => {
+  const handleLoadLightened = useCallback((removedItems) => {
     if (loadLightenedTimeoutRef.current) clearTimeout(loadLightenedTimeoutRef.current);
     if (loadLightenedToastRef.current) clearTimeout(loadLightenedToastRef.current);
     setLoadLightenedMessage("Good decision. The garden will wait.");
     setShowSpiritDialogue(true);
     setLoadLightenedToast(true);
+    const removedCount = removedItems?.length ?? 0;
+    const reward = buildReward({ type: 'LOAD_LIGHTENED', payload: { removedCount } });
+    if (reward) pushReward(reward);
     loadLightenedToastRef.current = setTimeout(() => {
       loadLightenedToastRef.current = null;
       setLoadLightenedToast(false);
@@ -561,7 +602,7 @@ function GardenDashboard() {
       setLoadLightenedMessage(null);
       setShowSpiritDialogue(false);
     }, 5000);
-  }, []);
+  }, [pushReward]);
 
   const requestSpiritWisdom = useCallback(
     (forceFetch = false) => {
@@ -608,6 +649,22 @@ function GardenDashboard() {
     [goals, todayDayIndex]
   );
 
+  /** Today's planned tasks from assignments (unique goals) for Start Assist. */
+  const todayTaskEntries = useMemo(() => {
+    const seen = new Set();
+    const out = [];
+    for (const hour of HOURS) {
+      const a = assignments[hour];
+      if (!a) continue;
+      const goalId = typeof a === 'string' ? a : (a?.goalId ?? a?.parentGoalId);
+      if (!goalId || seen.has(goalId)) continue;
+      seen.add(goalId);
+      const goal = goals?.find((g) => g.id === goalId);
+      if (goal) out.push({ goalId, goal });
+    }
+    return out;
+  }, [assignments, goals]);
+
   /** Garden Level: 1 = Seedling, 2 = Sprout (first task or 1 log), 3 = Bloom (5 tasks). */
   const gardenLevel = useMemo(() => {
     const logList = Array.isArray(logs) ? logs : [];
@@ -623,6 +680,79 @@ function GardenDashboard() {
     if (isTabLocked(activeTab)) setActiveTab('focus');
   }, [activeTab, gardenLevel, isTabLocked]);
 
+  const LAST_OPEN_DATE_KEY = 'kaizen_last_open_date';
+  const GENTLE_RESTART_DISMISSED_KEY = 'kaizen_gentle_restart_dismissed_date';
+  const GENTLE_RESTART_LAST_COMPLETED_KEY = 'kaizen_gentle_restart_last_completed';
+
+  useEffect(() => {
+    setHydrated(true);
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    const today = localISODate();
+    let lastOpen = null;
+    try {
+      lastOpen = localStorage.getItem(LAST_OPEN_DATE_KEY);
+    } catch (_) {}
+    if (!lastOpen) {
+      try {
+        localStorage.setItem(LAST_OPEN_DATE_KEY, today);
+      } catch (_) {}
+      return;
+    }
+    const dismissed = localStorage.getItem(GENTLE_RESTART_DISMISSED_KEY);
+    const diff = diffDays(today, lastOpen);
+    if (diff >= 3 && dismissed !== today) {
+      gentleRestartGapDaysRef.current = diff;
+      setShowGentleRestart(true);
+    } else {
+      try {
+        localStorage.setItem(LAST_OPEN_DATE_KEY, today);
+      } catch (_) {}
+    }
+  }, [hydrated]);
+
+  const handleGentleRestartFreshStart = useCallback(() => {
+    gentleResetToToday({ gapDays: gentleRestartGapDaysRef.current });
+    try {
+      localStorage.setItem(LAST_OPEN_DATE_KEY, localISODate());
+      localStorage.setItem(GENTLE_RESTART_LAST_COMPLETED_KEY, localISODate());
+    } catch (_) {}
+    setShowGentleRestart(false);
+  }, [gentleResetToToday]);
+
+  const handleGentleRestartReviewCompost = useCallback(() => {
+    try {
+      localStorage.setItem(LAST_OPEN_DATE_KEY, localISODate());
+    } catch (_) {}
+    setShowGentleRestart(false);
+    setShowCompost(true);
+  }, []);
+
+  const handleGentleRestartDismiss = useCallback(() => {
+    try {
+      localStorage.setItem(GENTLE_RESTART_DISMISSED_KEY, localISODate());
+      localStorage.setItem(LAST_OPEN_DATE_KEY, localISODate());
+    } catch (_) {}
+    setShowGentleRestart(false);
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated || hasRunArchiveStaleRef.current) return;
+    hasRunArchiveStaleRef.current = true;
+    archiveStalePlanItems({ olderThanDays: 1 })
+      .then((count) => {
+        if (count > 0) {
+          setStaleArchivedCount(count);
+          pushReward({ message: `Kept today light — moved ${count} older item${count === 1 ? '' : 's'} to compost.`, tone: 'moss', icon: '♻️', sound: null });
+        }
+      })
+      .catch(() => {});
+  }, [hydrated, archiveStalePlanItems, pushReward]);
+
+  const handleDismissStaleBanner = useCallback(() => setStaleArchivedCount(0), []);
+
   const handleSaveSeed = (goal) => {
     addGoal(goal);
     setIsPlanting(false);
@@ -636,6 +766,95 @@ function GardenDashboard() {
     const goal = goals.find((g) => g.id === goalId);
     if (goal) setSessionConfigTarget({ goal: { ...goal }, hour, ritualTitle: ritualTitle ?? null, subtaskId: subtaskId ?? null });
   };
+
+  const handleOpenStartAssist = useCallback(() => {
+    const candidate = pickStarterTask({ todayTasks: todayTaskEntries });
+    if (candidate) {
+      setStartAssistSuggestedTask(candidate);
+      setStartAssistNoTasks(false);
+    } else {
+      setStartAssistSuggestedTask(null);
+      setStartAssistNoTasks(true);
+    }
+    setShowStartAssistModal(true);
+  }, [todayTaskEntries]);
+
+  const handleStartAssistStart = useCallback((durationMinutes, task) => {
+    if (!task) return;
+    setActiveSession({
+      ...task,
+      sessionDurationMinutes: Math.max(1, Math.min(120, durationMinutes)),
+      subtaskId: null,
+    });
+    setShowStartAssistModal(false);
+    setStartAssistSuggestedTask(null);
+    setStartAssistNoTasks(false);
+  }, []);
+
+  const handleStartAssistClose = useCallback(() => {
+    setShowStartAssistModal(false);
+    setStartAssistSuggestedTask(null);
+    setStartAssistNoTasks(false);
+    pushReward({ message: 'No worries — starting is the hard part.', tone: 'slate', icon: '🌿', sound: null });
+  }, [pushReward]);
+
+  const STARTER_TITLES = {
+    'life-admin': 'One tiny life-admin thing',
+    personal: 'One personal goal step',
+    care: 'One care task',
+  };
+
+  const handleStartAssistChooseSuggestion = useCallback((key) => {
+    const title = STARTER_TITLES[key] ?? 'One tiny step';
+    const id = crypto.randomUUID?.() ?? `goal-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    const newGoal = {
+      id,
+      type: 'routine',
+      title,
+      estimatedMinutes: 5,
+      totalMinutes: 0,
+      createdAt: new Date().toISOString(),
+    };
+    addGoal(newGoal);
+    const firstEmpty = HOURS.find((h) => !assignments[h]);
+    if (firstEmpty) setAssignments((prev) => ({ ...prev, [firstEmpty]: id }));
+    setActiveSession({
+      ...newGoal,
+      sessionDurationMinutes: 5,
+      subtaskId: null,
+    });
+    setShowStartAssistModal(false);
+    setStartAssistSuggestedTask(null);
+    setStartAssistNoTasks(false);
+  }, [addGoal, assignments, setAssignments]);
+
+  /** Guided empty state: add starter suggestion to plan and start 5 min focus. */
+  const handleGuidedSuggestion = useCallback((key) => {
+    handleStartAssistChooseSuggestion(key);
+  }, [handleStartAssistChooseSuggestion]);
+
+  /** Guided empty state: pick a goal for this week — assign to first slot and start 5 min. */
+  const handleGuidedPickGoal = useCallback((goal) => {
+    if (!goal?.id) return;
+    const firstEmpty = HOURS.find((h) => !assignments[h]);
+    if (firstEmpty) setAssignments((prev) => ({ ...prev, [firstEmpty]: goal.id }));
+    setActiveSession({
+      ...goal,
+      sessionDurationMinutes: 5,
+      subtaskId: null,
+    });
+  }, [assignments, setAssignments]);
+
+  const handleGardenWalkAction = useCallback((actionType) => {
+    if (actionType === 'CHECKIN') setShowMorningCheckInModal(true);
+    else if (actionType === 'START_TINY_FOCUS_5') handleStartAssistChooseSuggestion('personal');
+    else if (actionType === 'PICK_ONE_TASK') handleOpenStartAssist();
+  }, [handleOpenStartAssist, handleStartAssistChooseSuggestion]);
+
+  const handleGardenWalkSimpleMode = useCallback(() => {
+    setShowGardenWalk(false);
+    handleOpenStartAssist();
+  }, [handleOpenStartAssist]);
 
   const handleEveningWindDownClose = useCallback(() => {
     setShowEveningModal(false);
@@ -666,23 +885,36 @@ function GardenDashboard() {
   const handleTeaComplete = (log) => {
     const durationMinutes = completedTask?.timeSpentMinutes ?? (log?.minutes != null ? Number(log.minutes) : 25);
     const taskId = completedTask?.id ?? log?.taskId;
+    const goalTitle = completedTask?.title ?? goals.find((g) => g.id === taskId)?.title ?? 'Goal';
     if (taskId) {
       updateGoalProgress(taskId, durationMinutes);
       const subtaskId = completedTask?.subtaskId ?? log?.subtaskId;
       if (subtaskId) {
         updateSubtaskProgress(taskId, subtaskId, durationMinutes / 60);
       }
-      const goalName = completedTask?.title ?? goals.find((g) => g.id === taskId)?.title ?? 'Goal';
-      setGrowthToast(`Your ${goalName} has grown.`);
+      setGrowthToast(`Your ${goalTitle} has grown.`);
     }
     addLog({
       taskId: completedTask?.id ?? log?.taskId,
-      taskTitle: completedTask?.title ?? goals.find((g) => g.id === (completedTask?.id ?? log?.taskId))?.title ?? 'Goal',
+      taskTitle: goalTitle,
       rating: log?.rating ?? null,
       note: log?.note ?? '',
       date: new Date(),
       minutes: durationMinutes,
     });
+    // Compost redemption: consume 1 nutrient for +2 embers if available
+    if (soilNutrients > 0 && consumeSoilNutrients(1)) {
+      earnEmbers(2);
+      pushReward({ message: 'Compost paid off: +2 Embers', tone: 'moss', icon: '♻️✨', durationMs: 2800 });
+    }
+    const focusReward = buildReward({
+      type: 'FOCUS_COMPLETE',
+      payload: { goalTitle, minutes: durationMinutes, spoonCount: todaySpoonCount ?? dailySpoonCount },
+    });
+    if (focusReward) {
+      if (focusReward.variableBonus?.embers) earnEmbers(focusReward.variableBonus.embers);
+      pushReward(focusReward);
+    }
     // Embers are awarded in TeaCeremony (1 per minute) before onComplete
     setShowTeaCeremony(false);
     setJustFinishedSession(true);
@@ -722,7 +954,13 @@ function GardenDashboard() {
 
   const handleMilestoneCheck = (goalId, milestoneId, completed) => {
     updateGoalMilestone(goalId, milestoneId, completed);
-    if (completed) setFertilizerToast(true);
+    if (completed) {
+      setFertilizerToast(true);
+      const goal = goals.find((g) => g.id === goalId);
+      const milestoneTitle = goal?.milestones?.find((m) => m.id === milestoneId)?.title ?? '';
+      const reward = buildReward({ type: 'MILESTONE_COMPLETE', payload: { milestoneTitle } });
+      if (reward) pushReward(reward);
+    }
   };
 
   if (showTeaCeremony) {
@@ -775,11 +1013,12 @@ function GardenDashboard() {
       )}
 
       <AnimatePresence>
-        {needsMorningCheckIn && (
+        {needsMorningCheckIn && showMorningCheckInModal && (
           <MorningCheckIn
             goals={goals}
             logMetric={logMetric}
             yesterdayPlan={yesterdayPlan}
+            onDismiss={() => setShowMorningCheckInModal(false)}
             onComplete={(modifier, spoonCount) => {
               completeMorningCheckIn(spoonCount);
               requestSpiritWisdom(false);
@@ -811,17 +1050,17 @@ function GardenDashboard() {
         setEveningMode={setEveningMode}
       />
     <div
-        className={`min-h-screen flex flex-col transition-colors ${eveningMode === 'night-owl' ? 'bg-slate-900 text-slate-100' : 'bg-stone-50'}`}
+        className={`min-h-screen flex flex-col transition-colors ${isDark ? 'bg-slate-900 text-slate-100' : 'bg-stone-50'}`}
       >
       <header
         className={`border-b transition-colors ${
-          eveningMode === 'night-owl' ? 'border-slate-700 bg-slate-800/80' : `border-stone-200 ${skyBg}`
+          isDark ? 'border-slate-700 bg-slate-800/80' : `border-stone-200 ${skyBg}`
         }`}
       >
         <div className="max-w-4xl mx-auto px-4 py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           {/* Left: Date • Weather • Sync status */}
-          <div className={`flex flex-wrap items-center gap-2 font-sans text-sm ${eveningMode === 'night-owl' ? 'text-slate-300' : 'text-stone-600'}`}>
-            <p className={`font-serif text-xl md:text-2xl mr-1 ${eveningMode === 'night-owl' ? 'text-slate-100' : 'text-stone-900'}`}>
+          <div className={`flex flex-wrap items-center gap-2 font-sans text-sm ${isDark ? 'text-slate-300' : 'text-stone-600'}`}>
+            <p className={`font-serif text-xl md:text-2xl mr-1 ${isDark ? 'text-slate-100' : 'text-stone-900'}`}>
               {new Date(today + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}
             </p>
             <span className="hidden sm:inline opacity-50 select-none" aria-hidden>|</span>
@@ -958,7 +1197,7 @@ function GardenDashboard() {
               type="button"
               onClick={() => setShowChat(true)}
               className={`flex items-center gap-2 py-2 pl-2 pr-2.5 rounded-lg focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors ${
-                eveningMode === 'night-owl'
+                isDark
                   ? 'bg-moss-900/40 text-moss-200 hover:bg-moss-800/50'
                   : 'bg-moss-100/80 text-moss-800 hover:bg-moss-200/80'
               }`}
@@ -970,24 +1209,35 @@ function GardenDashboard() {
               </span>
               <span className="hidden lg:inline text-xs font-medium">Chat</span>
             </button>
-            <button
-              id="tour-compost"
-              type="button"
-              onClick={() => setShowCompost(true)}
-              className={`flex items-center gap-2 py-2 pl-2 pr-2.5 rounded-lg focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors ${
-                eveningMode === 'night-owl' ? 'text-slate-400 hover:text-slate-100 hover:bg-slate-700/60' : 'text-stone-600 hover:text-stone-900 hover:bg-stone-200/60'
-              }`}
-              aria-label="Compost Heap"
-              title="Compost Heap"
-            >
-              <span className="text-lg leading-none" aria-hidden>🍂</span>
-              <span className="hidden lg:inline text-xs font-medium">Compost</span>
-            </button>
+            <div className="flex items-center gap-1">
+              <button
+                id="tour-compost"
+                type="button"
+                onClick={() => setShowCompost(true)}
+                className={`flex items-center gap-2 py-2 pl-2 pr-2.5 rounded-lg focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors ${
+                  isDark ? 'text-slate-400 hover:text-slate-100 hover:bg-slate-700/60' : 'text-stone-600 hover:text-stone-900 hover:bg-stone-200/60'
+                }`}
+                aria-label="Compost Heap"
+                title="Compost Heap"
+              >
+                <span className="text-lg leading-none" aria-hidden>🍂</span>
+                <span className="hidden lg:inline text-xs font-medium">Compost</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowCompost(true)}
+                className={`hidden sm:inline text-[10px] font-normal focus:outline-none focus:ring-2 focus:ring-moss-500/40 rounded ${
+                  isDark ? 'text-slate-500 hover:text-slate-300' : 'text-stone-400 hover:text-stone-600'
+                }`}
+              >
+                See older items (optional)
+              </button>
+            </div>
             <button
               type="button"
               onClick={() => setShowSpiritMirror(true)}
               className={`p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors ${
-                eveningMode === 'night-owl' ? 'text-slate-400 hover:text-slate-100 hover:bg-slate-700/60' : 'text-stone-500 hover:text-stone-800 hover:bg-stone-200/60'
+                isDark ? 'text-slate-400 hover:text-slate-100 hover:bg-slate-700/60' : 'text-stone-500 hover:text-stone-800 hover:bg-stone-200/60'
               }`}
               aria-label="Customize Spirit (Mirror)"
               title="Mirror"
@@ -996,31 +1246,45 @@ function GardenDashboard() {
             </button>
             <button
               type="button"
-              onClick={() => setShowEveningModal(true)}
+              onClick={() => setDarkModeOverride(!isDark)}
               className={`p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors ${
-                eveningMode === 'night-owl' ? 'text-indigo-300 hover:text-indigo-200 hover:bg-slate-700/60' : 'text-stone-500 hover:text-indigo-600 hover:bg-indigo-50'
+                isDark ? 'text-indigo-300 hover:text-indigo-200 hover:bg-slate-700/60' : 'text-stone-500 hover:text-indigo-600 hover:bg-indigo-50'
               }`}
-              aria-label="Evening Ritual"
-              title="Evening Ritual"
+              aria-label="Dark mode"
+              title="Toggle dark mode"
             >
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                 <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
               </svg>
             </button>
             {eveningMode !== 'night-owl' && (
-              <button
-                id="tour-settings"
-                type="button"
-                onClick={() => setActiveTab('settings')}
-                className="p-2 rounded-lg text-stone-500 hover:text-stone-800 hover:bg-stone-200/60 focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors"
-                aria-label="Settings"
-                title="Settings"
-              >
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0" aria-hidden>
-                  <circle cx="12" cy="12" r="3" />
-                  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
-                </svg>
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={() => setShowAccessibilityModal(true)}
+                  className="p-2 rounded-lg text-stone-500 hover:text-stone-800 hover:bg-stone-200/60 focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors"
+                  aria-label="Accessibility & Comfort"
+                  title="Accessibility & Comfort"
+                >
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0" aria-hidden>
+                    <circle cx="12" cy="12" r="10" />
+                    <path d="M12 6v4M12 14h.01M9 9l2 2-2 2" />
+                  </svg>
+                </button>
+                <button
+                  id="tour-settings"
+                  type="button"
+                  onClick={() => setActiveTab('settings')}
+                  className="p-2 rounded-lg text-stone-500 hover:text-stone-800 hover:bg-stone-200/60 focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors"
+                  aria-label="Settings"
+                  title="Settings"
+                >
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0" aria-hidden>
+                    <circle cx="12" cy="12" r="3" />
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                  </svg>
+                </button>
+              </>
             )}
             <button
               type="button"
@@ -1040,10 +1304,11 @@ function GardenDashboard() {
       </header>
 
       {!isMobileNav && (
-        <nav className={`border-b ${eveningMode === 'night-owl' ? 'border-slate-700 bg-slate-800/60' : 'border-stone-200 bg-stone-50'}`}>
+        <nav className={`border-b ${isDark ? 'border-slate-700 bg-slate-800/60' : 'border-stone-200 bg-stone-50'}`}>
           <div className="max-w-4xl mx-auto px-4 flex gap-8">
             {[
-              { id: 'focus', label: 'Daily Focus' },
+              { id: 'focus', label: 'Today' },
+              { id: 'horizons', label: 'Horizons' },
               { id: 'garden', label: 'My Garden' },
               { id: 'journal', label: 'Journal' },
               { id: 'insights', label: 'Insights' },
@@ -1067,8 +1332,8 @@ function GardenDashboard() {
                     }}
                     className={`relative py-4 font-sans font-medium focus:outline-none focus:ring-2 focus:ring-moss-500/30 rounded flex items-center gap-1.5 ${
                       locked
-                        ? eveningMode === 'night-owl' ? 'text-slate-500 cursor-default' : 'text-stone-400 cursor-default'
-                        : eveningMode === 'night-owl'
+                        ? isDark ? 'text-slate-500 cursor-default' : 'text-stone-400 cursor-default'
+                        : isDark
                           ? activeTab === id ? 'text-slate-100' : 'text-slate-400 hover:text-slate-200'
                           : activeTab === id ? 'text-stone-900' : 'text-stone-600 hover:text-stone-800'
                     }`}
@@ -1076,7 +1341,7 @@ function GardenDashboard() {
                     {locked && <span className="shrink-0 opacity-70" aria-hidden>🔒</span>}
                     {label}
                     {activeTab === id && !locked && (
-                      <span className={`absolute bottom-0 left-0 right-0 h-0.5 rounded-full ${eveningMode === 'night-owl' ? 'bg-slate-400' : 'bg-stone-400'}`} />
+                      <span className={`absolute bottom-0 left-0 right-0 h-0.5 rounded-full ${isDark ? 'bg-slate-400' : 'bg-stone-400'}`} />
                     )}
                   </button>
                 );
@@ -1086,14 +1351,13 @@ function GardenDashboard() {
       )}
 
       {isMobileNav && (
-        <nav className={`fixed bottom-0 left-0 right-0 z-50 border-t safe-area-pb ${eveningMode === 'night-owl' ? 'border-slate-700 bg-slate-800/95' : 'border-stone-200 bg-stone-50'}`}>
+        <nav className={`fixed bottom-0 left-0 right-0 z-50 border-t safe-area-pb ${isDark ? 'border-slate-700 bg-slate-800/95' : 'border-stone-200 bg-stone-50'}`}>
           <div className="max-w-4xl mx-auto px-2 flex justify-around py-2">
             {[
-              { id: 'focus', label: 'Focus', icon: '🎯' },
+              { id: 'focus', label: 'Today', icon: '🎯' },
+              { id: 'horizons', label: 'Horizons', icon: '🔭' },
               { id: 'garden', label: 'Garden', icon: '🌱' },
               { id: 'journal', label: 'Journal', icon: '📔' },
-              { id: 'insights', label: 'Insights', icon: '📊' },
-              { id: 'settings', label: 'Settings', icon: '⚙️' },
             ]
               .filter(({ id }) => eveningMode !== 'night-owl' || (id !== 'garden' && id !== 'settings'))
               .map(({ id, label, icon }) => {
@@ -1114,7 +1378,7 @@ function GardenDashboard() {
                     className={`flex flex-col items-center gap-0.5 py-2 px-3 rounded-lg font-sans text-xs focus:outline-none focus:ring-2 focus:ring-moss-500/30 relative ${
                       locked
                         ? 'text-stone-400 opacity-70 cursor-default'
-                        : eveningMode === 'night-owl'
+                        : isDark
                           ? activeTab === id ? 'text-indigo-200 bg-slate-700' : 'text-slate-400'
                           : activeTab === id ? 'text-moss-700 bg-moss-100' : 'text-stone-600'
                     }`}
@@ -1145,6 +1409,86 @@ function GardenDashboard() {
         )}
         {activeTab === 'focus' && (
           <>
+            {needsMorningCheckIn ? (
+              <div className="mb-4">
+                <GuidedEmptyState
+                  variant="needEnergy"
+                  onSetSpoons={() => setShowMorningCheckInModal(true)}
+                  lowStim={getSettings().lowStim}
+                />
+              </div>
+            ) : (
+              <>
+                {todayTaskEntries.length === 0 && (
+                  <div className="mb-4 space-y-4">
+                    <GuidedEmptyState
+                      variant="noTasks"
+                      onPickSuggestion={handleGuidedSuggestion}
+                      onStartFiveMin={handleGuidedSuggestion}
+                      lowStim={getSettings().lowStim}
+                    />
+                    {goals.length > 0 && (
+                      <GuidedEmptyState
+                        variant="noGoals"
+                        goals={goals}
+                        onPickGoal={handleGuidedPickGoal}
+                        lowStim={getSettings().lowStim}
+                      />
+                    )}
+                  </div>
+                )}
+                {(compost?.length ?? 0) === 0 && (
+                  <div className="mb-4">
+                    <GuidedEmptyState variant="noCompost" lowStim={getSettings().lowStim} />
+                  </div>
+                )}
+                <div className="mb-4">
+                  <button
+                    type="button"
+                    onClick={handleOpenStartAssist}
+                    className="w-full py-4 px-4 rounded-xl border-2 border-moss-400 bg-moss-50 text-moss-800 font-sans font-medium hover:border-moss-500 hover:bg-moss-100 transition-colors flex flex-col items-center gap-1 shadow-sm focus:outline-none focus:ring-2 focus:ring-moss-500 focus:ring-offset-2"
+                    aria-label="Help me start a short focus session"
+                  >
+                    <span className="text-base">Help me start (30 seconds)</span>
+                    <span className="text-sm font-normal text-moss-600">Pick one tiny step and begin.</span>
+                  </button>
+                  {(getSettings().gentleMode || getSettings().lowStim) && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => { setGardenWalkMode('helpStart'); setShowGardenWalk(true); }}
+                        className="mt-2 w-full py-2 px-4 rounded-lg font-sans text-sm text-stone-500 hover:text-stone-700 hover:bg-stone-100 border border-stone-200 focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors"
+                        aria-label="Take a guided walk (optional)"
+                        title="Opens a short guided walk with one small step"
+                      >
+                        Take a guided walk (optional)
+                      </button>
+                      <p className="mt-1 font-sans text-[11px] text-stone-400">Opens a short guided walk with one small step.</p>
+                    </>
+                  )}
+                </div>
+                {staleArchivedCount > 0 && (
+              <div className="mb-4 p-3 rounded-xl border border-moss-200 bg-moss-50/80 font-sans text-sm text-stone-700 flex flex-wrap items-center justify-between gap-2">
+                <span>We put older items into compost so today stays light.</span>
+                <span className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => { setShowCompost(true); handleDismissStaleBanner(); }}
+                    className="text-moss-700 font-medium hover:text-moss-800 underline underline-offset-2 focus:outline-none focus:ring-2 focus:ring-moss-500 rounded"
+                  >
+                    Review compost
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDismissStaleBanner}
+                    className="text-stone-400 hover:text-stone-600 focus:outline-none focus:ring-2 focus:ring-moss-500 rounded"
+                    aria-label="Dismiss"
+                  >
+                    ×
+                  </button>
+                </span>
+              </div>
+            )}
             {isMobileNav && (
               <div id="tour-compass" className="mb-4">
                 <CompassWidget
@@ -1165,7 +1509,8 @@ function GardenDashboard() {
             {stormWarnings.length > 0 && (
               <div className="mb-4 p-4 rounded-xl border-2 border-amber-300 bg-amber-50 font-sans text-sm text-amber-900" role="alert">
                 <p className="font-medium flex items-center gap-2">
-                  <span aria-hidden>⛈️</span> Storm Warning
+                  <span aria-hidden>⛈️</span>
+                  {getSettings().gentleMode ? 'Heads up — a lot on today' : 'Storm Warning'}
                 </p>
                 <ul className="mt-2 list-disc list-inside space-y-1 text-amber-800">
                   {stormWarnings.map((w, i) => (
@@ -1174,15 +1519,6 @@ function GardenDashboard() {
                 </ul>
               </div>
             )}
-            <div id="tour-goal-types" className="mb-4 p-3 rounded-xl bg-stone-100 border border-stone-200">
-              <p className="font-sans text-xs font-medium text-stone-600 mb-2">How goals work here</p>
-              <ul className="font-sans text-xs text-stone-600 space-y-1 list-none">
-                <li><span className="font-medium text-moss-700">Seed (Kaizen)</span> — goal with steps; add rituals for practice days.</li>
-                <li><span className="font-medium text-stone-700">Rock (Routine)</span> — recurring habit, weekly target.</li>
-                <li><span className="font-medium text-amber-700">Project</span> — phases and milestones; use &quot;Plan a Project&quot;.</li>
-                <li><span className="font-medium text-sky-700">Vitality</span> — track one number (e.g. sleep, weight); appears in Ponds.</li>
-              </ul>
-            </div>
             <div id="tour-timeline">
             <TimeSlicer
               weather={weather}
@@ -1216,20 +1552,61 @@ function GardenDashboard() {
               monthlyRoadmap={monthlyRoadmap}
             />
             </div>
-            <button
-              type="button"
-              onClick={() => setIsPlanting(true)}
-              className="mt-6 py-2.5 px-4 rounded-lg border-2 border-dashed border-stone-200 text-stone-500 font-sans text-sm hover:border-moss-500 hover:text-moss-600 transition-colors"
-            >
-              + Plant a Seed
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowProjectPlanner(true)}
-              className="mt-2 py-2.5 px-4 rounded-lg border-2 border-dashed border-stone-200 text-stone-500 font-sans text-sm hover:border-amber-500 hover:text-amber-600 transition-colors"
-            >
-              📋 Plan a Project
-            </button>
+              </>
+            )}
+          </>
+        )}
+        {activeTab === 'horizons' && (
+          <div className="w-full space-y-8 animate-in fade-in slide-in-from-bottom-2 duration-500">
+            {/* View toggle: Project planning | Tracking metrics */}
+            <div className="flex gap-1 p-1 rounded-xl bg-stone-100 border border-stone-200 w-full max-w-sm">
+              <button
+                type="button"
+                onClick={() => setHorizonsView('planning')}
+                className={`flex-1 py-2 px-4 rounded-lg font-sans text-sm font-medium transition-colors ${horizonsView === 'planning' ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-600 hover:text-stone-800'}`}
+              >
+                Project planning
+              </button>
+              <button
+                type="button"
+                onClick={() => setHorizonsView('metrics')}
+                className={`flex-1 py-2 px-4 rounded-lg font-sans text-sm font-medium transition-colors ${horizonsView === 'metrics' ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-600 hover:text-stone-800'}`}
+              >
+                Tracking metrics
+              </button>
+            </div>
+
+            {horizonsView === 'metrics' ? (
+              <HorizonsMetrics
+                goals={goals}
+                logMetric={logMetric}
+                onRecord={() => { setRecordedToast(true); setTimeout(() => setRecordedToast(false), 2500); }}
+              />
+            ) : (
+              <>
+            {/* 1. Planning Actions */}
+            <div>
+              <h2 className="font-serif text-2xl text-stone-800 mb-4">Planting Season</h2>
+              <div className="flex flex-col sm:flex-row gap-3">
+                <button
+                  type="button"
+                  onClick={() => setIsPlanting(true)}
+                  className="flex-1 py-4 px-4 rounded-xl border-2 border-dashed border-moss-300 bg-moss-50 text-moss-700 font-sans font-medium hover:border-moss-500 hover:bg-moss-100 transition-colors flex items-center justify-center gap-2 shadow-sm"
+                >
+                  <span className="text-xl">🌱</span> Plant a New Seed
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowProjectPlanner(true)}
+                  className="flex-1 py-4 px-4 rounded-xl border-2 border-dashed border-amber-300 bg-amber-50 text-amber-700 font-sans font-medium hover:border-amber-500 hover:bg-amber-100 transition-colors flex items-center justify-center gap-2 shadow-sm"
+                >
+                  <span className="text-xl">📋</span> Plan a Project
+                </button>
+              </div>
+            </div>
+
+            {/* Gantt: project timeline */}
+            <HorizonsGantt goals={goals} />
 
             {/* Ponds: Vitality goals grouped by domain + their tributary Rocks */}
             {(() => {
@@ -1436,7 +1813,9 @@ function GardenDashboard() {
                 </div>
               );
             })()}
-          </>
+              </>
+            )}
+          </div>
         )}
         {activeTab === 'garden' && (
           <div className="w-full">
@@ -1490,6 +1869,14 @@ function GardenDashboard() {
               onClick={(e) => e.stopPropagation()}
               className="relative max-h-[90vh] overflow-y-auto"
             >
+              <button
+                type="button"
+                onClick={() => setShowSpiritMirror(false)}
+                aria-label="Close"
+                className="absolute top-3 right-3 z-10 w-8 h-8 flex items-center justify-center rounded-lg text-stone-400 hover:text-stone-600 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
+              >
+                ×
+              </button>
               <SpiritBuilder
                 mode="edit"
                 initialConfig={spiritConfig}
@@ -1516,6 +1903,42 @@ function GardenDashboard() {
         open={showProjectPlanner}
         onClose={() => setShowProjectPlanner(false)}
         onCreateGoals={handleProjectGoals}
+      />
+
+      <StartAssistModal
+        open={showStartAssistModal}
+        suggestedTask={startAssistSuggestedTask}
+        noTasksMode={startAssistNoTasks}
+        defaultDurationMinutes={todaySpoonCount != null && todaySpoonCount <= 4 ? 5 : 5}
+        onStart={handleStartAssistStart}
+        onPickDifferent={() => setShowStartAssistModal(false)}
+        onClose={handleStartAssistClose}
+        onChooseSuggestion={handleStartAssistChooseSuggestion}
+      />
+
+      <GentleRestartModal
+        open={showGentleRestart}
+        onFreshStart={handleGentleRestartFreshStart}
+        onReviewCompost={handleGentleRestartReviewCompost}
+        onDismiss={handleGentleRestartDismiss}
+      />
+
+      <AccessibilitySettingsModal
+        open={showAccessibilityModal}
+        onClose={() => setShowAccessibilityModal(false)}
+      />
+
+      <GardenWalkOverlay
+        open={showGardenWalk}
+        mode={gardenWalkMode}
+        onClose={() => setShowGardenWalk(false)}
+        onSimpleMode={handleGardenWalkSimpleMode}
+        onAction={handleGardenWalkAction}
+        actions={[
+          { type: 'CHECKIN', label: "Set today's spoons" },
+          { type: 'START_TINY_FOCUS_5', label: 'Start 5 min focus' },
+          { type: 'PICK_ONE_TASK', label: 'Pick one task' },
+        ]}
       />
 
       <GoalEditor
@@ -1575,8 +1998,16 @@ function GardenDashboard() {
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.96, opacity: 0 }}
               onClick={(e) => e.stopPropagation()}
-              className="bg-stone-50 rounded-2xl border border-stone-200 shadow-xl max-w-sm w-full p-6"
+              className="relative bg-stone-50 rounded-2xl border border-stone-200 shadow-xl max-w-sm w-full p-6"
             >
+              <button
+                type="button"
+                onClick={() => setSessionConfigTarget(null)}
+                aria-label="Close"
+                className="absolute top-3 right-3 w-8 h-8 flex items-center justify-center rounded-lg text-stone-400 hover:text-stone-600 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
+              >
+                ×
+              </button>
               <h2 id="configure-session-title" className="font-serif text-stone-900 text-xl mb-1">
                 Configure Session
               </h2>
@@ -1667,8 +2098,16 @@ function GardenDashboard() {
                 animate={{ scale: 1, opacity: 1 }}
                 exit={{ scale: 0.96, opacity: 0 }}
                 onClick={(e) => e.stopPropagation()}
-                className="bg-stone-50 rounded-2xl border border-stone-200 shadow-xl max-w-sm w-full p-6"
+                className="relative bg-stone-50 rounded-2xl border border-stone-200 shadow-xl max-w-sm w-full p-6"
               >
+                <button
+                  type="button"
+                  onClick={() => setSeedForMilestones(null)}
+                  aria-label="Close"
+                  className="absolute top-3 right-3 w-8 h-8 flex items-center justify-center rounded-lg text-stone-400 hover:text-stone-600 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
+                >
+                  ×
+                </button>
                 <h3 className="font-serif text-stone-900 text-xl mb-4">{goal.title}</h3>
                 <p className="font-sans text-sm text-stone-500 mb-4">Milestones (Break it down)</p>
                 {milestones.length === 0 ? (

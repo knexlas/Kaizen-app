@@ -185,8 +185,16 @@ export default function CommandPalette({
             exit={{ opacity: 0, scale: 0.98, y: -8 }}
             transition={{ duration: 0.2, ease: 'easeOut' }}
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-md rounded-2xl border border-stone-200 bg-stone-50/95 shadow-2xl overflow-hidden"
+            className="relative w-full max-w-md rounded-2xl border border-stone-200 bg-stone-50/95 shadow-2xl overflow-hidden"
           >
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close"
+              className="absolute top-3 right-3 z-10 w-8 h-8 flex items-center justify-center rounded-lg text-stone-400 hover:text-stone-600 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
+            >
+              ×
+            </button>
             <div className="p-4">
               <input
                 ref={inputRef}

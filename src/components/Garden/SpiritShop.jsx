@@ -35,9 +35,17 @@ export default function SpiritShop({ onClose }) {
         animate={{ opacity: 1, scale: 1 }}
         exit={{ opacity: 0, scale: 0.96 }}
         transition={{ duration: 0.25, ease: 'easeOut' }}
-        className="w-full max-w-lg rounded-2xl border border-stone-200 bg-[#FDFCF5] shadow-xl overflow-hidden"
+        className="relative w-full max-w-lg rounded-2xl border border-stone-200 bg-[#FDFCF5] shadow-xl overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close"
+          className="absolute top-3 right-3 z-10 w-8 h-8 flex items-center justify-center rounded-lg text-stone-400 hover:text-stone-600 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
+        >
+          ×
+        </button>
         {/* Header: Mochi + Embers */}
         <div className="px-6 pt-6 pb-4 border-b border-stone-200/80">
           <div className="flex items-center justify-between gap-4">

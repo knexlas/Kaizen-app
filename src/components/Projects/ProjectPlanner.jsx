@@ -100,8 +100,16 @@ export default function ProjectPlanner({ open, onClose, onCreateGoals }) {
           animate={{ scale: 1, opacity: 1 }}
           exit={{ scale: 0.95, opacity: 0 }}
           onClick={(e) => e.stopPropagation()}
-          className="bg-white rounded-2xl shadow-xl border border-stone-200 w-full max-w-lg max-h-[85vh] flex flex-col"
+          className="relative bg-white rounded-2xl shadow-xl border border-stone-200 w-full max-w-lg max-h-[85vh] flex flex-col"
         >
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="absolute top-3 right-3 z-10 w-8 h-8 flex items-center justify-center rounded-lg text-stone-400 hover:text-stone-600 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
+          >
+            ×
+          </button>
           <div className="px-6 py-4 border-b border-stone-100">
             <h2 className="font-serif text-stone-900 text-xl">Project Planner</h2>
             <p className="font-sans text-sm text-stone-500 mt-0.5">

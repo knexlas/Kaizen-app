@@ -1,6 +1,8 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useGarden } from '../../context/GardenContext';
+import { getSettings } from '../../services/userSettings';
+import { shouldReduceMotion } from '../../services/motion';
 
 // --- Japanese tea cup SVG ---
 function TeaCup() {
@@ -17,8 +19,8 @@ function TeaCup() {
   );
 }
 
-// --- 3 steam lines: rise and fade (y: -20, opacity: 0) ---
-function Steam() {
+// --- 3 steam lines: rise and fade (y: -20, opacity: 0); optional reduced motion ---
+function Steam({ reduceMotion = false }) {
   const line = (d, delay = 0) => (
     <motion.path
       key={d}
@@ -27,9 +29,9 @@ function Steam() {
       strokeWidth="1.5"
       fill="none"
       strokeLinecap="round"
-      initial={{ opacity: 0.5, y: 0 }}
-      animate={{ opacity: 0, y: -20 }}
-      transition={{ duration: 2.5, repeat: Infinity, ease: 'easeOut', delay }}
+      initial={{ opacity: reduceMotion ? 0.3 : 0.5, y: 0 }}
+      animate={{ opacity: 0, y: reduceMotion ? -8 : -20 }}
+      transition={reduceMotion ? { duration: 1.5, repeat: Infinity, ease: 'easeOut', delay } : { duration: 2.5, repeat: Infinity, ease: 'easeOut', delay }}
     />
   );
   return (
@@ -49,6 +51,9 @@ const RATING_OPTIONS = [
 
 const EMBER_PARTICLE_COUNT = 8;
 
+const reducedTransition = { duration: 0.15 };
+const noTransition = { duration: 0 };
+
 export default function TeaCeremony({ task, completedTask, subtasks = [], onComplete }) {
   const resolvedTask = task ?? completedTask;
   const { earnEmbers } = useGarden();
@@ -57,6 +62,7 @@ export default function TeaCeremony({ task, completedTask, subtasks = [], onComp
   const [subtaskId, setSubtaskId] = useState('');
   const [phase, setPhase] = useState('reflection'); // 'reflection' | 'success'
   const [embersEarned, setEmbersEarned] = useState(0);
+  const reduceMotion = useMemo(() => shouldReduceMotion(getSettings()), []);
 
   const durationMinutes = resolvedTask?.timeSpentMinutes ?? 25;
 
@@ -79,14 +85,19 @@ export default function TeaCeremony({ task, completedTask, subtasks = [], onComp
     setTimeout(() => onComplete?.(log), 2800);
   };
 
-  // Success screen: "You gathered [X] Embers 🔥" + embers flying into counter
+  // Success screen: "You gathered [X] Embers 🔥" + embers flying into counter (or minimal when reduce motion)
   if (phase === 'success') {
+    const successTransition = reduceMotion ? reducedTransition : { duration: 0.3 };
+    const counterTransition = reduceMotion ? noTransition : { delay: 0.2, type: 'spring', stiffness: 200 };
+    const counterInitial = reduceMotion ? { scale: 1, opacity: 1 } : { scale: 0.8, opacity: 0 };
+    const numberTransition = reduceMotion ? noTransition : { delay: 0.1 };
+    const numberInitial = reduceMotion ? { opacity: 1, y: 0 } : { opacity: 0, y: -10 };
     return (
       <motion.div
         key="tea-success"
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
-        transition={{ duration: 0.3 }}
+        transition={successTransition}
         className="fixed inset-0 z-50 bg-stone-50 flex flex-col items-center justify-center px-4 py-8"
         role="dialog"
         aria-modal="true"
@@ -96,65 +107,66 @@ export default function TeaCeremony({ task, completedTask, subtasks = [], onComp
           You gathered <span className="font-semibold text-amber-700">{embersEarned}</span> Embers 🔥
         </p>
         <div className="relative flex items-center justify-center mt-4">
-          {/* Counter that receives the embers */}
           <motion.div
             className="flex items-center gap-1.5 rounded-full bg-amber-50 border-2 border-amber-200 px-6 py-3"
-            initial={{ scale: 0.8, opacity: 0 }}
+            initial={counterInitial}
             animate={{ scale: 1, opacity: 1 }}
-            transition={{ delay: 0.2, type: 'spring', stiffness: 200 }}
+            transition={counterTransition}
           >
             <motion.span
               className="text-2xl"
               key={embersEarned}
-              initial={{ scale: 1.5 }}
+              initial={reduceMotion ? {} : { scale: 1.5 }}
               animate={{ scale: 1 }}
-              transition={{ duration: 0.3 }}
+              transition={reduceMotion ? noTransition : { duration: 0.3 }}
             >
               🔥
             </motion.span>
             <motion.span
               className="font-sans text-xl font-semibold text-amber-800 tabular-nums"
               key={embersEarned}
-              initial={{ opacity: 0, y: -10 }}
+              initial={numberInitial}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.1 }}
+              transition={numberTransition}
             >
               +{embersEarned}
             </motion.span>
           </motion.div>
-          {/* Ember particles flying from center toward counter */}
-          <div className="absolute inset-0 pointer-events-none flex items-center justify-center" aria-hidden>
-            {Array.from({ length: EMBER_PARTICLE_COUNT }).map((_, i) => (
-              <motion.span
-                key={i}
-                className="absolute text-xl"
-                initial={{
-                  x: (i - EMBER_PARTICLE_COUNT / 2) * 24,
-                  y: 20 + (i % 3) * 16,
-                  opacity: 1,
-                  scale: 1,
-                }}
-                animate={{
-                  x: 0,
-                  y: 0,
-                  opacity: 0,
-                  scale: 0.4,
-                }}
-                transition={{
-                  duration: 1,
-                  delay: 0.3 + i * 0.06,
-                  ease: 'easeIn',
-                }}
-              >
-                🔥
-              </motion.span>
-            ))}
-          </div>
+          {!reduceMotion && (
+            <div className="absolute inset-0 pointer-events-none flex items-center justify-center" aria-hidden>
+              {Array.from({ length: EMBER_PARTICLE_COUNT }).map((_, i) => (
+                <motion.span
+                  key={i}
+                  className="absolute text-xl"
+                  initial={{
+                    x: (i - EMBER_PARTICLE_COUNT / 2) * 24,
+                    y: 20 + (i % 3) * 16,
+                    opacity: 1,
+                    scale: 1,
+                  }}
+                  animate={{
+                    x: 0,
+                    y: 0,
+                    opacity: 0,
+                    scale: 0.4,
+                  }}
+                  transition={{
+                    duration: 1,
+                    delay: 0.3 + i * 0.06,
+                    ease: 'easeIn',
+                  }}
+                >
+                  🔥
+                </motion.span>
+              ))}
+            </div>
+          )}
         </div>
       </motion.div>
     );
   }
 
+  const openTransition = reduceMotion ? reducedTransition : { duration: 0.3 };
   return (
     <AnimatePresence mode="wait">
       <motion.div
@@ -162,7 +174,7 @@ export default function TeaCeremony({ task, completedTask, subtasks = [], onComp
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
-        transition={{ duration: 0.3 }}
+        transition={openTransition}
         className="fixed inset-0 z-50 bg-stone-50 flex flex-col items-center justify-center px-4 py-8"
         role="dialog"
         aria-modal="true"
@@ -171,9 +183,9 @@ export default function TeaCeremony({ task, completedTask, subtasks = [], onComp
         {/* Center: Cup + Steam */}
         <motion.div
           className="relative flex justify-center mb-8"
-          initial={{ opacity: 0, y: 12 }}
+          initial={reduceMotion ? {} : { opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, ease: 'easeOut' }}
+          transition={reduceMotion ? noTransition : { duration: 0.5, ease: 'easeOut' }}
         >
           <div className="relative">
             <TeaCup />
@@ -186,8 +198,8 @@ export default function TeaCeremony({ task, completedTask, subtasks = [], onComp
                   fill="none"
                   strokeLinecap="round"
                   initial={{ opacity: 0.5, y: 0 }}
-                  animate={{ opacity: 0, y: -20 }}
-                  transition={{ duration: 2.5, repeat: Infinity, ease: 'easeOut' }}
+                  animate={{ opacity: 0, y: reduceMotion ? -8 : -20 }}
+                  transition={reduceMotion ? { duration: 1.2, repeat: Infinity, ease: 'easeOut' } : { duration: 2.5, repeat: Infinity, ease: 'easeOut' }}
                 />
                 <motion.path
                   d="M24 26 Q26 16 28 26"
@@ -196,8 +208,8 @@ export default function TeaCeremony({ task, completedTask, subtasks = [], onComp
                   fill="none"
                   strokeLinecap="round"
                   initial={{ opacity: 0.5, y: 0 }}
-                  animate={{ opacity: 0, y: -20 }}
-                  transition={{ duration: 2.5, repeat: Infinity, ease: 'easeOut', delay: 0.5 }}
+                  animate={{ opacity: 0, y: reduceMotion ? -8 : -20 }}
+                  transition={reduceMotion ? { duration: 1.2, repeat: Infinity, ease: 'easeOut', delay: 0.5 } : { duration: 2.5, repeat: Infinity, ease: 'easeOut', delay: 0.5 }}
                 />
                 <motion.path
                   d="M32 26 Q34 16 36 26"
@@ -206,8 +218,8 @@ export default function TeaCeremony({ task, completedTask, subtasks = [], onComp
                   fill="none"
                   strokeLinecap="round"
                   initial={{ opacity: 0.5, y: 0 }}
-                  animate={{ opacity: 0, y: -20 }}
-                  transition={{ duration: 2.5, repeat: Infinity, ease: 'easeOut', delay: 1 }}
+                  animate={{ opacity: 0, y: reduceMotion ? -8 : -20 }}
+                  transition={reduceMotion ? { duration: 1.2, repeat: Infinity, ease: 'easeOut', delay: 1 } : { duration: 2.5, repeat: Infinity, ease: 'easeOut', delay: 1 }}
                 />
               </svg>
             </div>

@@ -1,0 +1,26 @@
+/* Accessibility & Comfort: high contrast and low stimulation */
+
+/* High contrast: stronger borders and text, avoid low-contrast grays */
+.hc {
+  --hc-border: 1px solid rgba(0, 0, 0, 0.35);
+}
+.hc .border-stone-200,
+.hc [class*="border-stone"] {
+  border-color: rgba(0, 0, 0, 0.25);
+}
+.hc .text-stone-500,
+.hc .text-stone-600 {
+  color: rgba(0, 0, 0, 0.75);
+}
+
+/* Low stimulation: hide confetti/particles, reduce celebratory motion */
+.lowstim [data-confetti],
+.lowstim .confetti-container,
+.lowstim [data-season-particles] {
+  display: none !important;
+}
+.lowstim [data-confetti],
+.lowstim .confetti-container {
+  pointer-events: none;
+  visibility: hidden;
+}

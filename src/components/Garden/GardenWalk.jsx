@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect } from 'react';
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useGarden } from '../../context/GardenContext';
 import SpiritShop from './SpiritShop';
@@ -38,6 +38,7 @@ function getPlantStage(pct) {
 
 const STAGE_EMOJI = { seed: '🌱', sprout: '🌿', bloom: '🌸', harvest: '🌲' };
 const PROJECT_STAGE_EMOJI = { seed: '🫘', sprout: '🪴', bloom: '🌻', harvest: '🏆' };
+const DECORATION_EMOJI = { bench: '🪑', pond: '🐟', lantern: '🏮', torii: '⛩️', cherry: '🌸' };
 
 function PixelPlant({ stage, isProject }) {
   const emoji = isProject ? (PROJECT_STAGE_EMOJI[stage] ?? '🫘') : (STAGE_EMOJI[stage] ?? '🌱');
@@ -61,7 +62,7 @@ function isProjectDone(goal) {
 }
 
 export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCreator, onEditGoal }) {
-  const { goals: contextGoals } = useGarden();
+  const { goals: contextGoals, decorations = [], updateDecorationPosition } = useGarden();
   const goals = goalsProp ?? contextGoals ?? [];
 
   const [positions, setPositions] = useState({});
@@ -69,6 +70,7 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
   const [selectedGoal, setSelectedGoal] = useState(null);
   const [showShop, setShowShop] = useState(false);
   const [pendingPlantCell, setPendingPlantCell] = useState(null);
+  const gridContainerRef = useRef(null);
 
   useEffect(() => {
     const updates = {};
@@ -131,10 +133,32 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
     });
   }, []);
 
+  const handleDecorationDragStart = useCallback((e, id) => {
+    e.dataTransfer.setData('text/plain', id);
+    e.dataTransfer.effectAllowed = 'move';
+  }, []);
+
+  const handleDecorationDrop = useCallback((e) => {
+    e.preventDefault();
+    const id = e.dataTransfer.getData('text/plain');
+    if (!id || !updateDecorationPosition) return;
+    const el = gridContainerRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const xPct = ((e.clientX - rect.left) / rect.width) * 100;
+    const yPct = ((e.clientY - rect.top) / rect.height) * 100;
+    updateDecorationPosition(id, `${Math.round(Math.max(0, Math.min(100, xPct)))}%`, `${Math.round(Math.max(0, Math.min(100, yPct)))}%`);
+  }, [updateDecorationPosition]);
+
+  const handleGridDragOver = useCallback((e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  }, []);
+
   return (
     <div className="w-full flex flex-col gap-6">
       {/* Cozy Tile Grid */}
-      <div className="rounded-2xl overflow-hidden border-2 border-[#7cb342]/40 shadow-lg bg-[#eefbc3]">
+      <div className="relative rounded-2xl overflow-hidden border-2 border-[#7cb342]/40 shadow-lg bg-[#eefbc3]">
         <div
           className="grid gap-0 p-2"
           style={{
@@ -199,6 +223,41 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
             })
           )}
         </div>
+        {/* Decorations layer: drag to reposition */}
+        {decorations?.length > 0 && (
+          <div
+            ref={gridContainerRef}
+            className="absolute inset-0 z-20 p-2"
+            onDragOver={handleGridDragOver}
+            onDrop={handleDecorationDrop}
+            style={{ pointerEvents: 'auto' }}
+            aria-hidden
+          >
+            {decorations.map((d) => {
+              const left = typeof d.x === 'number' ? `${d.x}%` : d.x;
+              const top = typeof d.y === 'number' ? `${d.y}%` : d.y;
+              const emoji = DECORATION_EMOJI[d.type] ?? '🪴';
+              return (
+                <div
+                  key={d.id}
+                  draggable
+                  onDragStart={(e) => handleDecorationDragStart(e, d.id)}
+                  onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
+                  onDrop={handleDecorationDrop}
+                  className="absolute w-10 h-10 flex items-center justify-center cursor-grab active:cursor-grabbing text-2xl drop-shadow-sm hover:scale-110 transition-transform select-none"
+                  style={{
+                    left,
+                    top,
+                    transform: 'translate(-50%, -50%)',
+                  }}
+                  title="Drag to move"
+                >
+                  {emoji}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Plant Details Modal */}
@@ -268,7 +327,7 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
                   <div className="flex items-center gap-2">
                     <span className="font-sans text-xs text-stone-500">Deadline:</span>
                     <span className={`font-sans text-xs font-medium ${
-                      new Date(selectedGoal._projectDeadline + 'T23:59:59') < new Date() ? 'text-red-600' : 'text-stone-700'
+                      new Date(selectedGoal._projectDeadline + 'T23:59:59') < new Date() ? 'text-amber-600' : 'text-stone-700'
                     }`}>{new Date(selectedGoal._projectDeadline + 'T12:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</span>
                     {new Date(selectedGoal._projectDeadline + 'T23:59:59') < new Date() && (
                       <button

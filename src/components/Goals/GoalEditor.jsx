@@ -86,8 +86,16 @@ export default function GoalEditor({ open, goal, onClose, onSave, addSubtask, up
           animate={{ scale: 1, opacity: 1 }}
           exit={{ scale: 0.96, opacity: 0 }}
           onClick={(e) => e.stopPropagation()}
-          className="bg-stone-50 rounded-2xl border border-stone-200 shadow-xl max-w-sm w-full p-6 max-h-[90vh] overflow-y-auto"
+          className="relative bg-stone-50 rounded-2xl border border-stone-200 shadow-xl max-w-sm w-full p-6 max-h-[90vh] overflow-y-auto"
         >
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="absolute top-3 right-3 w-8 h-8 flex items-center justify-center rounded-lg text-stone-400 hover:text-stone-600 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
+          >
+            ×
+          </button>
           <h2 id="goal-editor-title" className="font-serif text-stone-900 text-xl mb-5">
             Rename / Edit
           </h2>
