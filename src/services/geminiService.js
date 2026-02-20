@@ -802,13 +802,19 @@ Return strict JSON (no markdown):
  * @param {string|null} deadline - ISO date string or null
  * @param {string} description - optional project description
  * @param {Array} existingGoals - existing goals that could be linked
- * @returns {{ summary, phases: [{ title, weekRange, tasks: [{ title, estimatedHours, type }], milestone }], suggestedLinks: [{ taskTitle, goalId, goalTitle }] }}
+ * @returns {{ summary, phases: [{ title, weekRange, tasks: [{ title, estimatedHours, type }], milestone }], suggestedLinks: [{ taskTitle, goalId, goalTitle }], mochiFeedback: string }}
  */
 export async function sliceProject(projectName, deadline, description = '', existingGoals = []) {
   const apiKey = getApiKey();
   if (!apiKey) { console.error("Missing API Key"); return null; }
 
-  const deadlineStr = deadline ? `Deadline: ${deadline}.` : 'No hard deadline — suggest a reasonable timeline.';
+  const today = new Date();
+  let availableWeeks = 14; // Default fallback
+  if (deadline) {
+    const end = new Date(deadline);
+    availableWeeks = Math.max(1, Math.round((end - today) / (1000 * 60 * 60 * 24 * 7)));
+  }
+  const deadlineStr = deadline ? `Deadline: ${deadline} (Exactly ${availableWeeks} weeks from today).` : 'No hard deadline — suggest a reasonable timeline (default 12 weeks).';
   const goalList = existingGoals.slice(0, 15).map((g) => `${g.id}: "${g.title}" (${g.type})`).join('\n');
 
   const prompt = `
@@ -837,15 +843,15 @@ Return strict JSON (no markdown):
   ],
   "suggestedLinks": [
     { "taskTitle": "A task that maps to an existing goal", "goalId": "id-from-list", "goalTitle": "title" }
-  ]
+  ],
+  "mochiFeedback": "A 1-2 sentence comforting assessment of the workload."
 }
 
 Guidelines:
 - Break into 3-6 phases.
-- Each phase has 2-5 concrete tasks.
-- Tasks should be small enough to finish in 1-2 weeks.
-- If a task maps to an existing goal, include it in suggestedLinks.
-- "type" should be "kaizen" for project work or "routine" for recurring support tasks.
+- You MUST fit all phases strictly within the ${availableWeeks} weeks available.
+- Calculate the total estimated hours vs available weeks. In "mochiFeedback", assess the feasibility. If it's a heavy load, gently warn the user and suggest scheduling rest or self-care afterwards. If manageable, be encouraging.
+- LINKING RULE: ONLY populate suggestedLinks if the task is an EXACT, undeniable match to an existing goal. If it is only vaguely related, leave suggestedLinks empty!
 `;
 
   try {
@@ -871,6 +877,7 @@ Guidelines:
       return phase;
     });
     if (!Array.isArray(parsed.suggestedLinks)) parsed.suggestedLinks = [];
+    parsed.mochiFeedback = parsed.mochiFeedback != null ? String(parsed.mochiFeedback).trim() : '';
     return parsed;
   } catch (err) {
     console.warn('Gemini sliceProject failed, trying Groq:', err?.message || err);
@@ -892,6 +899,7 @@ Guidelines:
         return phase;
       });
       if (!Array.isArray(parsed.suggestedLinks)) parsed.suggestedLinks = [];
+      parsed.mochiFeedback = parsed.mochiFeedback != null ? String(parsed.mochiFeedback).trim() : '';
       return parsed;
     } catch (groqErr) {
       console.error('Groq sliceProject fallback failed:', groqErr?.message || groqErr);

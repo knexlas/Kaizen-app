@@ -16,7 +16,7 @@ const COLOR_PRESETS = [
 ];
 
 export default function GoalEditor({ open, goal, onClose, onSave, addSubtask, updateSubtask, deleteSubtask }) {
-  const { metrics = [], addMetric } = useGarden();
+  const { metrics = [], addMetric, toggleMilestone } = useGarden();
   const [title, setTitle] = useState('');
   const [domain, setDomain] = useState('');
   const [color, setColor] = useState('');
@@ -25,6 +25,8 @@ export default function GoalEditor({ open, goal, onClose, onSave, addSubtask, up
   const [vineHours, setVineHours] = useState('');
   const [vineDeadline, setVineDeadline] = useState('');
   const [targetHours, setTargetHours] = useState(5);
+  const [expandedPhases, setExpandedPhases] = useState({});
+  const togglePhase = (id) => setExpandedPhases((prev) => ({ ...prev, [id]: !prev[id] }));
 
   useEffect(() => {
     if (goal) {
@@ -55,6 +57,10 @@ export default function GoalEditor({ open, goal, onClose, onSave, addSubtask, up
 
   const subtasks = goal?.subtasks ?? [];
   const showVines = (goal?.type === 'routine' || goal?.type === 'kaizen') && (addSubtask || subtasks.length > 0);
+  const isProject = goal?._projectGoal === true;
+  const projectTotalHours = isProject
+    ? subtasks.reduce((sum, st) => sum + (Number(st.estimatedHours) || 0), 0)
+    : 0;
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -67,8 +73,8 @@ export default function GoalEditor({ open, goal, onClose, onSave, addSubtask, up
       metricId: metricId || undefined,
     };
     const showHours = goal?.type === 'kaizen' || goal?.type === 'routine' || goal?._projectGoal;
-    if (showHours && typeof targetHours === 'number' && targetHours >= 0) {
-      updates.targetHours = targetHours;
+    if (showHours) {
+      updates.targetHours = isProject ? projectTotalHours : (typeof targetHours === 'number' && targetHours >= 0 ? targetHours : 5);
     }
     onSave?.(updates);
     onClose?.();
@@ -122,21 +128,34 @@ export default function GoalEditor({ open, goal, onClose, onSave, addSubtask, up
             </div>
             {(goal?.type === 'kaizen' || goal?.type === 'routine' || goal?._projectGoal) && (
               <div>
-                <label htmlFor="edit-goal-target-hours" className="block font-sans text-sm font-medium text-stone-600 mb-1">
-                  Estimated hours
-                </label>
-                <input
-                  id="edit-goal-target-hours"
-                  type="number"
-                  min={0}
-                  step={0.5}
-                  value={targetHours}
-                  onChange={(e) => setTargetHours(Math.max(0, parseFloat(e.target.value) || 0))}
-                  className="w-full py-2 px-3 rounded-lg border border-stone-200 bg-white text-stone-900 font-sans focus:outline-none focus:ring-2 focus:ring-moss-500/40 focus:border-moss-500"
-                />
-                <p className="font-sans text-xs text-stone-400 mt-0.5">
-                  {goal?._projectGoal ? 'Total hours for this project task. Adjust if it took longer or shorter.' : 'Weekly target (or total for this goal).'}
-                </p>
+                {isProject ? (
+                  <>
+                    <label className="block font-sans text-sm font-medium text-stone-600 mb-1">
+                      Total project load
+                    </label>
+                    <p className="font-sans text-stone-800 py-2">
+                      Total Project Load: <strong>{projectTotalHours}</strong> hours (Sum of all tasks)
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <label htmlFor="edit-goal-target-hours" className="block font-sans text-sm font-medium text-stone-600 mb-1">
+                      Estimated hours
+                    </label>
+                    <input
+                      id="edit-goal-target-hours"
+                      type="number"
+                      min={0}
+                      step={0.5}
+                      value={targetHours}
+                      onChange={(e) => setTargetHours(Math.max(0, parseFloat(e.target.value) || 0))}
+                      className="w-full py-2 px-3 rounded-lg border border-stone-200 bg-white text-stone-900 font-sans focus:outline-none focus:ring-2 focus:ring-moss-500/40 focus:border-moss-500"
+                    />
+                    <p className="font-sans text-xs text-stone-400 mt-0.5">
+                      Weekly target (or total for this goal).
+                    </p>
+                  </>
+                )}
               </div>
             )}
             <div>
@@ -205,6 +224,71 @@ export default function GoalEditor({ open, goal, onClose, onSave, addSubtask, up
                 ))}
               </div>
             </div>
+
+            {goal?.milestones?.length > 0 && (
+              <div className="border-t border-stone-200 pt-5 mb-5">
+                <h3 className="font-sans text-sm font-medium text-stone-700 mb-3">📍 Phases / Milestones</h3>
+                <ul className="space-y-2">
+                  {goal.milestones.map((m) => {
+                    const isExpanded = expandedPhases[m.id];
+                    const phaseSubtasks = subtasks.filter((st) => st.phaseId === m.id);
+
+                    return (
+                      <div key={m.id} className="rounded-lg bg-stone-100/80 border border-stone-200/60 overflow-hidden">
+                        {/* Phase Header */}
+                        <div className="flex items-center gap-3 py-2 px-3">
+                          <button type="button" onClick={() => togglePhase(m.id)} className="text-stone-400 hover:text-stone-600 w-4 focus:outline-none">
+                            {isExpanded ? '▼' : '▶'}
+                          </button>
+                          <input
+                            type="checkbox"
+                            checked={!!m.completed}
+                            onChange={() => toggleMilestone && toggleMilestone(goal.id, m.id)}
+                            className="rounded border-stone-300 text-moss-500 focus:ring-moss-500/50 w-4 h-4 cursor-pointer"
+                          />
+                          <div className="flex-1 min-w-0 flex flex-col cursor-pointer" onClick={() => togglePhase(m.id)}>
+                            <span className={`font-sans text-sm truncate ${m.completed ? 'text-stone-500 line-through' : 'text-stone-800'}`}>
+                              {m.title}
+                            </span>
+                            {m.weekRange && <span className="font-sans text-xs text-stone-400">{m.weekRange}</span>}
+                          </div>
+                        </div>
+
+                        {/* Nested Subtasks */}
+                        {isExpanded && phaseSubtasks.length > 0 && (
+                          <ul className="bg-stone-50/50 border-t border-stone-200/60 p-2 space-y-1">
+                            {phaseSubtasks.map((st) => {
+                              const est = Number(st.estimatedHours) || 0;
+                              const done = Number(st.completedHours) || 0;
+                              const stCompleted = est > 0 && done >= est;
+                              return (
+                                <li key={st.id} className="flex items-center gap-2 py-1.5 px-2 pl-6 rounded hover:bg-stone-100/50">
+                                  {updateSubtask && (
+                                    <input
+                                      type="checkbox"
+                                      checked={!!stCompleted}
+                                      onChange={() => updateSubtask(goal.id, st.id, { completedHours: stCompleted ? 0 : est })}
+                                      className="rounded border-stone-300 text-moss-500 focus:ring-moss-500/50 w-3.5 h-3.5 cursor-pointer"
+                                    />
+                                  )}
+                                  <span className={`flex-1 font-sans text-xs truncate ${stCompleted ? 'text-stone-400 line-through' : 'text-stone-600'}`}>
+                                    ↳ {st.title}
+                                  </span>
+                                  <span className="font-sans text-[10px] text-stone-400 shrink-0">{done}h / {est}h</span>
+                                  {deleteSubtask && (
+                                    <button type="button" onClick={() => deleteSubtask(goal.id, st.id)} className="text-stone-300 hover:text-red-500 px-1">×</button>
+                                  )}
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        )}
+                      </div>
+                    );
+                  })}
+                </ul>
+              </div>
+            )}
 
             {showVines && (
               <div className="border-t border-stone-200 pt-5">

@@ -1802,7 +1802,7 @@ function GardenDashboard() {
             </div>
 
             {/* Gantt: project timeline */}
-            <HorizonsGantt goals={goals} />
+            <HorizonsGantt goals={goals} onGoalClick={(goal) => setEditingGoal(goal)} />
 
             {/* Ponds: Vitality goals grouped by domain + their tributary Rocks */}
             {(() => {

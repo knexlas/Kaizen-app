@@ -59,20 +59,27 @@ export default function ProjectPlanner({ open, onClose, onCreateGoals }) {
     const totalWeeks = Math.max(1, Number(plan.totalWeeks) || 14);
     const uid = () => crypto.randomUUID?.() ?? `id-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 
-    const milestones = (plan.phases || []).map((phase) => ({
-      id: uid(),
-      title: phase.milestone || phase.title || 'Phase milestone',
-      completed: false,
-    }));
-
+    const milestones = [];
     const subtasks = [];
+
     (plan.phases || []).forEach((phase) => {
+      const phaseId = uid();
+
+      milestones.push({
+        id: phaseId,
+        title: phase.title || phase.milestone || 'Phase milestone',
+        weekRange: phase.weekRange || null,
+        completed: false,
+      });
+
       (phase.tasks || []).forEach((task) => {
         if (!selectedTasks.has(task.title)) return;
         if (linkedGoals[task.title]) return;
+
         const estimatedHours = Math.max(0, Number(task.estimatedHours) ?? 2);
         subtasks.push({
           id: uid(),
+          phaseId: phaseId,
           title: task.title,
           estimatedHours,
           completedHours: 0,
@@ -208,6 +215,14 @@ export default function ProjectPlanner({ open, onClose, onCreateGoals }) {
                       <p className="font-sans text-xs text-moss-600 mt-1">
                         Estimated timeline: {plan.totalWeeks} weeks
                       </p>
+                    )}
+                    {plan.mochiFeedback && (
+                      <div className="mt-3 pt-3 border-t border-moss-200/60 flex gap-2 items-start">
+                        <span className="text-lg leading-none">✨</span>
+                        <p className="font-sans text-sm text-moss-700 italic">
+                          &quot;{plan.mochiFeedback}&quot;
+                        </p>
+                      </div>
                     )}
                   </div>
                 )}

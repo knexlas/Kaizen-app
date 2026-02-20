@@ -735,6 +735,18 @@ export function GardenProvider({ children }) {
           return { ...m, completed: isNowCompleted };
         });
 
+        // Infinite Kaizen: Auto-sprout next milestone if all are done
+        if (isNowCompleted && !g._projectGoal) {
+          const allDone = milestones.every((m) => m.completed);
+          if (allDone) {
+            milestones.push({
+              id: crypto.randomUUID?.() ?? `ms-${Date.now()}`,
+              title: 'Keep growing: Next level',
+              completed: false,
+            });
+          }
+        }
+
         // If we just checked it -> Add bonus. If unchecked -> Remove bonus.
         const modifier = isNowCompleted ? FERTILIZER_BONUS_MINUTES : -FERTILIZER_BONUS_MINUTES;
 

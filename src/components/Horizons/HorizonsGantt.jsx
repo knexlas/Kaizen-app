@@ -1,37 +1,21 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 
-function getWeekIndex(dateStr) {
-  const d = new Date(dateStr + 'T12:00:00');
-  const mon = new Date(d);
-  mon.setDate(d.getDate() - ((d.getDay() + 6) % 7));
-  const today = new Date();
-  const todayMon = new Date(today);
-  todayMon.setDate(today.getDate() - ((today.getDay() + 6) % 7));
-  const diffMs = mon - todayMon;
-  return Math.floor(diffMs / (7 * 24 * 60 * 60 * 1000));
-}
-
-function getProjectProgressPercent(goal) {
-  const ms = Array.isArray(goal?.milestones) ? goal.milestones : [];
-  if (ms.length === 0) return 0;
-  const done = ms.filter((m) => m.completed).length;
-  return Math.round((done / ms.length) * 100);
+function parseWeekRange(weekRangeStr, totalWeeks = 14) {
+  if (!weekRangeStr || typeof weekRangeStr !== 'string') return { start: 0, end: totalWeeks - 1 };
+  const m = weekRangeStr.trim().match(/Week\s*(\d+)(?:\s*[-–]\s*(\d+))?/i);
+  if (!m) return { start: 0, end: totalWeeks - 1 };
+  const start = Math.max(0, parseInt(m[1], 10) - 1);
+  const end = m[2] ? Math.min(totalWeeks - 1, parseInt(m[2], 10) - 1) : start;
+  return { start: Math.min(start, end), end };
 }
 
 const TOTAL_WEEKS = 14;
 
-export default function HorizonsGantt({ goals = [] }) {
+export default function HorizonsGantt({ goals = [], onGoalClick }) {
+  const [expandedPhases, setExpandedPhases] = useState({});
+  const togglePhase = (id) => setExpandedPhases((prev) => ({ ...prev, [id]: !prev[id] }));
+
   const projectGoals = useMemo(() => goals.filter((g) => g._projectGoal), [goals]);
-  const byProject = useMemo(() => {
-    const map = {};
-    projectGoals.forEach((g) => {
-      const name = g._projectName || 'Project';
-      if (!map[name]) map[name] = [];
-      map[name].push(g);
-    });
-    Object.keys(map).forEach((k) => map[k].sort((a, b) => (a._projectPhase || '').localeCompare(b._projectPhase || '')));
-    return map;
-  }, [projectGoals]);
 
   const weekLabels = useMemo(() => {
     const today = new Date();
@@ -69,47 +53,75 @@ export default function HorizonsGantt({ goals = [] }) {
             </tr>
           </thead>
           <tbody>
-            {Object.entries(byProject).flatMap(([projectName, items]) =>
-              items.map((goal) => {
-                const deadline = goal._projectDeadline;
-                const startWeek = typeof goal._projectWeekStart === 'number' ? Math.max(0, Math.min(TOTAL_WEEKS - 1, goal._projectWeekStart)) : 0;
-                const endWeek = typeof goal._projectWeekEnd === 'number'
-                  ? Math.min(TOTAL_WEEKS - 1, Math.max(startWeek, goal._projectWeekEnd))
-                  : (deadline ? Math.min(TOTAL_WEEKS - 1, Math.max(0, getWeekIndex(deadline))) : TOTAL_WEEKS - 1);
-                const progress = getProjectProgressPercent(goal);
-                const isOverdue = deadline && new Date(deadline + 'T23:59:59') < new Date();
-                return (
-                  <tr key={goal.id} className="border-b border-stone-100 hover:bg-stone-50/50">
-                    <td className="py-2 px-3 align-middle">
-                      <span className="font-medium text-stone-800">{goal.title}</span>
-                      {items.length > 1 && <span className="block text-[10px] text-stone-400">{projectName}</span>}
+            {projectGoals.flatMap((goal) => {
+              const rows = [];
+              const isOverdue = goal._projectDeadline && new Date(goal._projectDeadline + 'T23:59:59') < new Date();
+
+              // 1. MASTER PROJECT ROW
+              rows.push(
+                <tr key={`proj-${goal.id}`} className="border-b border-stone-200 bg-stone-50/50">
+                  <td className="py-2 px-3 flex items-center justify-between">
+                    <span className="font-medium text-stone-800 font-serif">{goal.title}</span>
+                    <button type="button" onClick={(e) => { e.stopPropagation(); onGoalClick?.(goal); }} className="text-xs text-stone-400 hover:text-stone-600 px-2 py-1 rounded bg-stone-100">
+                      ✏️ Edit
+                    </button>
+                  </td>
+                  {weekLabels.map((_, i) => <td key={i} className="bg-stone-50/50 border-l border-white/50" />)}
+                  <td className={`py-2 px-2 text-stone-500 text-xs shrink-0 ${isOverdue ? 'text-amber-600' : ''}`}>
+                    {goal._projectDeadline ? new Date(goal._projectDeadline + 'T12:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '—'}
+                  </td>
+                </tr>
+              );
+
+              // 2. PHASE ROWS
+              (goal.milestones || []).forEach((phase) => {
+                const isExpanded = expandedPhases[phase.id];
+                const { start: startWeek, end: endWeek } = parseWeekRange(phase.weekRange, TOTAL_WEEKS);
+                const isDone = phase.completed;
+
+                rows.push(
+                  <tr key={`ph-${phase.id}`} onClick={() => togglePhase(phase.id)} className="border-b border-stone-100 hover:bg-stone-50 cursor-pointer transition-colors">
+                    <td className="py-2 px-3 pl-6 flex items-center gap-2">
+                      <span className="text-stone-400 text-xs">{isExpanded ? '▼' : '▶'}</span>
+                      <span className={`font-sans text-sm ${isDone ? 'text-stone-400 line-through' : 'text-stone-700'}`}>{phase.title}</span>
                     </td>
                     {weekLabels.map((_, i) => (
                       <td key={i} className="py-1 px-0.5 align-middle w-10">
-                        {i >= startWeek && i <= endWeek ? (
-                          <div className="h-5 rounded bg-amber-100 border border-amber-200 overflow-hidden">
-                            {i === startWeek && (
-                              <div
-                                className="h-full rounded-l bg-amber-400/80"
-                                style={{ width: progress + '%', minWidth: progress > 0 ? 4 : 0 }}
-                                title={progress + '% complete'}
-                              />
-                            )}
-                          </div>
-                        ) : null}
+                        {i >= startWeek && i <= endWeek && (
+                          <div className={`h-3 rounded-full ${isDone ? 'bg-stone-300' : 'bg-amber-300'}`} />
+                        )}
                       </td>
                     ))}
-                    <td className="py-2 px-2 text-stone-500 text-xs shrink-0">
-                      {deadline ? (
-                        <span className={isOverdue ? 'text-amber-600' : ''}>
-                          {new Date(deadline + 'T12:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
-                        </span>
-                      ) : '—'}
-                    </td>
+                    <td className="py-2 px-2 text-stone-400 text-[10px]">{phase.weekRange}</td>
                   </tr>
                 );
-              })
-            )}
+
+                // 3. SUBTASK ROWS (If Expanded)
+                if (isExpanded) {
+                  const subtasks = (goal.subtasks || []).filter((st) => st.phaseId === phase.id);
+                  subtasks.forEach((st) => {
+                    const stDone = (st.completedHours ?? 0) >= (st.estimatedHours ?? 0);
+                    rows.push(
+                      <tr key={`st-${st.id}`} className="border-b border-stone-50/50 bg-stone-50/30">
+                        <td className="py-1.5 px-3 pl-12">
+                          <span className={`font-sans text-xs ${stDone ? 'text-stone-400 line-through' : 'text-stone-500'}`}>↳ {st.title}</span>
+                        </td>
+                        {weekLabels.map((_, i) => (
+                          <td key={i} className="py-1 px-0.5 align-middle">
+                            {i >= startWeek && i <= endWeek && (
+                              <div className="h-0.5 w-full bg-stone-200" />
+                            )}
+                          </td>
+                        ))}
+                        <td className="py-1.5 px-2 text-stone-400 text-[10px]">{st.estimatedHours}h</td>
+                      </tr>
+                    );
+                  });
+                }
+              });
+
+              return rows;
+            })}
           </tbody>
         </table>
       </div>
