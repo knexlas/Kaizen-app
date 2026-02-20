@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useGarden } from '../../context/GardenContext';
+import { suggestGoalStructure } from '../../services/geminiService';
 import SpiritBuilder from './SpiritBuilder';
 
 const STEP_HELLO = 'hello';
@@ -16,6 +17,7 @@ export default function WelcomeGarden() {
   const [step, setStep] = useState(STEP_HELLO);
   const [displayName, setDisplayName] = useState(userSettings?.displayName ?? '');
   const [firstSeed, setFirstSeed] = useState('');
+  const [isPlanting, setIsPlanting] = useState(false);
 
   const handleHelloNext = () => {
     const trimmed = (displayName || '').trim();
@@ -33,11 +35,19 @@ export default function WelcomeGarden() {
     setStep(STEP_SEED);
   };
 
-  const handlePlantSeed = () => {
+  const handlePlantSeed = async () => {
     const title = (firstSeed || '').trim();
     if (!title) return;
-    initializeStarterGarden(title);
-    setUserSettings?.({ ...(userSettings ?? {}), hasOnboarded: true });
+    setIsPlanting(true);
+    try {
+      const aiStructure = await suggestGoalStructure(title, 'kaizen');
+      initializeStarterGarden(title, aiStructure);
+    } catch (e) {
+      initializeStarterGarden(title, null);
+    } finally {
+      setIsPlanting(false);
+      setUserSettings?.({ ...(userSettings ?? {}), hasOnboarded: true });
+    }
   };
 
   const transition = { type: 'tween', duration: 0.25 };
@@ -136,11 +146,20 @@ export default function WelcomeGarden() {
               <button
                 type="button"
                 onClick={handlePlantSeed}
-                disabled={!(firstSeed || '').trim()}
+                disabled={!(firstSeed || '').trim() || isPlanting}
                 className="w-full py-3 rounded-xl font-sans font-medium text-stone-50 bg-moss-600 hover:bg-moss-700 focus:outline-none focus:ring-2 focus:ring-moss-500/50 disabled:opacity-50 disabled:pointer-events-none transition-colors flex items-center justify-center gap-2"
               >
-                <span aria-hidden>🌱</span>
-                Plant Seed
+                {isPlanting ? (
+                  <>
+                    <span aria-hidden>✨</span>
+                    Mochi is planning...
+                  </>
+                ) : (
+                  <>
+                    <span aria-hidden>🌱</span>
+                    Plant Seed
+                  </>
+                )}
               </button>
             </motion.div>
           )}

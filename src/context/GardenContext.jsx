@@ -634,23 +634,27 @@ export function GardenProvider({ children }) {
   }, []);
 
   /** "1 Care, 1 Admin, 1 Goal" starter garden: one kaizen goal (with first step) + Care & Hygiene + Life Admin routines. */
-  const initializeStarterGarden = useCallback((personalGoalTitle) => {
+  const initializeStarterGarden = useCallback((personalGoalTitle, aiStructure = null) => {
     const uid = () => crypto.randomUUID?.() ?? `id-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
     const now = new Date().toISOString();
 
-    // 1. Personal Goal (from onboarding)
+    // 1. Personal Goal (from onboarding, optionally shaped by AI)
     addGoal({
       id: uid(),
       type: 'kaizen',
       title: personalGoalTitle || 'My First Journey',
+      estimatedMinutes: aiStructure?.estimatedMinutes ?? 30,
+      targetHours: aiStructure?.targetHours ?? 3,
       totalMinutes: 0,
       createdAt: now,
-      subtasks: [
-        { id: uid(), title: 'Take the first 5-minute step', estimatedHours: 0.5, completedHours: 0 },
-      ],
+      subtasks: (aiStructure?.vines?.length
+        ? aiStructure.vines.map((v) => ({ id: uid(), title: typeof v === 'string' ? v : v?.title ?? 'Step', estimatedHours: 0.5, completedHours: 0 }))
+        : [{ id: uid(), title: 'Take the first 5-minute step', estimatedHours: 0.5, completedHours: 0 }]),
+      rituals: (aiStructure?.rituals?.length ? aiStructure.rituals.map((r) => ({ ...r, id: uid() })) : []),
+      milestones: (aiStructure?.milestones?.length ? aiStructure.milestones.map((m) => ({ id: uid(), title: typeof m === 'string' ? m : m?.title ?? '', completed: false })) : []),
     });
 
-    // 2. Care & Hygiene (Highly defined daily/alternating tasks)
+    // 2. Care & Hygiene (one generic daily ritual)
     addGoal({
       id: uid(),
       type: 'routine',
@@ -658,14 +662,11 @@ export function GardenProvider({ children }) {
       totalMinutes: 0,
       createdAt: now,
       rituals: [
-        { id: uid(), title: 'Morning: Brush teeth & drink 1 glass of water', days: [0, 1, 2, 3, 4, 5, 6] },
-        { id: uid(), title: 'Evening: Wash face & brush teeth', days: [0, 1, 2, 3, 4, 5, 6] },
-        { id: uid(), title: 'Shower & clean clothes', days: [1, 3, 5, 0] },
-        { id: uid(), title: '10-minute walk outside or stretch', days: [0, 1, 2, 3, 4, 5, 6] },
+        { id: uid(), title: 'One 5-minute care task (e.g. stretch, hydrate)', days: [0, 1, 2, 3, 4, 5, 6] },
       ],
     });
 
-    // 3. Life Admin (Spaced out to avoid overwhelm)
+    // 3. Life Admin (one generic daily ritual)
     addGoal({
       id: uid(),
       type: 'routine',
@@ -673,10 +674,7 @@ export function GardenProvider({ children }) {
       totalMinutes: 0,
       createdAt: now,
       rituals: [
-        { id: uid(), title: 'Clear email & messages for 5 mins', days: [1, 2, 3, 4, 5] },
-        { id: uid(), title: 'Tidy one surface (desk/kitchen)', days: [2, 4, 6] },
-        { id: uid(), title: 'Financial check-in & pay bills', days: [0] },
-        { id: uid(), title: 'Plan the upcoming week', days: [0] },
+        { id: uid(), title: 'One 5-minute admin task (e.g. email, tidy)', days: [0, 1, 2, 3, 4, 5, 6] },
       ],
     });
   }, [addGoal]);

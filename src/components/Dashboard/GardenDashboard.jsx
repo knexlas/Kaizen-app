@@ -969,8 +969,8 @@ function GardenDashboard() {
     care: 'One care task',
   };
 
-  const handleStartAssistChooseSuggestion = useCallback((key) => {
-    const title = STARTER_TITLES[key] ?? 'One tiny step';
+  const handleStartAssistChooseSuggestion = useCallback((key, dynamicTitle) => {
+    const title = dynamicTitle ?? STARTER_TITLES[key] ?? 'One tiny step';
     const id = crypto.randomUUID?.() ?? `goal-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
     const newGoal = {
       id,
@@ -1681,7 +1681,7 @@ function GardenDashboard() {
               <div className="mb-4 space-y-3">
                 <h3 className="font-serif text-stone-800 text-base">Next up</h3>
                 {nextUpItems.length === 0 ? (
-                  <p className="font-sans text-sm text-stone-500 py-2">Nothing planned yet. Expand the schedule to add tasks.</p>
+                  <p className="font-sans text-sm text-stone-500 py-2">Nothing planned yet.</p>
                 ) : (
                   <ul className="space-y-2" aria-label="Next up tasks">
                     {nextUpItems.map((item) => (

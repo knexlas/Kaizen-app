@@ -1,10 +1,6 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 
-const SUGGESTIONS = [
-  { key: 'life-admin', label: 'One tiny life-admin thing' },
-  { key: 'personal', label: 'One personal goal step' },
-  { key: 'care', label: 'One care task' },
-];
+const SUGGESTION_KEYS = ['life-admin', 'personal', 'care'];
 
 /**
  * "Help me start" modal: suggest a task to start or offer 3 one-tap suggestions when no tasks.
@@ -19,6 +15,22 @@ export default function StartAssistModal({
   onClose,
   onChooseSuggestion,
 }) {
+  const [adminTask] = useState(() => {
+    const tasks = ['Wipe down one counter', 'Reply to one email', 'Put 5 items away', 'Sort the mail', 'Clear your downloads folder'];
+    return tasks[Math.floor(Math.random() * tasks.length)] + ' (5 min)';
+  });
+  const [careTask] = useState(() => {
+    const tasks = ['Drink a glass of water', 'Stretch your shoulders', 'Wash your face', 'Take 10 deep breaths', 'Step outside for air'];
+    return tasks[Math.floor(Math.random() * tasks.length)] + ' (5 min)';
+  });
+
+  const getLabel = (key) => {
+    if (key === 'life-admin') return `Admin: ${adminTask}`;
+    if (key === 'care') return `Care: ${careTask}`;
+    if (key === 'personal') return 'Goal: Take the next 5-min step';
+    return key;
+  };
+
   useEffect(() => {
     if (!open) return;
     const handle = (e) => { if (e.key === 'Escape') onClose?.(); };
@@ -54,16 +66,19 @@ export default function StartAssistModal({
               No tasks on today&apos;s plan. Pick one tiny step to create and start:
             </p>
             <div className="flex flex-col gap-2">
-              {SUGGESTIONS.map(({ key, label }) => (
-                <button
-                  key={key}
-                  type="button"
-                  onClick={() => onChooseSuggestion?.(key)}
-                  className="w-full py-3 px-4 rounded-xl font-sans text-sm font-medium border-2 border-moss-300 bg-moss-50 text-moss-800 hover:bg-moss-100 focus:outline-none focus:ring-2 focus:ring-moss-500 focus:ring-offset-2"
-                >
-                  {label}
-                </button>
-              ))}
+              {SUGGESTION_KEYS.map((key) => {
+                const label = getLabel(key);
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => onChooseSuggestion?.(key, label)}
+                    className="w-full py-3 px-4 rounded-xl font-sans text-sm font-medium border-2 border-moss-300 bg-moss-50 text-moss-800 hover:bg-moss-100 focus:outline-none focus:ring-2 focus:ring-moss-500 focus:ring-offset-2"
+                  >
+                    {label}
+                  </button>
+                );
+              })}
             </div>
           </>
         ) : suggestedTask ? (

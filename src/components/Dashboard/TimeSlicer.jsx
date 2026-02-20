@@ -367,7 +367,7 @@ function TimeSlot({
           </>
         ) : (
           <span className={`font-sans text-sm relative z-10 ${isSlotBlocked ? 'text-stone-500' : 'text-stone-400'}`}>
-            {isSlotBlocked ? 'No spoons left' : onEmptySlotClick ? (isMobile ? 'Tap to add' : 'Click or drag a seed here') : 'Drag a seed here'}
+            {isSlotBlocked ? 'No spoons left' : onEmptySlotClick ? (isMobile ? 'Tap to add' : 'Add task') : 'Add task'}
           </span>
         )}
       </div>
@@ -1779,13 +1779,13 @@ function TimeSlicer({
           <div className="border border-stone-200 rounded-lg bg-white/60 p-4 flex flex-col min-h-0">
             <h3 className="font-serif text-stone-800 text-sm mb-1 shrink-0">Seed Bag</h3>
             <p className="font-sans text-xs text-stone-500 mb-3 shrink-0">
-              Drag seeds onto the timeline to plan, or click a time slot and pick a seed.
+              Drag or tap a slot to add a task.
             </p>
             <div className="flex flex-col gap-4 min-h-0 max-h-[50vh] overflow-y-auto">
               {todayRitualItems.length === 0 && goalBank.length === 0 ? (
                 <div className="py-6 text-center">
                   <p className="font-sans text-sm text-stone-500 mb-3">
-                    Your seed bag is empty. Plant a seed to start planning.
+                    Seed bag empty.
                   </p>
                   {onOpenGoalCreator && (
                     <button
@@ -1803,7 +1803,7 @@ function TimeSlicer({
                     <h4 className="font-sans text-xs font-medium text-amber-800 mb-2">🌱 Today&apos;s Rituals</h4>
                     <div className="flex flex-wrap gap-2">
                       {todayRitualItems.length === 0 ? (
-                        <p className="font-sans text-xs text-stone-400">No rituals today. Add routines to your goals to see them here.</p>
+                        <p className="font-sans text-xs text-stone-400">No rituals today.</p>
                       ) : (
                         todayRitualItems.map(({ goal, ritualTitle }) => (
                           <RitualSeedChip
@@ -2004,7 +2004,7 @@ function TimeSlicer({
                     { id: 'v', label: '💧 Vitality', items: vt, border: 'border-sky-200', bg: 'bg-sky-50/60', badge: 'text-sky-600' },
                   ].filter((s) => s.items.length > 0);
                   if (sections.length === 0) return (
-                    <div><p className="font-sans text-xs text-stone-400 py-2">No goals yet. Create one to get started.</p></div>
+                    <div><p className="font-sans text-xs text-stone-400 py-2">No goals yet.</p></div>
                   );
                   return sections.map((s) => (
                     <div key={s.id}>
