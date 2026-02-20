@@ -476,14 +476,18 @@ export async function suggestGoalStructure(title, type = 'kaizen', currentMetric
     const result = await tryGenerate(genAI, prompt);
     const text = result?.response?.text?.();
     if (!text) throw new Error('Empty response');
-    const cleanJson = sanitizeJsonResponse(text);
-    return JSON.parse(cleanJson);
+    let raw = sanitizeJsonResponse(text);
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    if (jsonMatch) raw = jsonMatch[0];
+    return JSON.parse(raw);
   } catch (geminiErr) {
     console.warn('Gemini suggestGoalStructure failed, trying Groq fallback:', geminiErr?.message || geminiErr);
     try {
       const groqText = await fetchFromGroq(prompt);
-      const cleanJson = sanitizeJsonResponse(groqText);
-      return JSON.parse(cleanJson);
+      let raw = sanitizeJsonResponse(groqText);
+      const jsonMatch = raw.match(/\{[\s\S]*\}/);
+      if (jsonMatch) raw = jsonMatch[0];
+      return JSON.parse(raw);
     } catch (groqErr) {
       console.error('Groq fallback also failed:', groqErr?.message || groqErr);
       return safeFallback();
@@ -553,14 +557,18 @@ Return strict JSON (no markdown):
     const result = await tryGenerate(genAI, prompt);
     const text = result?.response?.text?.();
     if (!text) throw new Error('Empty response');
-    const clean = sanitizeJsonResponse(text);
-    return JSON.parse(clean);
+    let raw = sanitizeJsonResponse(text);
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    if (jsonMatch) raw = jsonMatch[0];
+    return JSON.parse(raw);
   } catch (err) {
     console.warn('Gemini generateWeeklyPlan failed, trying Groq:', err?.message || err);
     try {
       const groqText = await fetchFromGroq(prompt);
-      const clean = sanitizeJsonResponse(groqText);
-      return JSON.parse(clean);
+      let raw = sanitizeJsonResponse(groqText);
+      const jsonMatch = raw.match(/\{[\s\S]*\}/);
+      if (jsonMatch) raw = jsonMatch[0];
+      return JSON.parse(raw);
     } catch (groqErr) {
       console.error('Groq generateWeeklyPlan fallback failed:', groqErr?.message || groqErr);
       return null;
@@ -615,14 +623,18 @@ Return strict JSON (no markdown):
     const result = await tryGenerate(genAI, prompt);
     const text = result?.response?.text?.();
     if (!text) throw new Error('Empty response');
-    const clean = sanitizeJsonResponse(text);
-    return JSON.parse(clean);
+    let raw = sanitizeJsonResponse(text);
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    if (jsonMatch) raw = jsonMatch[0];
+    return JSON.parse(raw);
   } catch (err) {
     console.warn('Gemini generateMonthlyPlan failed, trying Groq:', err?.message || err);
     try {
       const groqText = await fetchFromGroq(prompt);
-      const clean = sanitizeJsonResponse(groqText);
-      return JSON.parse(clean);
+      let raw = sanitizeJsonResponse(groqText);
+      const jsonMatch = raw.match(/\{[\s\S]*\}/);
+      if (jsonMatch) raw = jsonMatch[0];
+      return JSON.parse(raw);
     } catch (groqErr) {
       console.error('Groq generateMonthlyPlan fallback failed:', groqErr?.message || groqErr);
       return null;
@@ -688,14 +700,18 @@ Guidelines:
     const result = await tryGenerate(genAI, prompt);
     const text = result?.response?.text?.();
     if (!text) throw new Error('Empty response');
-    const clean = sanitizeJsonResponse(text);
-    return JSON.parse(clean);
+    let raw = sanitizeJsonResponse(text);
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    if (jsonMatch) raw = jsonMatch[0];
+    return JSON.parse(raw);
   } catch (err) {
     console.warn('Gemini sliceProject failed, trying Groq:', err?.message || err);
     try {
       const groqText = await fetchFromGroq(prompt);
-      const clean = sanitizeJsonResponse(groqText);
-      return JSON.parse(clean);
+      let raw = sanitizeJsonResponse(groqText);
+      const jsonMatch = raw.match(/\{[\s\S]*\}/);
+      if (jsonMatch) raw = jsonMatch[0];
+      return JSON.parse(raw);
     } catch (groqErr) {
       console.error('Groq sliceProject fallback failed:', groqErr?.message || groqErr);
       return null;

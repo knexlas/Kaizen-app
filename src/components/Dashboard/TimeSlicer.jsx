@@ -444,7 +444,7 @@ function subtaskStatus(st) {
   return est > 0 && done >= est ? 'bloom' : 'bud';
 }
 
-function SeedChip({ goal, assignments = {}, onSeedClick, onMilestoneCheck, onEditGoal, onCompostGoal, onAddRoutineTime, onPlantRoutineBlock, onAddSubtask, onStartFocus }) {
+function SeedChip({ goal, assignments = {}, onSeedClick, onMilestoneCheck, onEditGoal, onCompostGoal, onAddRoutineTime, onPlantRoutineBlock, onAddSubtask, onStartFocus, compact = false }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuAnchorRef = useRef(null);
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: goal.id, data: { goal } });
@@ -464,6 +464,41 @@ function SeedChip({ goal, assignments = {}, onSeedClick, onMilestoneCheck, onEdi
   const displayHours = isRoutine ? filledHours : plannedHours;
   const needsAttention = isRoutine ? filledHours + plannedHoursFromSlots < targetHours : displayHours < targetHours;
   if (!goal?.id) return null;
+
+  if (compact) {
+    const hoursLabel = isRoutine ? `${filledHours + plannedHoursFromSlots}/${targetHours}h` : `${displayHours}/${targetHours}h`;
+    return (
+      <div
+        ref={setNodeRef}
+        className={`shrink-0 flex flex-col gap-0.5 px-3 py-2 rounded-lg border border-stone-200 bg-white shadow-sm font-sans text-sm text-stone-800 hover:border-moss-500/50 transition-colors relative ${isDragging ? 'opacity-50 shadow-md cursor-grabbing' : 'cursor-grab'}`}
+      >
+        <div className="flex items-center gap-1 min-w-0">
+          <div {...listeners} {...attributes} className="flex-1 min-w-0 flex flex-col">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-moss-600 mb-0.5 truncate">{goal.domain || (isRoutine ? 'Routine' : goal.type || 'Kaizen')}</span>
+            <span className="font-sans text-sm text-stone-900 font-medium truncate">{goal.title}</span>
+          </div>
+          {onStartFocus && (
+            <button type="button" onClick={(e) => { e.stopPropagation(); onStartFocus(goal.id, null, goal.title, undefined); }} className="shrink-0 flex items-center gap-1 px-2 py-1 rounded font-sans text-xs bg-moss-600 text-stone-50 hover:bg-moss-700 focus:outline-none focus:ring-2 focus:ring-moss-500/50" aria-label={`Do ${goal.title} now`}>
+              <span aria-hidden>▶️</span><span>Do It Now</span>
+            </button>
+          )}
+          {onSeedClick && !isRoutine && (
+            <button type="button" onClick={(e) => { e.stopPropagation(); onSeedClick(goal); }} className="shrink-0 p-0.5 rounded text-stone-400 hover:text-moss-600 hover:bg-moss-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40" aria-label="View milestones">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 11l3 3L22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /></svg>
+            </button>
+          )}
+          {(onEditGoal || onCompostGoal) && (
+            <div className="relative shrink-0">
+              <button type="button" ref={menuAnchorRef} onClick={(e) => { e.stopPropagation(); setMenuOpen((v) => !v); }} className="p-0.5 rounded text-stone-400 hover:text-stone-600 hover:bg-stone-100 focus:outline-none" aria-label="More options" aria-expanded={menuOpen}><span className="font-sans text-base leading-none">⋯</span></button>
+              {menuOpen && <GoalMenu goal={goal} onEdit={onEditGoal} onCompost={onCompostGoal} onClose={() => setMenuOpen(false)} anchorRef={menuAnchorRef} />}
+            </div>
+          )}
+        </div>
+        <span className="font-sans text-xs text-stone-500">{hoursLabel}</span>
+      </div>
+    );
+  }
+
   return (
     <div
       ref={setNodeRef}
@@ -1535,6 +1570,8 @@ function TimeSlicer({
   };
 
   const [inspectedDate, setInspectedDate] = useState(null);
+  const [expandedSections, setExpandedSections] = useState({ routine: true, kaizen: true, project: false, vitality: false });
+  const toggleSection = useCallback((id) => setExpandedSections((prev) => ({ ...prev, [id]: !prev[id] })), []);
   const todayStr = useMemo(() => new Date().toISOString().slice(0, 10), []);
 
   const handleDayClickFromWeek = useCallback((dateStr) => {
@@ -1806,18 +1843,33 @@ function TimeSlicer({
                         )}
                       </div>
                     );
-                    return sections.filter((s) => s.items.length > 0 || s.emptyText).map((section) => (
-                      <div key={section.id}>
-                        <h4 className={`font-sans text-xs font-medium ${section.color} mb-2`}>{section.label}</h4>
-                        {section.items.length === 0 ? (
-                          section.emptyText && <p className="font-sans text-xs text-stone-400 mb-1">{section.emptyText}</p>
-                        ) : (
-                          <div className="flex flex-wrap gap-2">
-                            {section.items.map((goal) => <SeedChip {...chipProps(goal)} />)}
-                          </div>
-                        )}
-                      </div>
-                    ));
+                    return sections.filter((s) => s.items.length > 0 || s.emptyText).map((section) => {
+                      const isExpanded = expandedSections[section.id] !== false;
+                      return (
+                        <div key={section.id} className="mb-2">
+                          <button
+                            type="button"
+                            onClick={() => toggleSection(section.id)}
+                            className={`flex w-full items-center justify-between font-sans text-xs font-medium ${section.color} mb-1 py-1 pr-1 rounded hover:bg-stone-100/80 focus:outline-none focus:ring-2 focus:ring-moss-500/40`}
+                            aria-expanded={isExpanded}
+                          >
+                            <span>{section.label}</span>
+                            <span className="shrink-0 text-stone-400" aria-hidden>{isExpanded ? '▼' : '▶'}</span>
+                          </button>
+                          {isExpanded && (
+                            <div className="flex flex-col gap-2">
+                              {section.items.length === 0 ? (
+                                section.emptyText && <p className="font-sans text-xs text-stone-400 mb-1">{section.emptyText}</p>
+                              ) : (
+                                <div className="flex flex-wrap gap-2">
+                                  {section.items.map((goal) => <SeedChip key={goal.id} {...chipProps(goal)} compact />)}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    });
                   })()}
                 </>
               )}
