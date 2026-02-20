@@ -329,7 +329,7 @@ export default function GoalEditor({ open, goal, onClose, onSave, addSubtask, up
                   </div>
                 )}
                 <ul className="space-y-2">
-                  {subtasks.map((st) => {
+                  {subtasks.filter((st) => !st.phaseId).map((st) => {
                     const est = Number(st.estimatedHours) || 0;
                     const done = Number(st.completedHours) || 0;
                     const completed = est > 0 && done >= est;

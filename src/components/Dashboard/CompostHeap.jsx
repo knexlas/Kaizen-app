@@ -34,7 +34,7 @@ import { breakDownTask, processIncomingCompost } from '../../services/geminiServ
 const MOBILE_BREAKPOINT = 640;
 
 export default function CompostHeap({ open, onClose, onPlant, onPrism }) {
-  const { compost = [], addToCompost, removeFromCompost } = useGarden();
+  const { compost = [], addToCompost, removeFromCompost, goals = [], addSubtask } = useGarden();
   const { pushReward } = useReward();
   const [quickCapture, setQuickCapture] = useState('');
   const [prismLoadingId, setPrismLoadingId] = useState(null);
@@ -106,6 +106,15 @@ export default function CompostHeap({ open, onClose, onPlant, onPrism }) {
   const handlePlant = (item) => {
     onPlant?.(item.text);
     onClose?.();
+  };
+
+  const handleMoveToGoal = (item, goalId) => {
+    if (!goalId || !addSubtask || !removeFromCompost) return;
+    addSubtask(goalId, { title: item.text, estimatedHours: 0.5 });
+    removeFromCompost(item.id);
+    if (typeof pushReward === 'function') {
+      pushReward({ message: 'Thought sprouted into project!', tone: 'moss', icon: '🌱', sound: null });
+    }
   };
 
   const handlePrism = async (item) => {
@@ -226,62 +235,95 @@ export default function CompostHeap({ open, onClose, onPlant, onPrism }) {
             {compost.length === 0 ? (
               <CompostEmptyNote />
             ) : (
-              <ul className="space-y-3">
-                {compost.map((item, index) => (
-                  <motion.li
-                    key={item.id}
-                    initial={{ opacity: 0, y: 8 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, x: -20 }}
-                    className="group relative"
-                  >
-                    <div
-                      className="px-4 py-3 rounded-lg border border-amber-200/80 bg-amber-50/70 shadow-sm transition-shadow group-hover:shadow"
-                      style={{
-                        transform: `rotate(${(index % 3 - 1) * 0.5}deg)`,
-                      }}
+              <>
+                <div className="mb-4 p-3 bg-moss-50 border border-moss-100 rounded-lg flex items-start gap-3">
+                  <span className="text-xl">✨</span>
+                  <p className="font-sans text-sm text-moss-800">
+                    &quot;I am keeping these thoughts safe. Would you like to plant any of them into an existing project?&quot;
+                  </p>
+                </div>
+                <ul className="space-y-3">
+                  {compost.map((item, index) => (
+                    <motion.li
+                      key={item.id}
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, x: -20 }}
+                      className="group relative"
                     >
-                      <p className="font-sans text-sm text-stone-800 pr-20 break-words">{item.text}</p>
-                      <div className="flex items-center gap-2 mt-2 flex-wrap">
-                        {onPrism && (
+                      <div
+                        className="px-4 py-3 rounded-lg border border-amber-200/80 bg-amber-50/70 shadow-sm transition-shadow group-hover:shadow"
+                        style={{
+                          transform: `rotate(${(index % 3 - 1) * 0.5}deg)`,
+                        }}
+                      >
+                        <p className="font-sans text-sm text-stone-800 pr-20 break-words">{item.text}</p>
+                        <div className="flex items-center gap-2 mt-2 flex-wrap">
+                          {onPrism && (
+                            <button
+                              type="button"
+                              onClick={() => handlePrism(item)}
+                              disabled={!!prismLoadingId}
+                              className="px-2.5 py-1 rounded-md font-sans text-xs font-medium bg-violet-100 text-violet-800 hover:bg-violet-200 focus:outline-none focus:ring-2 focus:ring-violet-500/40 disabled:opacity-60 disabled:pointer-events-none flex items-center gap-1"
+                              aria-label="Break down into steps (Prism)"
+                              title="Break into small steps"
+                            >
+                              {prismLoadingId === item.id ? (
+                                <span className="inline-block w-3.5 h-3.5 border-2 border-violet-400 border-t-transparent rounded-full animate-spin" aria-hidden />
+                              ) : (
+                                <span aria-hidden>💎</span>
+                              )}
+                              Prism
+                            </button>
+                          )}
+                          {onPlant && (
+                            <button
+                              type="button"
+                              onClick={() => handlePlant(item)}
+                              className="px-2.5 py-1 rounded-md font-sans text-xs font-medium bg-moss-100 text-moss-800 hover:bg-moss-200 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
+                            >
+                              Plant
+                            </button>
+                          )}
                           <button
                             type="button"
-                            onClick={() => handlePrism(item)}
-                            disabled={!!prismLoadingId}
-                            className="px-2.5 py-1 rounded-md font-sans text-xs font-medium bg-violet-100 text-violet-800 hover:bg-violet-200 focus:outline-none focus:ring-2 focus:ring-violet-500/40 disabled:opacity-60 disabled:pointer-events-none flex items-center gap-1"
-                            aria-label="Break down into steps (Prism)"
-                            title="Break into small steps"
+                            onClick={() => removeFromCompost?.(item.id)}
+                            className="px-2.5 py-1 rounded-md font-sans text-xs font-medium text-stone-500 hover:bg-stone-200 hover:text-stone-800 focus:outline-none focus:ring-2 focus:ring-stone-400/40"
+                            aria-label={`Remove ${item.text}`}
                           >
-                            {prismLoadingId === item.id ? (
-                              <span className="inline-block w-3.5 h-3.5 border-2 border-violet-400 border-t-transparent rounded-full animate-spin" aria-hidden />
-                            ) : (
-                              <span aria-hidden>💎</span>
-                            )}
-                            Prism
+                            Decompose
                           </button>
+                        </div>
+                        {addSubtask && goals.length > 0 && (
+                          <div className="mt-3 pt-2 border-t border-amber-200/60">
+                            <label htmlFor={`compost-move-${item.id}`} className="font-sans text-xs text-stone-500 sr-only">
+                              Move to goal
+                            </label>
+                            <select
+                              id={`compost-move-${item.id}`}
+                              className="font-sans text-xs text-stone-500 bg-transparent border-none focus:ring-0 cursor-pointer w-full max-w-[200px] py-0.5"
+                              defaultValue=""
+                              onChange={(e) => {
+                                const goalId = e.target.value;
+                                if (goalId) handleMoveToGoal(item, goalId);
+                                e.target.value = '';
+                              }}
+                              aria-label="Send to project"
+                            >
+                              <option value="">↳ Send to project...</option>
+                              {goals.map((g) => (
+                                <option key={g.id} value={g.id}>
+                                  {g.title}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
                         )}
-                        {onPlant && (
-                          <button
-                            type="button"
-                            onClick={() => handlePlant(item)}
-                            className="px-2.5 py-1 rounded-md font-sans text-xs font-medium bg-moss-100 text-moss-800 hover:bg-moss-200 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
-                          >
-                            Plant
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => removeFromCompost?.(item.id)}
-                          className="px-2.5 py-1 rounded-md font-sans text-xs font-medium text-stone-500 hover:bg-stone-200 hover:text-stone-800 focus:outline-none focus:ring-2 focus:ring-stone-400/40"
-                          aria-label={`Remove ${item.text}`}
-                        >
-                          Decompose
-                        </button>
                       </div>
-                    </div>
-                  </motion.li>
-                ))}
-              </ul>
+                    </motion.li>
+                  ))}
+                </ul>
+              </>
             )}
           </div>
         </motion.aside>

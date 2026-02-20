@@ -633,6 +633,54 @@ export function GardenProvider({ children }) {
     }]);
   }, []);
 
+  /** "1 Care, 1 Admin, 1 Goal" starter garden: one kaizen goal (with first step) + Care & Hygiene + Life Admin routines. */
+  const initializeStarterGarden = useCallback((personalGoalTitle) => {
+    const uid = () => crypto.randomUUID?.() ?? `id-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    const now = new Date().toISOString();
+
+    // 1. Personal Goal (from onboarding)
+    addGoal({
+      id: uid(),
+      type: 'kaizen',
+      title: personalGoalTitle || 'My First Journey',
+      totalMinutes: 0,
+      createdAt: now,
+      subtasks: [
+        { id: uid(), title: 'Take the first 5-minute step', estimatedHours: 0.5, completedHours: 0 },
+      ],
+    });
+
+    // 2. Care & Hygiene (Highly defined daily/alternating tasks)
+    addGoal({
+      id: uid(),
+      type: 'routine',
+      title: 'Care & Hygiene',
+      totalMinutes: 0,
+      createdAt: now,
+      rituals: [
+        { id: uid(), title: 'Morning: Brush teeth & drink 1 glass of water', days: [0, 1, 2, 3, 4, 5, 6] },
+        { id: uid(), title: 'Evening: Wash face & brush teeth', days: [0, 1, 2, 3, 4, 5, 6] },
+        { id: uid(), title: 'Shower & clean clothes', days: [1, 3, 5, 0] },
+        { id: uid(), title: '10-minute walk outside or stretch', days: [0, 1, 2, 3, 4, 5, 6] },
+      ],
+    });
+
+    // 3. Life Admin (Spaced out to avoid overwhelm)
+    addGoal({
+      id: uid(),
+      type: 'routine',
+      title: 'Life Admin',
+      totalMinutes: 0,
+      createdAt: now,
+      rituals: [
+        { id: uid(), title: 'Clear email & messages for 5 mins', days: [1, 2, 3, 4, 5] },
+        { id: uid(), title: 'Tidy one surface (desk/kitchen)', days: [2, 4, 6] },
+        { id: uid(), title: 'Financial check-in & pay bills', days: [0] },
+        { id: uid(), title: 'Plan the upcoming week', days: [0] },
+      ],
+    });
+  }, [addGoal]);
+
   /** Add a subtask (project) to a goal. Schema: { id, title, estimatedHours, completedHours, deadline, color } */
   const addSubtask = useCallback((goalId, subtask) => {
     const sub = {
@@ -899,6 +947,7 @@ export function GardenProvider({ children }) {
     addLog,
     logMetric,
     addGoal,
+    initializeStarterGarden,
     updateGoalProgress,
     updateGoalMilestone,
     toggleMilestone,
@@ -931,6 +980,7 @@ export function GardenProvider({ children }) {
     gentleResetToToday,
     archiveStalePlanItems,
     weekAssignments,
+    setWeekAssignments,
     loadDayPlan,
     saveDayPlanForDate,
     loadWeekPlans,

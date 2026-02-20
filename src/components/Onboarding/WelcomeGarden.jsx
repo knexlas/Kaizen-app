@@ -12,7 +12,7 @@ const STEP_SEED = 'seed';
  * Cannot be closed until finished. Step 1: displayName. Step 2: SpiritBuilder. Step 3: first goal (routine).
  */
 export default function WelcomeGarden() {
-  const { userSettings, setUserSettings, addGoal, goals } = useGarden();
+  const { userSettings, setUserSettings, initializeStarterGarden, goals } = useGarden();
   const [step, setStep] = useState(STEP_HELLO);
   const [displayName, setDisplayName] = useState(userSettings?.displayName ?? '');
   const [firstSeed, setFirstSeed] = useState('');
@@ -36,14 +36,7 @@ export default function WelcomeGarden() {
   const handlePlantSeed = () => {
     const title = (firstSeed || '').trim();
     if (!title) return;
-    const id = crypto.randomUUID?.() ?? `goal-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-    addGoal({
-      id,
-      type: 'routine',
-      title,
-      totalMinutes: 0,
-      createdAt: new Date().toISOString(),
-    });
+    initializeStarterGarden(title);
     setUserSettings?.({ ...(userSettings ?? {}), hasOnboarded: true });
   };
 
