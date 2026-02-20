@@ -239,13 +239,13 @@ function TimeSlot({
       )}
       <span className="w-11 shrink-0 font-sans text-sm text-stone-500">{hour}</span>
       <div
-        role={isMobile && isEmpty && onEmptySlotClick ? 'button' : undefined}
-        tabIndex={isMobile && isEmpty && onEmptySlotClick ? 0 : undefined}
-        onClick={isMobile && isEmpty && onEmptySlotClick ? () => onEmptySlotClick(hour) : undefined}
-        onKeyDown={isMobile && isEmpty && onEmptySlotClick ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onEmptySlotClick(hour); } } : undefined}
+        role={isEmpty && onEmptySlotClick ? 'button' : undefined}
+        tabIndex={isEmpty && onEmptySlotClick ? 0 : undefined}
+        onClick={isEmpty && onEmptySlotClick ? () => onEmptySlotClick(hour) : undefined}
+        onKeyDown={isEmpty && onEmptySlotClick ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onEmptySlotClick(hour); } } : undefined}
         className={`flex-1 min-h-[52px] rounded-lg flex flex-col justify-center px-3 py-2 transition-colors relative overflow-hidden ${slotBg} ${
           isOver && isEmpty && !isSlotBlocked ? 'ring-2 ring-moss-500/50 ring-offset-1' : ''
-        } ${isFullyHarvested && !routineSession ? 'border-moss-600/60' : ''} ${isMobile && isEmpty && onEmptySlotClick && !isSlotBlocked ? 'cursor-pointer hover:bg-stone-200/80 active:bg-stone-300/80' : ''} ${isSlotBlocked ? 'cursor-not-allowed' : ''}`}
+        } ${isFullyHarvested && !routineSession ? 'border-moss-600/60' : ''} ${isEmpty && onEmptySlotClick && !isSlotBlocked ? 'cursor-pointer hover:bg-stone-200/80 active:bg-stone-300/80' : ''} ${isSlotBlocked ? 'cursor-not-allowed' : ''}`}
       >
         {/* Blocked overlay: striped + stone texture when over capacity or empty at capacity */}
         {(isSlotBlocked || thisSlotOverLimit) && (
@@ -367,7 +367,7 @@ function TimeSlot({
           </>
         ) : (
           <span className={`font-sans text-sm relative z-10 ${isSlotBlocked ? 'text-stone-500' : 'text-stone-400'}`}>
-            {isSlotBlocked ? 'No spoons left' : isMobile && onEmptySlotClick ? 'Tap to add' : 'Drag a seed here'}
+            {isSlotBlocked ? 'No spoons left' : onEmptySlotClick ? (isMobile ? 'Tap to add' : 'Click or drag a seed here') : 'Drag a seed here'}
           </span>
         )}
       </div>
@@ -483,13 +483,13 @@ function SeedChip({ goal, assignments = {}, onSeedClick, onMilestoneCheck, onEdi
             </button>
           )}
           {onSeedClick && !isRoutine && (
-            <button type="button" onClick={(e) => { e.stopPropagation(); onSeedClick(goal); }} className="shrink-0 p-0.5 rounded text-stone-400 hover:text-moss-600 hover:bg-moss-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40" aria-label="View milestones">
+            <button type="button" onClick={(e) => { e.stopPropagation(); onSeedClick(goal); }} className="shrink-0 min-h-[44px] min-w-[44px] flex items-center justify-center p-0.5 rounded text-stone-400 hover:text-moss-600 hover:bg-moss-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40" aria-label="View milestones">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 11l3 3L22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /></svg>
             </button>
           )}
           {(onEditGoal || onCompostGoal) && (
             <div className="relative shrink-0">
-              <button type="button" ref={menuAnchorRef} onClick={(e) => { e.stopPropagation(); setMenuOpen((v) => !v); }} className="p-0.5 rounded text-stone-400 hover:text-stone-600 hover:bg-stone-100 focus:outline-none" aria-label="More options" aria-expanded={menuOpen}><span className="font-sans text-base leading-none">⋯</span></button>
+              <button type="button" ref={menuAnchorRef} onClick={(e) => { e.stopPropagation(); setMenuOpen((v) => !v); }} className="min-h-[44px] min-w-[44px] flex items-center justify-center p-0.5 rounded text-stone-400 hover:text-stone-600 hover:bg-stone-100 focus:outline-none" aria-label="More options" aria-expanded={menuOpen}><span className="font-sans text-base leading-none">⋯</span></button>
               {menuOpen && <GoalMenu goal={goal} onEdit={onEditGoal} onCompost={onCompostGoal} onClose={() => setMenuOpen(false)} anchorRef={menuAnchorRef} />}
             </div>
           )}
@@ -528,7 +528,7 @@ function SeedChip({ goal, assignments = {}, onSeedClick, onMilestoneCheck, onEdi
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); onSeedClick(goal); }}
-            className="shrink-0 p-0.5 rounded text-stone-400 hover:text-moss-600 hover:bg-moss-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
+            className="shrink-0 min-h-[44px] min-w-[44px] flex items-center justify-center p-0.5 rounded text-stone-400 hover:text-moss-600 hover:bg-moss-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
             aria-label="View milestones"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -543,7 +543,7 @@ function SeedChip({ goal, assignments = {}, onSeedClick, onMilestoneCheck, onEdi
               type="button"
               ref={menuAnchorRef}
               onClick={(e) => { e.stopPropagation(); setMenuOpen((v) => !v); }}
-              className="p-0.5 rounded text-stone-400 hover:text-stone-600 hover:bg-stone-100 focus:outline-none"
+              className="min-h-[44px] min-w-[44px] flex items-center justify-center p-0.5 rounded text-stone-400 hover:text-stone-600 hover:bg-stone-100 focus:outline-none"
               aria-label="More options"
               aria-expanded={menuOpen}
             >
@@ -735,7 +735,7 @@ function RitualSeedChip({ goal, ritualTitle, assignments = {}, onSeedClick, onMi
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); onSeedClick(goal); }}
-            className="shrink-0 p-0.5 rounded text-stone-400 hover:text-moss-600 hover:bg-moss-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
+            className="shrink-0 min-h-[44px] min-w-[44px] flex items-center justify-center p-0.5 rounded text-stone-400 hover:text-moss-600 hover:bg-moss-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
             aria-label="View milestones"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -750,7 +750,7 @@ function RitualSeedChip({ goal, ritualTitle, assignments = {}, onSeedClick, onMi
               type="button"
               ref={menuAnchorRef}
               onClick={(e) => { e.stopPropagation(); setMenuOpen((v) => !v); }}
-              className="p-0.5 rounded text-stone-400 hover:text-stone-600 hover:bg-stone-100 focus:outline-none"
+              className="min-h-[44px] min-w-[44px] flex items-center justify-center p-0.5 rounded text-stone-400 hover:text-stone-600 hover:bg-stone-100 focus:outline-none"
               aria-label="More options"
               aria-expanded={menuOpen}
             >
@@ -964,7 +964,8 @@ function WeekView({ weekAssignments, goals, onDayClick, onPlanWeek, planningWeek
           Preview — review the plan below, then <strong>Apply</strong> or <strong>Discard</strong>.
         </div>
       )}
-      <div className="grid grid-cols-7 gap-1.5">
+      <div className="min-w-0 overflow-x-auto pb-2 -mx-1 px-1">
+        <div className="grid grid-cols-7 gap-1.5 min-w-[280px] w-max max-w-full mx-auto">
         {dates.map((dateStr, i) => {
           const dayAssign = displayAssignments[dateStr] ?? {};
           const summary = summarizeDayAssignments(dayAssign, goals);
@@ -979,7 +980,7 @@ function WeekView({ weekAssignments, goals, onDayClick, onPlanWeek, planningWeek
               key={dateStr}
               type="button"
               onClick={() => onDayClick?.(dateStr)}
-              className={`flex flex-col rounded-xl p-2.5 min-h-[140px] border transition-all text-left focus:outline-none focus:ring-2 focus:ring-moss-500/40 group ${
+              className={`flex flex-col rounded-xl p-2.5 min-h-[140px] border transition-all text-left focus:outline-none focus:ring-2 focus:ring-moss-500/40 group min-w-0 ${
                 isToday
                   ? 'border-moss-500 bg-moss-50/80 ring-1 ring-moss-500/30 shadow-sm'
                   : isPast
@@ -1034,6 +1035,7 @@ function WeekView({ weekAssignments, goals, onDayClick, onPlanWeek, planningWeek
             </button>
           );
         })}
+        </div>
       </div>
     </div>
   );
@@ -1215,7 +1217,7 @@ function DayDetailModal({ dateStr, dayAssignments, goals, onClose, onSwitchToDay
               <h3 className="font-serif text-stone-900 text-lg">{label}</h3>
               <p className="font-sans text-xs text-stone-500 mt-0.5">{totalHours}h planned · {filledHours.length} slots filled</p>
             </div>
-            <button type="button" onClick={onClose} className="p-1.5 rounded-lg text-stone-400 hover:text-stone-700 hover:bg-stone-100" aria-label="Close">
+            <button type="button" onClick={onClose} className="min-h-[44px] min-w-[44px] flex items-center justify-center p-1.5 rounded-lg text-stone-400 hover:text-stone-700 hover:bg-stone-100" aria-label="Close">
               <span className="text-lg leading-none">×</span>
             </button>
           </div>
@@ -1570,8 +1572,7 @@ function TimeSlicer({
   };
 
   const [inspectedDate, setInspectedDate] = useState(null);
-  const [expandedSections, setExpandedSections] = useState({ routine: true, kaizen: true, project: false, vitality: false });
-  const toggleSection = useCallback((id) => setExpandedSections((prev) => ({ ...prev, [id]: !prev[id] })), []);
+  const [activeSeedTab, setActiveSeedTab] = useState('all');
   const todayStr = useMemo(() => new Date().toISOString().slice(0, 10), []);
 
   const handleDayClickFromWeek = useCallback((dateStr) => {
@@ -1602,7 +1603,7 @@ function TimeSlicer({
   }, [editingDate, isControlled, assignments, onAssignmentsChange, weekAssignments, todayStr, saveDayPlanForDate]);
 
   return (
-    <div className="bg-stone-50 rounded-xl border border-stone-200 p-6">
+    <div className="bg-stone-50 rounded-xl border border-stone-200 p-6 min-w-0">
       <div className="flex items-center justify-between gap-2 mb-4 flex-wrap">
         <div className="flex items-center gap-3">
           <h2 className="font-serif text-stone-900 text-lg">Schedule</h2>
@@ -1720,8 +1721,8 @@ function TimeSlicer({
             </button>
           </div>
         )}
-        <div className="grid grid-cols-1 md:grid-cols-[1fr_200px] gap-6">
-          {/* Left — Bamboo Timeline (scrollable) */}
+        <div className="flex flex-col gap-6 min-w-0">
+          {/* Schedule — Bamboo Timeline (scrollable) */}
           <div className="flex gap-3 max-h-[70vh] md:max-h-[420px] overflow-y-auto overflow-x-hidden rounded-lg">
             <div className="shrink-0 w-px bg-stone-300 rounded-full self-stretch" />
             <div className="flex-1 relative min-h-0">
@@ -1766,7 +1767,7 @@ function TimeSlicer({
                     cloudSaved={recentlyExportedSlot === hour}
                     now={now}
                     isMobile={isMobile}
-                    onEmptySlotClick={isMobile ? (h) => { if (filledCount >= maxSlots) { setSpoonsToast(true); return; } setSeedPickerTargetHour(h); } : undefined}
+                    onEmptySlotClick={(h) => { if (filledCount >= maxSlots) { setSpoonsToast(true); return; } setSeedPickerTargetHour(h); }}
                     disableConfetti={getSettings().lowStim || shouldReduceMotion(getSettings())}
                   />
                 ))}
@@ -1774,10 +1775,13 @@ function TimeSlicer({
             </div>
           </div>
 
-          {/* Right — Seed Bag */}
+          {/* Seed Bag — below schedule */}
           <div className="border border-stone-200 rounded-lg bg-white/60 p-4 flex flex-col min-h-0">
-            <h3 className="font-serif text-stone-800 text-sm mb-3 shrink-0">Seed Bag</h3>
-            <div className="flex flex-col gap-4 min-h-0 max-h-[60vh] overflow-y-auto">
+            <h3 className="font-serif text-stone-800 text-sm mb-1 shrink-0">Seed Bag</h3>
+            <p className="font-sans text-xs text-stone-500 mb-3 shrink-0">
+              Drag seeds onto the timeline to plan, or click a time slot and pick a seed.
+            </p>
+            <div className="flex flex-col gap-4 min-h-0 max-h-[50vh] overflow-y-auto">
               {todayRitualItems.length === 0 && goalBank.length === 0 ? (
                 <div className="py-6 text-center">
                   <p className="font-sans text-sm text-stone-500 mb-3">
@@ -1819,19 +1823,13 @@ function TimeSlicer({
                       )}
                     </div>
                   </div>
-                  {/* Categorized Seed Bag */}
+                  {/* Pill tabs + filtered Seed Bag */}
                   {(() => {
                     const kaizenSeeds = goalBank.filter((g) => g.type !== 'routine' && g.type !== 'vitality' && !g._projectGoal);
                     const routineSeeds = goalBank.filter((g) => g.type === 'routine');
                     const vitalitySeeds = goalBank.filter((g) => g.type === 'vitality');
                     const projectSeeds = goalBank.filter((g) => g._projectGoal);
                     const chipProps = (goal) => ({ key: goal.id, goal, assignments, onSeedClick, onMilestoneCheck, onEditGoal, onCompostGoal, onAddRoutineTime, onPlantRoutineBlock: handlePlantRoutineBlock, onAddSubtask, onStartFocus });
-                    const sections = [
-                      { id: 'kaizen', label: '🌱 Kaizen Goals', items: kaizenSeeds, color: 'text-moss-700', emptyText: 'No kaizen goals yet.' },
-                      { id: 'routine', label: '🪨 Routines', items: routineSeeds, color: 'text-slate-700', emptyText: 'No routines.' },
-                      { id: 'project', label: '🌻 Projects', items: projectSeeds, color: 'text-amber-700', emptyText: null },
-                      { id: 'vitality', label: '💧 Vitality', items: vitalitySeeds, color: 'text-sky-700', emptyText: null },
-                    ];
                     const hasAny = goalBank.length > 0;
                     if (!hasAny) return (
                       <div className="py-2">
@@ -1843,33 +1841,59 @@ function TimeSlicer({
                         )}
                       </div>
                     );
-                    return sections.filter((s) => s.items.length > 0 || s.emptyText).map((section) => {
-                      const isExpanded = expandedSections[section.id] !== false;
-                      return (
-                        <div key={section.id} className="mb-2">
-                          <button
-                            type="button"
-                            onClick={() => toggleSection(section.id)}
-                            className={`flex w-full items-center justify-between font-sans text-xs font-medium ${section.color} mb-1 py-1 pr-1 rounded hover:bg-stone-100/80 focus:outline-none focus:ring-2 focus:ring-moss-500/40`}
-                            aria-expanded={isExpanded}
-                          >
-                            <span>{section.label}</span>
-                            <span className="shrink-0 text-stone-400" aria-hidden>{isExpanded ? '▼' : '▶'}</span>
-                          </button>
-                          {isExpanded && (
-                            <div className="flex flex-col gap-2">
+                    const tabs = [
+                      { id: 'all', label: 'All' },
+                      { id: 'kaizen', label: '🌱 Kaizen' },
+                      { id: 'routine', label: '🪨 Routines' },
+                      { id: 'project', label: '🌻 Projects' },
+                    ];
+                    const sections = [
+                      { id: 'kaizen', label: '🌱 Kaizen', items: kaizenSeeds, emptyText: 'No kaizen goals yet.' },
+                      { id: 'routine', label: '🪨 Routines', items: routineSeeds, emptyText: 'No routines.' },
+                      { id: 'project', label: '🌻 Projects', items: projectSeeds, emptyText: null },
+                      { id: 'vitality', label: '💧 Vitality', items: vitalitySeeds, emptyText: null },
+                    ];
+                    const sectionsToShow = activeSeedTab === 'all'
+                      ? sections.filter((s) => s.items.length > 0 || s.emptyText)
+                      : sections.filter((s) => s.id === activeSeedTab);
+                    return (
+                      <>
+                        <div className="flex gap-1.5 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-stone-300 scrollbar-track-transparent" role="tablist" aria-label="Seed bag filter">
+                          {tabs.map((tab) => (
+                            <button
+                              key={tab.id}
+                              type="button"
+                              role="tab"
+                              aria-selected={activeSeedTab === tab.id}
+                              onClick={() => setActiveSeedTab(tab.id)}
+                              className={`shrink-0 px-3 py-1.5 rounded-full font-sans text-xs font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-moss-500/40 ${
+                                activeSeedTab === tab.id
+                                  ? 'bg-moss-600 text-stone-50'
+                                  : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
+                              }`}
+                            >
+                              {tab.label}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="flex flex-col gap-3">
+                          {sectionsToShow.map((section) => (
+                            <div key={section.id}>
+                              {activeSeedTab === 'all' && (
+                                <h4 className="font-sans text-[11px] font-semibold text-stone-500 uppercase tracking-wider mb-1.5">{section.label}</h4>
+                              )}
                               {section.items.length === 0 ? (
-                                section.emptyText && <p className="font-sans text-xs text-stone-400 mb-1">{section.emptyText}</p>
+                                section.emptyText && <p className="font-sans text-xs text-stone-400">{section.emptyText}</p>
                               ) : (
                                 <div className="flex flex-wrap gap-2">
                                   {section.items.map((goal) => <SeedChip key={goal.id} {...chipProps(goal)} compact />)}
                                 </div>
                               )}
                             </div>
-                          )}
+                          ))}
                         </div>
-                      );
-                    });
+                      </>
+                    );
                   })()}
                 </>
               )}

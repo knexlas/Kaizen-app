@@ -24,6 +24,7 @@ export default function GoalEditor({ open, goal, onClose, onSave, addSubtask, up
   const [vineTitle, setVineTitle] = useState('');
   const [vineHours, setVineHours] = useState('');
   const [vineDeadline, setVineDeadline] = useState('');
+  const [targetHours, setTargetHours] = useState(5);
 
   useEffect(() => {
     if (goal) {
@@ -31,6 +32,7 @@ export default function GoalEditor({ open, goal, onClose, onSave, addSubtask, up
       setDomain(goal.domain ?? '');
       setColor(goal.color ?? '');
       setMetricId(goal.metricId ?? '');
+      setTargetHours(Math.max(0, Number(goal.targetHours) ?? 5));
     }
   }, [goal]);
 
@@ -58,12 +60,17 @@ export default function GoalEditor({ open, goal, onClose, onSave, addSubtask, up
     e.preventDefault();
     const trimmedTitle = title.trim();
     if (!trimmedTitle || !goal?.id) return;
-    onSave?.({
+    const updates = {
       title: trimmedTitle,
       domain: domain || undefined,
       color: color || undefined,
       metricId: metricId || undefined,
-    });
+    };
+    const showHours = goal?.type === 'kaizen' || goal?.type === 'routine' || goal?._projectGoal;
+    if (showHours && typeof targetHours === 'number' && targetHours >= 0) {
+      updates.targetHours = targetHours;
+    }
+    onSave?.(updates);
     onClose?.();
   };
 
@@ -113,6 +120,25 @@ export default function GoalEditor({ open, goal, onClose, onSave, addSubtask, up
                 className="w-full py-2 px-3 rounded-lg border border-stone-200 bg-white text-stone-900 font-sans placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-moss-500/40 focus:border-moss-500"
               />
             </div>
+            {(goal?.type === 'kaizen' || goal?.type === 'routine' || goal?._projectGoal) && (
+              <div>
+                <label htmlFor="edit-goal-target-hours" className="block font-sans text-sm font-medium text-stone-600 mb-1">
+                  Estimated hours
+                </label>
+                <input
+                  id="edit-goal-target-hours"
+                  type="number"
+                  min={0}
+                  step={0.5}
+                  value={targetHours}
+                  onChange={(e) => setTargetHours(Math.max(0, parseFloat(e.target.value) || 0))}
+                  className="w-full py-2 px-3 rounded-lg border border-stone-200 bg-white text-stone-900 font-sans focus:outline-none focus:ring-2 focus:ring-moss-500/40 focus:border-moss-500"
+                />
+                <p className="font-sans text-xs text-stone-400 mt-0.5">
+                  {goal?._projectGoal ? 'Total hours for this project task. Adjust if it took longer or shorter.' : 'Weekly target (or total for this goal).'}
+                </p>
+              </div>
+            )}
             <div>
               <label className="block font-sans text-sm font-medium text-stone-600 mb-2">Domain</label>
               <div className="flex flex-wrap gap-2">

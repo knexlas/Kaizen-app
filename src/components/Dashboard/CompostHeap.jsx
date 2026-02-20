@@ -145,8 +145,8 @@ export default function CompostHeap({ open, onClose, onPlant, onPrism }) {
           onClick={(e) => e.stopPropagation()}
           className={
             isMobile
-              ? 'fixed bottom-0 left-0 right-0 w-full h-[80vh] rounded-t-2xl bg-stone-50 border-t border-stone-200 shadow-xl flex flex-col'
-              : 'w-full max-w-md h-full bg-stone-50 border-l border-stone-200 shadow-xl flex flex-col'
+              ? 'fixed bottom-0 left-0 right-0 w-full max-h-[90vh] rounded-t-2xl bg-stone-50 border-t border-stone-200 shadow-xl flex flex-col safe-area-pb'
+              : 'w-full max-w-md h-full bg-stone-50 border-l border-stone-200 shadow-xl flex flex-col safe-area-pt safe-area-pb max-h-[100dvh]'
           }
         >
           {isMobile && (

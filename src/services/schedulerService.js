@@ -573,7 +573,13 @@ export function autoFillDailyPlan(goals, calendarEvents, energyLevel = 'normal')
     }
   }
 
-  if (slotHours.length === 0) return {};
+  // Only plan in the future: filter out slots that are already past
+  const now = new Date();
+  const nowMins = now.getHours() * 60 + now.getMinutes();
+  const nextHourMins = Math.ceil(nowMins / 60) * 60;
+  const futureSlotHours = slotHours.filter((h) => timeToMinutes(h) >= nextHourMins);
+
+  if (futureSlotHours.length === 0) return {};
 
   const eligibleGoals = (goals ?? []).filter(
     (g) => g?.id && (g.type === 'routine' || g.type === 'kaizen')
@@ -606,16 +612,16 @@ export function autoFillDailyPlan(goals, calendarEvents, energyLevel = 'normal')
   const assignments = {};
   let goalIdx = 0;
   const maxSlots = Math.min(
-    slotHours.length,
+    futureSlotHours.length,
     typeof energyLevel === 'number' && energyLevel >= 1 && energyLevel <= 12
       ? energyLevel
       : isLow
-        ? Math.min(4, slotHours.length)
-        : slotHours.length
+        ? Math.min(4, futureSlotHours.length)
+        : futureSlotHours.length
   );
 
   for (let i = 0; i < maxSlots && goalIdx < sorted.length; i++) {
-    const hour = slotHours[i];
+    const hour = futureSlotHours[i];
     const goal = sorted[goalIdx++];
     if (goal.type === 'routine') {
       assignments[hour] = {

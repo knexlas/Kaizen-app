@@ -54,9 +54,8 @@ function App() {
   } = useGarden();
   const { pushReward } = useReward();
 
-  const isAuthed = !!googleUser?.uid;
   const hasOnboarded = userSettings?.hasOnboarded === true;
-  const needsWelcome = isAuthed && !hasOnboarded;
+  const needsWelcome = !hasOnboarded;
   const yesterdayPlan =
     lastCheckInDate === yesterdayString()
       ? { modifier: dailyEnergyModifier, spoonCount: dailySpoonCount }
@@ -157,8 +156,8 @@ function App() {
             />
           )}
 
-          {/* Onboarding overlay (blocks interaction until finished) */}
-          {hydrated && needsWelcome && (
+          {/* Full onboarding wizard (name, spirit, first seed) — after simple welcome so all users see it */}
+          {hydrated && needsWelcome && onboardingComplete && (
             <WelcomeGarden />
           )}
         </div>

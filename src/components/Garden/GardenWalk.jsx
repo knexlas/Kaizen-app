@@ -44,9 +44,14 @@ function PixelPlant({ stage, isProject }) {
   const emoji = isProject ? (PROJECT_STAGE_EMOJI[stage] ?? '🫘') : (STAGE_EMOJI[stage] ?? '🌱');
   return (
     <div className="flex flex-col items-center justify-center w-full h-full">
-      <span className="text-3xl drop-shadow-sm" aria-hidden>
+      <motion.div
+        className="text-3xl drop-shadow-sm"
+        animate={{ y: [0, -3, 0] }}
+        transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut' }}
+        aria-hidden
+      >
         {emoji}
-      </span>
+      </motion.div>
     </div>
   );
 }
@@ -158,7 +163,7 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
   return (
     <div className="w-full flex flex-col gap-6">
       {/* Cozy Tile Grid */}
-      <div className="relative rounded-2xl overflow-hidden border-2 border-[#7cb342]/40 shadow-lg bg-[#eefbc3]">
+      <div className="relative rounded-2xl overflow-hidden border-2 border-[#7cb342]/40 shadow-lg">
         <div
           className="grid gap-0 p-2"
           style={{
@@ -171,17 +176,23 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
               const key = `${col},${row}`;
               const goal = goalByCell[key];
               const isMochi = mochiCell.x === col && mochiCell.y === row;
+              const isEven = (col + row) % 2 === 0;
+              const cellBg = isEven ? '#dcedc8' : '#c5e1a5';
 
               return (
-                <div key={key} className="relative rounded-lg overflow-hidden">
+                <div
+                  key={key}
+                  className="relative rounded-lg overflow-hidden"
+                  style={{ backgroundColor: cellBg }}
+                >
                   {goal ? (
                     <button
                       type="button"
                       onClick={() => handlePlantClick(goal, col, row)}
-                      className={`w-full h-full min-h-[64px] flex flex-col items-center justify-center rounded-lg border transition-colors focus:outline-none focus:ring-2 ${
+                      className={`w-full h-full min-h-[64px] flex flex-col items-center justify-center rounded-lg border border-transparent hover:border-[#9e9e9e]/25 transition-colors focus:outline-none focus:ring-2 ${
                         goal._projectGoal
-                          ? 'bg-amber-50 hover:bg-amber-100 border-amber-300/40 focus:ring-amber-500/50'
-                          : 'bg-[#dcedc8] hover:bg-[#c8e6a0] border-[#9e9e9e]/20 focus:ring-[#558b2f]/50'
+                          ? 'bg-amber-50/90 hover:bg-amber-100/90 border-amber-300/40 focus:ring-amber-500/50'
+                          : 'bg-[#dcedc8]/80 hover:bg-[#c8e6a0]/90 focus:ring-[#558b2f]/50'
                       } ${isProjectDone(goal) ? 'opacity-70' : ''}`}
                     >
                       <PixelPlant stage={getPlantStage(getGoalProgressPercent(goal))} isProject={!!goal._projectGoal} />
@@ -196,9 +207,9 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
                     <button
                       type="button"
                       onClick={() => handleEmptyCellClick(col, row)}
-                      className="w-full h-full min-h-[64px] flex items-center justify-center rounded-lg bg-[#e8f5e9]/60 border border-dashed border-[#9e9e9e]/25 hover:border-[#7cb342]/50 hover:bg-[#c8e6a0]/40 transition-colors focus:outline-none focus:ring-2 focus:ring-[#558b2f]/40"
+                      className="group w-full h-full min-h-[64px] flex items-center justify-center rounded-lg bg-black/[0.06] hover:bg-[#8d6e63]/15 transition-colors focus:outline-none focus:ring-2 focus:ring-[#558b2f]/40 focus:ring-inset"
                     >
-                      <span className="text-2xl text-stone-400">+</span>
+                      <span className="text-xl text-white/0 group-hover:text-white/70 transition-colors duration-200 select-none" aria-hidden>+</span>
                     </button>
                   )}
 
@@ -207,10 +218,18 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
                       layoutId="mochi-sprite"
                       initial={false}
                       transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-                      className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none"
+                      className="absolute inset-0 flex flex-col items-center justify-end pb-1 z-10 pointer-events-none"
                     >
+                      <span
+                        className="absolute bottom-0 left-1/2 -translate-x-1/2 w-12 h-3 rounded-full opacity-40"
+                        style={{
+                          background: 'radial-gradient(ellipse 80% 50% at 50% 100%, rgba(0,0,0,0.35) 0%, transparent 70%)',
+                          filter: 'blur(4px)',
+                        }}
+                        aria-hidden
+                      />
                       <motion.span
-                        className="text-4xl drop-shadow-md"
+                        className="relative text-4xl drop-shadow-md"
                         animate={{ y: [0, -4, 0] }}
                         transition={{ duration: 0.6, repeat: Infinity, repeatDelay: 2 }}
                       >

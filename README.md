@@ -2,6 +2,10 @@
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
+## Mochi (AI) API key
+
+The app uses the Gemini API for Mochi (planning, project slicing, spirit insights). Set `VITE_GEMINI_API_KEY` in a `.env` file (see [Google AI Studio](https://aistudio.google.com/apikey)). **Restart the dev server after changing `.env`.**
+
 Currently, two official plugins are available:
 
 - [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh

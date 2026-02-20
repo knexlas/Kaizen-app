@@ -180,7 +180,7 @@ export default function SpiritChat({ open, onClose, context = {} }) {
           exit={{ x: '100%' }}
           transition={{ type: 'spring', damping: 28, stiffness: 300 }}
           onClick={(e) => e.stopPropagation()}
-          className="w-full max-w-md h-full bg-stone-50 border-l border-stone-200 shadow-xl flex flex-col"
+          className="w-full max-w-md h-full bg-stone-50 border-l border-stone-200 shadow-xl flex flex-col safe-area-pt safe-area-pb max-h-[100dvh]"
         >
           {/* Header */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-stone-200 bg-white/80">

@@ -59,6 +59,14 @@
   animation: plant-sway 4s ease-in-out infinite;
 }
 
+/* Safe area for notches/home indicator on mobile */
+.safe-area-pb {
+  padding-bottom: max(0.5rem, env(safe-area-inset-bottom, 0px));
+}
+.safe-area-pt {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
 /* Add a global reset for that "Paper" feel */
 body {
   background-color: #FDFCF5; /* cream-50 */

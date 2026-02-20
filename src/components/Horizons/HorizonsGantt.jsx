@@ -72,8 +72,10 @@ export default function HorizonsGantt({ goals = [] }) {
             {Object.entries(byProject).flatMap(([projectName, items]) =>
               items.map((goal) => {
                 const deadline = goal._projectDeadline;
-                const endWeek = deadline ? Math.min(TOTAL_WEEKS - 1, Math.max(0, getWeekIndex(deadline))) : TOTAL_WEEKS - 1;
-                const startWeek = 0;
+                const startWeek = typeof goal._projectWeekStart === 'number' ? Math.max(0, Math.min(TOTAL_WEEKS - 1, goal._projectWeekStart)) : 0;
+                const endWeek = typeof goal._projectWeekEnd === 'number'
+                  ? Math.min(TOTAL_WEEKS - 1, Math.max(startWeek, goal._projectWeekEnd))
+                  : (deadline ? Math.min(TOTAL_WEEKS - 1, Math.max(0, getWeekIndex(deadline))) : TOTAL_WEEKS - 1);
                 const progress = getProjectProgressPercent(goal);
                 const isOverdue = deadline && new Date(deadline + 'T23:59:59') < new Date();
                 return (

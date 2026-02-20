@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useGarden } from '../../context/GardenContext';
+import { testMochiConnection } from '../../services/geminiService';
 
 export default function SettingsView({ onReplayTour }) {
   const {
@@ -23,7 +24,19 @@ export default function SettingsView({ onReplayTour }) {
   const [saved, setSaved] = useState(false);
   const [importError, setImportError] = useState(null);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
+  const [testingMochi, setTestingMochi] = useState(false);
   const fileInputRef = useRef(null);
+
+  const handleTestMochi = async () => {
+    setTestingMochi(true);
+    try {
+      const result = await testMochiConnection();
+      const message = result?.message || (result?.ok ? 'Mochi is connected.' : "Mochi couldn't connect.");
+      window.dispatchEvent(new CustomEvent('kaizen:toast', { detail: { message } }));
+    } finally {
+      setTestingMochi(false);
+    }
+  };
 
   useEffect(() => {
     setUserName(userSettings.userName ?? '');
@@ -109,6 +122,21 @@ export default function SettingsView({ onReplayTour }) {
   return (
     <div className="space-y-8">
       <h2 className="font-serif text-stone-900 text-xl">Settings</h2>
+
+      <div className="rounded-xl border border-stone-200 bg-white p-6">
+        <h3 className="font-sans text-sm font-medium text-stone-700 mb-2">Mochi (AI)</h3>
+        <p className="font-sans text-sm text-stone-500 mb-3">
+          Mochi uses VITE_GEMINI_API_KEY from .env. Restart the dev server after changing .env.
+        </p>
+        <button
+          type="button"
+          onClick={handleTestMochi}
+          disabled={testingMochi}
+          className="px-4 py-2 rounded-lg font-sans text-sm font-medium border border-moss-300 bg-moss-50 text-moss-800 hover:bg-moss-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40 disabled:opacity-50"
+        >
+          {testingMochi ? 'Testing…' : 'Test connection'}
+        </button>
+      </div>
 
       {typeof onReplayTour === 'function' && (
         <div className="rounded-xl border border-stone-200 bg-white p-6">

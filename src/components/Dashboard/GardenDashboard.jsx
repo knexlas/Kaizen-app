@@ -498,15 +498,24 @@ function GardenDashboard() {
       const evts = Array.isArray(weeklyEvents) ? weeklyEvents : [];
       const energyProfile = { spoonCount: dailySpoonCount ?? 8 };
       const weekPlan = await generateWeeklyPlan(goals, evts, energyProfile);
-      if (!weekPlan) { setPlanningWeek(false); return; }
+      if (!weekPlan) {
+        if (typeof pushReward === 'function') {
+          pushReward({ message: 'Planning failed. Check API key (VITE_GEMINI_API_KEY) or try again later.', tone: 'slate', icon: '🔌', sound: null });
+        }
+        setPlanningWeek(false);
+        return;
+      }
       const materialized = materializeWeeklyPlan(weekPlan, goals, evts);
       setWeekPreview(materialized);
     } catch (e) {
       console.warn('Plan My Week failed', e);
+      if (typeof pushReward === 'function') {
+        pushReward({ message: 'Planning failed. Check API key or try again later.', tone: 'slate', icon: '🔌', sound: null });
+      }
     } finally {
       setPlanningWeek(false);
     }
-  }, [goals, weeklyEvents, dailySpoonCount]);
+  }, [goals, weeklyEvents, dailySpoonCount, pushReward]);
 
   const handleConfirmWeekPlan = useCallback(async () => {
     if (!weekPreview) return;
@@ -524,8 +533,12 @@ function GardenDashboard() {
   const handlePlanMonth = useCallback(async () => {
     const now = new Date();
     const roadmap = await generateMonthlyPlan(goals, now.getMonth(), now.getFullYear());
-    if (roadmap) setMonthlyRoadmap(roadmap);
-  }, [goals]);
+    if (roadmap) {
+      setMonthlyRoadmap(roadmap);
+    } else if (typeof pushReward === 'function') {
+      pushReward({ message: 'Monthly planning failed. Check API key (VITE_GEMINI_API_KEY) or try again later.', tone: 'slate', icon: '🔌', sound: null });
+    }
+  }, [goals, pushReward]);
 
   const handleGardenGoalClick = useCallback((goal) => {
     setSeedForMilestones(goal);
@@ -664,12 +677,19 @@ function GardenDashboard() {
           if (insight) {
             setSpiritInsight(insight);
             setStoredBriefing(insight);
+          } else if (typeof pushReward === 'function') {
+            pushReward({ message: "Mochi couldn't connect. Check your API key in .env (VITE_GEMINI_API_KEY) and restart the dev server.", tone: 'slate', icon: '🔌', sound: null });
           }
           setSpiritThinking(false);
         })
-        .catch(() => setSpiritThinking(false));
+        .catch(() => {
+          setSpiritThinking(false);
+          if (typeof pushReward === 'function') {
+            pushReward({ message: "Mochi couldn't connect. Check VITE_GEMINI_API_KEY or try again later.", tone: 'slate', icon: '🔌', sound: null });
+          }
+        });
     },
-    [logs, goals, events, spiritInsight]
+    [logs, goals, events, spiritInsight, pushReward]
   );
 
   const WeatherIcon = weather === 'storm' ? StormIcon : weather === 'breeze' ? LeafIcon : SunIcon;
@@ -1330,7 +1350,7 @@ function GardenDashboard() {
               id="tour-wisdom"
               type="button"
               onClick={() => setShowChat(true)}
-              className={`flex items-center gap-2 py-2 pl-2 pr-2.5 rounded-lg focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors ${
+              className={`flex items-center gap-2 min-h-[44px] min-w-[44px] py-2 pl-2 pr-2.5 rounded-lg focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors ${
                 isDark
                   ? 'bg-moss-900/40 text-moss-200 hover:bg-moss-800/50'
                   : 'bg-moss-100/80 text-moss-800 hover:bg-moss-200/80'
@@ -1348,7 +1368,7 @@ function GardenDashboard() {
                 id="tour-compost"
                 type="button"
                 onClick={() => setShowCompost(true)}
-                className={`flex items-center gap-2 py-2 pl-2 pr-2.5 rounded-lg focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors ${
+                className={`flex items-center gap-2 min-h-[44px] min-w-[44px] py-2 pl-2 pr-2.5 rounded-lg focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors ${
                   isDark ? 'text-slate-400 hover:text-slate-100 hover:bg-slate-700/60' : 'text-stone-600 hover:text-stone-900 hover:bg-stone-200/60'
                 }`}
                 aria-label="Compost Heap"
@@ -1357,20 +1377,11 @@ function GardenDashboard() {
                 <span className="text-lg leading-none" aria-hidden>🍂</span>
                 <span className="hidden lg:inline text-xs font-medium">Compost</span>
               </button>
-              <button
-                type="button"
-                onClick={() => setShowCompost(true)}
-                className={`hidden sm:inline text-[10px] font-normal focus:outline-none focus:ring-2 focus:ring-moss-500/40 rounded ${
-                  isDark ? 'text-slate-500 hover:text-slate-300' : 'text-stone-400 hover:text-stone-600'
-                }`}
-              >
-                See older items (optional)
-              </button>
             </div>
             <button
               type="button"
               onClick={() => setShowSpiritMirror(true)}
-              className={`p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors ${
+              className={`min-h-[44px] min-w-[44px] flex items-center justify-center p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors ${
                 isDark ? 'text-slate-400 hover:text-slate-100 hover:bg-slate-700/60' : 'text-stone-500 hover:text-stone-800 hover:bg-stone-200/60'
               }`}
               aria-label="Customize Spirit (Mirror)"
@@ -1381,7 +1392,7 @@ function GardenDashboard() {
             <button
               type="button"
               onClick={() => setDarkModeOverride(!isDark)}
-              className={`p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors ${
+              className={`min-h-[44px] min-w-[44px] flex items-center justify-center p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors ${
                 isDark ? 'text-indigo-300 hover:text-indigo-200 hover:bg-slate-700/60' : 'text-stone-500 hover:text-indigo-600 hover:bg-indigo-50'
               }`}
               aria-label="Dark mode"
@@ -1396,7 +1407,7 @@ function GardenDashboard() {
                 <button
                   type="button"
                   onClick={() => setShowAccessibilityModal(true)}
-                  className="p-2 rounded-lg text-stone-500 hover:text-stone-800 hover:bg-stone-200/60 focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors"
+                  className="min-h-[44px] min-w-[44px] flex items-center justify-center p-2 rounded-lg text-stone-500 hover:text-stone-800 hover:bg-stone-200/60 focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors"
                   aria-label="Accessibility & Comfort"
                   title="Accessibility & Comfort"
                 >
@@ -1409,7 +1420,7 @@ function GardenDashboard() {
                   id="tour-settings"
                   type="button"
                   onClick={() => setActiveTab('settings')}
-                  className="p-2 rounded-lg text-stone-500 hover:text-stone-800 hover:bg-stone-200/60 focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors"
+                  className="min-h-[44px] min-w-[44px] flex items-center justify-center p-2 rounded-lg text-stone-500 hover:text-stone-800 hover:bg-stone-200/60 focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors"
                   aria-label="Settings"
                   title="Settings"
                 >
@@ -1423,7 +1434,7 @@ function GardenDashboard() {
             <button
               type="button"
               onClick={() => setShowTour(true)}
-              className="p-2 rounded-lg text-stone-400 hover:text-stone-600 hover:bg-stone-200/60 focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors"
+              className="min-h-[44px] min-w-[44px] flex items-center justify-center p-2 rounded-lg text-stone-400 hover:text-stone-600 hover:bg-stone-200/60 focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors"
               aria-label="Replay tour"
               title="Replay tour"
             >
@@ -1509,7 +1520,7 @@ function GardenDashboard() {
                         setActiveTab(id);
                       }
                     }}
-                    className={`flex flex-col items-center gap-0.5 py-2 px-3 rounded-lg font-sans text-xs focus:outline-none focus:ring-2 focus:ring-moss-500/30 relative ${
+                    className={`flex flex-col items-center justify-center gap-0.5 min-h-[44px] py-2 px-3 rounded-lg font-sans text-xs focus:outline-none focus:ring-2 focus:ring-moss-500/30 relative ${
                       locked
                         ? 'text-stone-400 opacity-70 cursor-default'
                         : isDark
@@ -1531,7 +1542,7 @@ function GardenDashboard() {
         </nav>
       )}
 
-      <main className={`flex-1 w-full px-4 py-8 max-w-5xl mx-auto relative ${isMobileNav ? 'pb-20' : ''}`}>
+      <main className={`flex-1 w-full min-w-0 px-4 py-8 max-w-5xl mx-auto relative ${isMobileNav ? 'pb-20' : ''}`}>
         {showSpiritDialogue && (
           <div className="flex justify-center py-4 mb-2">
             <MochiSpiritWithDialogue
@@ -1589,7 +1600,7 @@ function GardenDashboard() {
                 </div>
                 {staleArchivedCount > 0 && (
               <div className="mb-4 p-3 rounded-xl border border-moss-200 bg-moss-50/80 font-sans text-sm text-stone-700 flex flex-wrap items-center justify-between gap-2">
-                <span>We put older items into compost so today stays light.</span>
+                <span>Some items were archived. Review them in compost if you like.</span>
                 <span className="flex items-center gap-2 shrink-0">
                   <button
                     type="button"
@@ -1694,7 +1705,7 @@ function GardenDashboard() {
                 </div>
               </div>
             ) : (
-              <div id="tour-timeline" className="mb-4">
+              <div id="tour-timeline" className="mb-4 min-w-0">
                 <div className="flex justify-end mb-2">
                   <button
                     type="button"
@@ -2180,7 +2191,7 @@ function GardenDashboard() {
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.96, opacity: 0 }}
               onClick={(e) => e.stopPropagation()}
-              className="relative bg-stone-50 rounded-2xl border border-stone-200 shadow-xl max-w-sm w-full p-6"
+              className="relative bg-stone-50 rounded-2xl border border-stone-200 shadow-xl max-w-sm w-full max-h-[90vh] overflow-y-auto p-6"
             >
               <button
                 type="button"
@@ -2242,7 +2253,7 @@ function GardenDashboard() {
               <button
                 type="button"
                 onClick={() => handleEnterMonkMode(configDurationMinutes)}
-                className="w-full py-3 font-serif text-stone-800 bg-moss-500 text-stone-50 rounded-xl hover:bg-moss-600 focus:outline-none focus:ring-2 focus:ring-moss-500/50 transition-colors"
+                className="w-full py-3 font-serif bg-moss-500 text-stone-50 rounded-xl hover:bg-moss-600 focus:outline-none focus:ring-2 focus:ring-moss-500/50 transition-colors"
               >
                 Enter Monk Mode
               </button>
@@ -2280,7 +2291,7 @@ function GardenDashboard() {
                 animate={{ scale: 1, opacity: 1 }}
                 exit={{ scale: 0.96, opacity: 0 }}
                 onClick={(e) => e.stopPropagation()}
-                className="relative bg-stone-50 rounded-2xl border border-stone-200 shadow-xl max-w-sm w-full p-6"
+                className="relative bg-stone-50 rounded-2xl border border-stone-200 shadow-xl max-w-sm w-full max-h-[90vh] overflow-y-auto p-6"
               >
                 <button
                   type="button"

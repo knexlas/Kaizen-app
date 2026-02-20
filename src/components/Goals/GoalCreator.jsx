@@ -352,7 +352,7 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
       : undefined;
     const metricSettings = isVitality
       ? {
-          metricName: metricName.trim() || trimmedTitle,
+          metricName: trackingChoice === 'create_new' ? trimmedTitle : (metricName.trim() || trimmedTitle),
           unit: metricUnit.trim() || undefined,
           currentValue: Number(metricCurrentValue) ?? 0,
           targetValue: metricTargetValue !== '' && !Number.isNaN(Number(metricTargetValue)) ? Number(metricTargetValue) : undefined,
@@ -621,16 +621,18 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
                     {(trackingChoice === 'create_new' || trackingChoice !== '') && (
                       <>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                          <div>
-                            <label className="block font-sans text-sm font-medium text-stone-600 mb-1">Metric Name</label>
-                            <input
-                              type="text"
-                              value={metricName}
-                              onChange={(e) => setMetricName(e.target.value)}
-                              placeholder="e.g. Weight, Sleep Score"
-                              className="w-full py-2 px-3 rounded-lg border border-stone-200 bg-white font-sans text-sm placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-moss-500/40 focus:border-moss-500"
-                            />
-                          </div>
+                          {trackingChoice !== 'create_new' && (
+                            <div>
+                              <label className="block font-sans text-sm font-medium text-stone-600 mb-1">Metric Name</label>
+                              <input
+                                type="text"
+                                value={metricName}
+                                onChange={(e) => setMetricName(e.target.value)}
+                                placeholder="e.g. Weight, Sleep Score"
+                                className="w-full py-2 px-3 rounded-lg border border-stone-200 bg-white font-sans text-sm placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-moss-500/40 focus:border-moss-500"
+                              />
+                            </div>
+                          )}
                           <div>
                             <label className="block font-sans text-sm font-medium text-stone-600 mb-1">Unit</label>
                             <input
