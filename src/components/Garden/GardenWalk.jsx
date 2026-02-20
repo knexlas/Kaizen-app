@@ -40,8 +40,63 @@ const STAGE_EMOJI = { seed: '🌱', sprout: '🌿', bloom: '🌸', harvest: '�
 const PROJECT_STAGE_EMOJI = { seed: '🫘', sprout: '🪴', bloom: '🌻', harvest: '🏆' };
 const DECORATION_EMOJI = { bench: '🪑', pond: '🐟', lantern: '🏮', torii: '⛩️', cherry: '🌸' };
 
-function PixelPlant({ stage, isProject }) {
-  const emoji = isProject ? (PROJECT_STAGE_EMOJI[stage] ?? '🫘') : (STAGE_EMOJI[stage] ?? '🌱');
+function PixelPlant({ stage, type = 'kaizen' }) {
+  const isBloomOrHarvest = stage === 'bloom' || stage === 'harvest';
+
+  if (isBloomOrHarvest && type === 'routine') {
+    return (
+      <div className="flex flex-col items-center justify-center w-full h-full" aria-hidden>
+        <svg viewBox="0 0 16 14" className="w-10 h-9 shrink-0" fill="none" stroke="none">
+          <ellipse cx="8" cy="12" rx="5" ry="2" fill="#9e9e9e" />
+          <rect x="6" y="10" width="4" height="2" fill="#757575" />
+          <circle cx="8" cy="8" r="2.5" fill="#4caf50" />
+          <circle cx="7" cy="7" r="1" fill="#66bb6a" />
+          <circle cx="9" cy="7.5" r="0.8" fill="#66bb6a" />
+        </svg>
+      </div>
+    );
+  }
+  if (isBloomOrHarvest && type === 'project') {
+    return (
+      <div className="flex flex-col items-center justify-center w-full h-full" aria-hidden>
+        <svg viewBox="0 0 20 24" className="w-9 h-11 shrink-0" fill="none" stroke="none">
+          <rect x="8" y="18" width="4" height="6" fill="#5d4037" />
+          <polygon points="10,2 18,14 2,14" fill="#2e7d32" />
+          <polygon points="10,6 16,16 4,16" fill="#388e3c" />
+          <polygon points="10,10 14,18 6,18" fill="#43a047" />
+        </svg>
+      </div>
+    );
+  }
+  if (isBloomOrHarvest && type === 'vitality') {
+    return (
+      <div className="flex flex-col items-center justify-center w-full h-full" aria-hidden>
+        <svg viewBox="0 0 20 12" className="w-11 h-8 shrink-0" fill="none" stroke="none">
+          <ellipse cx="10" cy="8" rx="8" ry="3" fill="#42a5f5" />
+          <ellipse cx="10" cy="7" rx="6" ry="2" fill="#64b5f6" />
+          <ellipse cx="10" cy="5" rx="4" ry="1.5" fill="#90caf9" />
+          <circle cx="10" cy="4" r="2.5" fill="#4caf50" />
+          <circle cx="10" cy="4" r="1.2" fill="#66bb6a" />
+        </svg>
+      </div>
+    );
+  }
+  if (isBloomOrHarvest && type === 'kaizen') {
+    return (
+      <div className="flex flex-col items-center justify-center w-full h-full">
+        <motion.div
+          className="text-3xl drop-shadow-sm"
+          animate={{ y: [0, -3, 0] }}
+          transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut' }}
+          aria-hidden
+        >
+          🌸
+        </motion.div>
+      </div>
+    );
+  }
+
+  const emoji = type === 'project' ? (PROJECT_STAGE_EMOJI[stage] ?? '🫘') : type === 'routine' ? (stage === 'seed' ? '🪨' : stage === 'sprout' ? '🪴' : '🌿') : type === 'vitality' ? (stage === 'seed' ? '💧' : '💧') : (STAGE_EMOJI[stage] ?? '🌱');
   return (
     <div className="flex flex-col items-center justify-center w-full h-full">
       <motion.div
@@ -195,7 +250,7 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
                           : 'bg-[#dcedc8]/80 hover:bg-[#c8e6a0]/90 focus:ring-[#558b2f]/50'
                       } ${isProjectDone(goal) ? 'opacity-70' : ''}`}
                     >
-                      <PixelPlant stage={getPlantStage(getGoalProgressPercent(goal))} isProject={!!goal._projectGoal} />
+                      <PixelPlant stage={getPlantStage(getGoalProgressPercent(goal))} type={goal._projectGoal ? 'project' : (goal.type || 'kaizen')} />
                       <span className={`font-sans text-xs mt-0.5 truncate max-w-full px-1 ${goal._projectGoal ? 'text-amber-700' : 'text-stone-600'}`}>
                         {goal.title}
                       </span>

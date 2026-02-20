@@ -1554,6 +1554,22 @@ function GardenDashboard() {
         )}
         {activeTab === 'focus' && (
           <>
+            <div className="mb-6 flex gap-3">
+              <button
+                type="button"
+                onClick={() => setIsPlanting(true)}
+                className="flex-1 py-3 px-4 rounded-xl bg-moss-600 text-white font-sans font-medium hover:bg-moss-700 transition-colors flex items-center justify-center gap-2 shadow-sm shadow-moss-900/20"
+              >
+                <span className="text-xl">🌱</span> Plant a New Seed
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowProjectPlanner(true)}
+                className="py-3 px-4 rounded-xl bg-stone-100 text-stone-700 font-sans font-medium hover:bg-stone-200 transition-colors flex items-center justify-center gap-2 border border-stone-200"
+              >
+                <span className="text-xl">📋</span> Plan Project
+              </button>
+            </div>
             {needsMorningCheckIn ? (
               <div className="mb-4">
                 <GuidedEmptyState

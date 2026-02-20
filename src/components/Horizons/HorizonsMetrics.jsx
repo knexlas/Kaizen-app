@@ -1,4 +1,36 @@
 import { useMemo, useState } from 'react';
+import { useGarden } from '../../context/GardenContext';
+
+/** Minimal SVG sparkline: line of values + optional horizontal dashed target. */
+function Sparkline({ data = [], target }) {
+  const values = Array.isArray(data) ? data.map((d) => (typeof d === 'number' ? d : d?.value)) : [];
+  const clean = values.filter((v) => v != null && !Number.isNaN(Number(v))).map(Number);
+  if (clean.length < 2) {
+    return (
+      <p className="font-sans text-xs text-stone-400 italic py-2">Need more data points to draw a chart.</p>
+    );
+  }
+  const targetNum = target != null && !Number.isNaN(Number(target)) ? Number(target) : null;
+  const min = Math.min(...clean, targetNum ?? clean[0]);
+  const max = Math.max(...clean, targetNum ?? clean[0]);
+  const range = max - min || 1;
+  const w = 100;
+  const h = 30;
+  const toX = (i) => (i / (clean.length - 1)) * w;
+  const toY = (v) => h - ((v - min) / range) * h;
+  const points = clean.map((v, i) => `${toX(i)},${toY(v)}`).join(' ');
+  const targetY = targetNum != null ? toY(targetNum) : null;
+  return (
+    <div className="w-full h-8 flex items-center">
+      <svg viewBox={`0 0 ${w} ${h}`} className="w-full h-full text-blue-500" preserveAspectRatio="none">
+        {targetY != null && targetY >= 0 && targetY <= h && (
+          <line x1={0} y1={targetY} x2={w} y2={targetY} stroke="currentColor" strokeWidth="0.5" strokeDasharray="2,2" opacity={0.6} className="text-stone-400" />
+        )}
+        <polyline points={points} fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    </div>
+  );
+}
 
 function getLatestMetricValue(goal) {
   const metrics = Array.isArray(goal?.metrics) ? goal.metrics : [];
@@ -21,6 +53,7 @@ function getMetricValueDaysAgo(goal, daysAgo) {
 }
 
 export default function HorizonsMetrics({ goals = [], logMetric, onRecord }) {
+  const { deleteGoal } = useGarden();
   const [daysAgo, setDaysAgo] = useState(3);
   const vitalityGoals = useMemo(() => (goals || []).filter((g) => g.type === 'vitality'), [goals]);
 
@@ -50,15 +83,39 @@ export default function HorizonsMetrics({ goals = [], logMetric, onRecord }) {
           const latest = getLatestMetricValue(goal);
           const past = getMetricValueDaysAgo(goal, daysAgo);
           const unit = goal.metricSettings?.unit || '';
-          const entries = Array.isArray(goal.metrics) ? goal.metrics.slice(-14) : [];
+          const historyArray = Array.isArray(goal.history)
+            ? goal.history
+            : (Array.isArray(goal.metrics) ? [...goal.metrics].sort((a, b) => (a.date || '').localeCompare(b.date || '')).map((e) => ({ value: e.value })) : []);
           const trend = latest != null && past != null ? latest - past : null;
           const trendUp = goal.metricSettings?.direction !== 'lower';
           const improved = trend !== null && (trendUp ? trend > 0 : trend < 0);
           return (
-            <div key={goal.id} className="rounded-xl border border-stone-200 bg-white p-4 shadow-sm">
-              <div className="flex items-center gap-2 mb-2">
-                <span className="text-lg">💧</span>
-                <span className="font-sans text-sm font-medium text-stone-800">{goal.title}</span>
+            <div key={goal.id} className="rounded-xl border border-stone-200 bg-white p-4 shadow-sm relative">
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-lg">💧</span>
+                  <span className="font-sans text-sm font-medium text-stone-800 truncate">{goal.title}</span>
+                </div>
+                {deleteGoal && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (window.confirm('Drain this pond? This cannot be undone.')) {
+                        deleteGoal(goal.id);
+                      }
+                    }}
+                    className="shrink-0 p-1.5 rounded-lg text-stone-400 hover:text-red-600 hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-500/40"
+                    aria-label="Delete this metric"
+                    title="Drain this pond"
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                      <polyline points="3 6 5 6 21 6" />
+                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3-3V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                      <line x1="10" y1="11" x2="10" y2="17" />
+                      <line x1="14" y1="11" x2="14" y2="17" />
+                    </svg>
+                  </button>
+                )}
               </div>
               <div className="flex items-baseline gap-2 mb-1">
                 <span className="font-sans text-2xl font-bold text-stone-900 tabular-nums">
@@ -74,24 +131,9 @@ export default function HorizonsMetrics({ goals = [], logMetric, onRecord }) {
                   {improved ? '↑' : '↓'} {trend > 0 ? '+' : ''}{trend} {unit} vs {daysAgo}d ago
                 </div>
               )}
-              {entries.length > 1 && (
-                <div className="flex items-end gap-px h-10 mt-2">
-                  {(() => {
-                    const vals = entries.map((e) => e.value);
-                    const mn = Math.min(...vals);
-                    const mx = Math.max(...vals);
-                    const range = mx - mn || 1;
-                    return vals.map((v, idx) => (
-                      <div
-                        key={idx}
-                        className="flex-1 rounded-sm bg-sky-300/70 min-w-[2px]"
-                        style={{ height: Math.max(4, ((v - mn) / range) * 36) + 'px' }}
-                        title={entries[idx].date + ': ' + v + ' ' + unit}
-                      />
-                    ));
-                  })()}
-                </div>
-              )}
+              <div className="mt-2 min-h-[2rem]">
+                <Sparkline data={historyArray} target={goal.metricSettings?.targetValue} />
+              </div>
               <div className="flex gap-2 mt-3">
                 <input
                   type="number"

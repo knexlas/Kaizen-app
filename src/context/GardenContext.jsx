@@ -823,16 +823,19 @@ export function GardenProvider({ children }) {
     setGoals((prev) => prev.filter((g) => g.id !== goalId));
   }, []);
 
-  /** Append a metric log to a goal's metrics array. date defaults to today. */
+  /** Append a metric log to a goal's metrics array and history (for vitality graphing). date defaults to today. */
   const logMetric = useCallback((goalId, value, date) => {
     const dateObj = date instanceof Date ? date : date != null ? new Date(date) : new Date();
     const dateStr = dateObj.toISOString ? dateObj.toISOString().slice(0, 10) : String(dateObj);
+    const newValue = Number(value);
+    const nowIso = new Date().toISOString();
     setGoals((prev) =>
       prev.map((g) => {
         if (g.id !== goalId) return g;
         const metrics = Array.isArray(g.metrics) ? [...g.metrics] : [];
-        metrics.push({ value: Number(value), date: dateStr });
-        return { ...g, metrics };
+        metrics.push({ value: newValue, date: dateStr });
+        const history = [...(g.history || []), { date: nowIso, value: newValue }];
+        return { ...g, metrics, history };
       })
     );
   }, []);
