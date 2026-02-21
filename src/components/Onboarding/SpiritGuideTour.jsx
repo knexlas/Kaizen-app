@@ -8,6 +8,10 @@ const TOUR_STEPS = [
     message: () => 'Here is where we begin. Plant your first seed to start your journey.',
   },
   {
+    targetId: 'mochi-chat-btn',
+    message: () => 'Click me anytime. I am here to brainstorm, listen, or just keep you company while you work.',
+  },
+  {
     targetId: 'tour-compass',
     message: (name) => `Welcome, ${name}. This is your Compass. It shows you the one thing that matters right now.`,
   },
@@ -40,7 +44,7 @@ const TOUR_STEPS = [
     message: () => 'Your Journal. After each session, you\'ll reflect here. Small notes become big insights over time.',
   },
   {
-    targetId: 'tour-wisdom',
+    targetId: 'mochi-chat-btn',
     message: () => 'And I am always here. Click me if you need advice, a plan, or just want to chat. When creating goals, try "Suggest based on Title" — Mochi can plan for you. Change the title and suggest again for a fresh plan!',
   },
 ];

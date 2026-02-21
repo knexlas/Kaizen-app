@@ -21,7 +21,7 @@ import GoalEditor from '../Goals/GoalEditor';
 import TimeSlicer, { HOURS, MAX_SLOTS_BY_WEATHER } from './TimeSlicer';
 import CompassWidget from './CompassWidget';
 import CommandPalette from './CommandPalette';
-import MochiSpiritWithDialogue, { MochiSpirit, getSpiritGreeting, getPlanReaction } from './MochiSpirit';
+import MochiSpiritWithDialogue, { getSpiritGreeting, getPlanReaction } from './MochiSpirit';
 import SpiritChat from './SpiritChat';
 import CompostHeap from './CompostHeap';
 import { generateSpiritInsight, generateWeeklyPlan, generateMonthlyPlan } from '../../services/geminiService';
@@ -183,6 +183,18 @@ function GardenDashboard() {
   const { pushReward } = useReward();
   const { darkMode: themeDarkMode, setDarkModeOverride } = useTheme();
   const isDark = themeDarkMode || eveningMode === 'night-owl';
+
+  const getSpiritEmoji = () => {
+    if (!spiritConfig) return '✨';
+    if (spiritConfig.type === 'custom') {
+      const HEADS = { bunny: '🐰', cat: '🐱', bear: '🐻', fox: '🦊', bot: '🤖', owl: '🦉' };
+      return HEADS[spiritConfig.head] || '✨';
+    }
+    const ARCHETYPES = {
+      mochi: '🐱', cat: '🐱', ember: '🔥', nimbus: '☁️', owl: '🦉',
+    };
+    return ARCHETYPES[spiritConfig.type] || '✨';
+  };
   const [today, setToday] = useState(() => new Date().toISOString().slice(0, 10));
   const needsMorningCheckIn = lastCheckInDate !== today;
 
@@ -1358,21 +1370,13 @@ function GardenDashboard() {
           {/* Right: Toolbelt – Chat, Inbox, Mirror, Evening, Settings */}
           <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
             <button
-              id="tour-wisdom"
+              id="mochi-chat-btn"
               type="button"
               onClick={() => setShowChat(true)}
-              className={`flex items-center gap-2 min-h-[44px] min-w-[44px] py-2 pl-2 pr-2.5 rounded-lg focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors ${
-                isDark
-                  ? 'bg-moss-900/40 text-moss-200 hover:bg-moss-800/50'
-                  : 'bg-moss-100/80 text-moss-800 hover:bg-moss-200/80'
-              }`}
-              aria-label="Chat with Mochi"
-              title="Chat"
+              className="text-4xl hover:scale-110 transition-transform cursor-pointer drop-shadow-sm filter"
+              title="Talk to Mochi"
             >
-              <span className="inline-flex w-7 h-8 items-center justify-center [&_svg]:w-7 [&_svg]:h-8" aria-hidden>
-                <MochiSpirit />
-              </span>
-              <span className="hidden lg:inline text-xs font-medium">Chat</span>
+              {getSpiritEmoji()}
             </button>
             <div className="flex items-center gap-1">
               <button

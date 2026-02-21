@@ -49,9 +49,18 @@ const ARCHETYPES = [
     colorClass: 'bg-stone-100 border-stone-300 ring-stone-300/50',
     glowClass: 'shadow-stone-200/40',
   },
+  {
+    id: 'owl',
+    name: 'Owl',
+    title: 'The Guide',
+    emoji: '🦉',
+    description: 'Wise, observant, nocturnal.',
+    colorClass: 'bg-stone-100 border-stone-300 ring-stone-300/50',
+    glowClass: 'shadow-stone-200/40',
+  },
 ];
 
-const HEADS = { bunny: '🐰', cat: '🐱', bear: '🐻', fox: '🦊', bot: '🤖' };
+const HEADS = { bunny: '🐰', cat: '🐱', bear: '🐻', fox: '🦊', bot: '🤖', owl: '🦉' };
 const BODIES = { tea: '🍵', backpack: '🎒', scarf: '🧣', glowing: '✨' };
 const AURA_CLASSES = {
   pink: 'bg-pink-200/80 ring-pink-300 shadow-pink-200/40',

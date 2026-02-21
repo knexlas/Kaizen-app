@@ -223,7 +223,7 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
       {/* Cozy Tile Grid */}
       <div className="relative rounded-2xl overflow-hidden border-2 border-[#7cb342]/40 shadow-lg">
         <div
-          className="grid gap-0 p-2"
+          className="grid gap-4 p-6"
           style={{
             gridTemplateColumns: `repeat(${GRID_COLS}, minmax(0, 1fr))`,
             gridTemplateRows: `repeat(${GRID_ROWS}, minmax(64px, 1fr))`,
@@ -234,22 +234,52 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
               const key = `${col},${row}`;
               const goal = goalByCell[key];
               const isMochi = mochiCell.x === col && mochiCell.y === row;
-              const cellBgClass = (row + col) % 2 === 0 ? 'bg-[#dcedc8]' : 'bg-[#c5e1a5]';
+              const progressPct = goal
+                ? Math.min(100, ((goal.totalMinutes || 0) / ((goal.targetHours || 1) * 60)) * 100)
+                : 0;
+              const nextMilestone = goal?.milestones?.find((m) => !m?.completed);
 
               return (
                 <div
                   key={key}
-                  className={`relative rounded-lg overflow-hidden ${cellBgClass}`}
+                  className={`group relative aspect-square rounded-2xl transition-all duration-300 ease-out flex flex-col items-center justify-center hover:z-40 ${
+                    goal
+                      ? 'bg-[#dcedc8] shadow-[0_6px_0_0_#c5e1a5,0_10px_10px_-5px_rgba(0,0,0,0.1)] hover:-translate-y-1 hover:shadow-[0_8px_0_0_#c5e1a5,0_15px_15px_-5px_rgba(0,0,0,0.15)] cursor-pointer'
+                      : 'bg-stone-50/50 border-2 border-dashed border-stone-200 hover:border-moss-300 hover:bg-moss-50 cursor-pointer shadow-sm'
+                  } ${goal?._projectGoal ? 'ring-2 ring-amber-300/50' : ''}`}
                 >
+                  {goal && (
+                    <div className="absolute bottom-full mb-4 left-1/2 -translate-x-1/2 w-48 p-3 bg-white/95 backdrop-blur-md rounded-xl shadow-xl border border-stone-100 opacity-0 group-hover:opacity-100 transition-all duration-200 pointer-events-none z-50 scale-95 group-hover:scale-100 flex flex-col gap-1">
+                      <div className="absolute top-full left-1/2 -translate-x-1/2 border-8 border-transparent border-t-white/95" aria-hidden />
+                      <h4 className="font-serif text-moss-900 text-sm font-semibold truncate">{goal.title}</h4>
+                      <div className="flex justify-between items-center text-[10px] font-sans text-stone-500 mb-1">
+                        <span className="uppercase tracking-wider font-semibold text-moss-600">
+                          {goal._projectGoal ? 'project' : (goal.type || 'kaizen')}
+                        </span>
+                        <span>
+                          {goal.totalMinutes ? Math.round(goal.totalMinutes / 60) : 0}h / {(goal.targetHours || 0)}h
+                        </span>
+                      </div>
+                      <div className="h-1.5 w-full bg-stone-100 rounded-full overflow-hidden mb-1">
+                        <div
+                          className="h-full bg-moss-400 rounded-full transition-[width] duration-300"
+                          style={{ width: `${progressPct}%` }}
+                        />
+                      </div>
+                      {nextMilestone && (
+                        <p className="text-[10px] text-stone-500 leading-tight mt-1 border-t border-stone-100 pt-1">
+                          <span className="font-medium text-stone-700">Next:</span>{' '}
+                          {typeof nextMilestone === 'object' && nextMilestone.title != null ? nextMilestone.title : String(nextMilestone)}
+                        </p>
+                      )}
+                    </div>
+                  )}
+
                   {goal ? (
                     <button
                       type="button"
                       onClick={() => handlePlantClick(goal, col, row)}
-                      className={`w-full h-full min-h-[64px] flex flex-col items-center justify-center rounded-lg border border-transparent hover:border-[#9e9e9e]/25 transition-colors focus:outline-none focus:ring-2 ${
-                        goal._projectGoal
-                          ? 'bg-amber-50/90 hover:bg-amber-100/90 border-amber-300/40 focus:ring-amber-500/50'
-                          : 'bg-[#dcedc8]/80 hover:bg-[#c8e6a0]/90 focus:ring-[#558b2f]/50'
-                      } ${isProjectDone(goal) ? 'opacity-70' : ''}`}
+                      className={`w-full h-full min-h-[64px] flex flex-col items-center justify-center rounded-2xl border-0 bg-transparent hover:bg-black/[0.04] transition-colors focus:outline-none focus:ring-2 focus:ring-[#558b2f]/50 focus:ring-inset ${isProjectDone(goal) ? 'opacity-70' : ''}`}
                     >
                       <PixelPlant goal={goal} stage={getPlantStage(getGoalProgressPercent(goal))} type={goal._projectGoal ? 'project' : (goal.type || 'kaizen')} />
                       <span className={`font-sans text-xs mt-0.5 truncate max-w-full px-1 ${goal._projectGoal ? 'text-amber-700' : 'text-stone-600'}`}>
@@ -263,9 +293,9 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
                     <button
                       type="button"
                       onClick={() => handleEmptyCellClick(col, row)}
-                      className="group w-full h-full min-h-[64px] flex items-center justify-center rounded-lg bg-black/[0.06] hover:bg-[#8d6e63]/15 transition-colors focus:outline-none focus:ring-2 focus:ring-[#558b2f]/40 focus:ring-inset"
+                      className="w-full h-full min-h-[64px] flex items-center justify-center rounded-2xl border-0 bg-transparent hover:bg-moss-100/30 transition-colors focus:outline-none focus:ring-2 focus:ring-[#558b2f]/40 focus:ring-inset"
                     >
-                      <span className="text-xl text-white/0 group-hover:text-white/70 transition-colors duration-200 select-none" aria-hidden>+</span>
+                      <span className="text-2xl text-stone-300 group-hover:text-moss-500 transition-colors duration-200 select-none" aria-hidden>+</span>
                     </button>
                   )}
 
