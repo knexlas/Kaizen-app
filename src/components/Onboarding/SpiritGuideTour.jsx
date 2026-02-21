@@ -4,6 +4,10 @@ import MochiSpiritWithDialogue from '../Dashboard/MochiSpirit';
 
 const TOUR_STEPS = [
   {
+    targetId: 'plant-seed-btn',
+    message: () => 'Here is where we begin. Plant your first seed to start your journey.',
+  },
+  {
     targetId: 'tour-compass',
     message: (name) => `Welcome, ${name}. This is your Compass. It shows you the one thing that matters right now.`,
   },

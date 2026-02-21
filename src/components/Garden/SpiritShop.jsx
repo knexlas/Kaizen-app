@@ -1,5 +1,6 @@
+import { useState } from 'react';
 import { useGarden } from '../../context/GardenContext';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 
 const SHOP_ITEMS = [
   { type: 'bench', name: 'Stone Bench', cost: 50, description: 'A place to rest and watch the clouds.', icon: '🪑' },
@@ -11,13 +12,15 @@ const SHOP_ITEMS = [
 
 export default function SpiritShop({ onClose }) {
   const { embers, placeDecoration, spendEmbers } = useGarden();
+  const [justBought, setJustBought] = useState(null);
 
   const handleBuy = (item) => {
     if (embers < item.cost) return;
     const ok = spendEmbers(item.cost);
     if (ok) {
       placeDecoration(item.type, '50%', '50%');
-      onClose?.();
+      setJustBought(item.name);
+      setTimeout(() => setJustBought(null), 3000);
     }
   };
 
@@ -28,7 +31,7 @@ export default function SpiritShop({ onClose }) {
       role="dialog"
       aria-modal="true"
       aria-labelledby="spirit-shop-title"
-      aria-label="Mochi's Spirit Shop"
+      aria-label="The Ember Exchange"
     >
       <motion.div
         initial={{ opacity: 0, scale: 0.96 }}
@@ -46,17 +49,26 @@ export default function SpiritShop({ onClose }) {
         >
           ×
         </button>
-        {/* Header: Mochi + Embers */}
+        {/* Header: The Ember Exchange + Embers */}
         <div className="px-6 pt-6 pb-4 border-b border-stone-200/80">
           <div className="flex items-center justify-between gap-4">
             <h2 id="spirit-shop-title" className="font-serif text-xl text-[#2D2D2D]">
-              Mochi&apos;s Spirit Shop
+              The Ember Exchange
             </h2>
             <div className="flex items-center gap-1.5 rounded-full bg-stone-100 px-4 py-2 border border-stone-200">
               <span className="text-lg" aria-hidden>🔥</span>
               <span className="font-sans text-sm font-medium text-[#2D2D2D] tabular-nums">{embers}</span>
               <span className="font-sans text-xs text-stone-500">Embers</span>
             </div>
+          </div>
+        </div>
+
+        {/* Shopkeeper Mochi greeting */}
+        <div className="mx-4 mt-4 mb-8 flex items-center gap-4 p-4 bg-stone-800 rounded-2xl border border-stone-700 shadow-xl">
+          <div className="text-4xl">🦉</div>
+          <div>
+            <h3 className="font-serif text-amber-400 text-xl">&quot;Ah, a traveler.&quot;</h3>
+            <p className="font-sans text-sm text-stone-300 mt-1">&quot;You have traded sweat for embers. Treat yourself. Your garden deserves it, and so do you.&quot;</p>
           </div>
         </div>
 
@@ -69,27 +81,28 @@ export default function SpiritShop({ onClose }) {
                 key={item.type}
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="rounded-xl border border-stone-200 bg-white p-4 flex flex-col gap-2 shadow-sm"
+                whileHover={{ y: -4, transition: { duration: 0.2 } }}
+                className="rounded-xl border border-stone-300 bg-stone-100/80 p-4 flex flex-col gap-2 shadow-md hover:shadow-lg hover:border-stone-400 transition-shadow duration-200"
               >
                 <div className="flex items-start gap-3">
-                  <span className="text-3xl shrink-0" aria-hidden>{item.icon}</span>
+                  <span className="text-3xl shrink-0 drop-shadow-sm" aria-hidden>{item.icon}</span>
                   <div className="min-w-0 flex-1">
                     <h3 className="font-serif text-[#2D2D2D] text-base">{item.name}</h3>
                     <p className="font-sans text-xs text-stone-500 mt-0.5">{item.description}</p>
                   </div>
                 </div>
                 <div className="flex items-center justify-between gap-2 mt-auto pt-2">
-                  <span className="font-sans text-sm text-stone-600 flex items-center gap-1">
+                  <span className="font-sans text-sm font-medium flex items-center gap-1.5 tabular-nums text-amber-600 bg-amber-50/80 px-2.5 py-1 rounded-lg border border-amber-200/80 shadow-sm">
                     <span aria-hidden>🔥</span>
-                    <span className="tabular-nums">{item.cost}</span>
+                    <span>{item.cost}</span>
                   </span>
                   <button
                     type="button"
                     disabled={!canAfford}
                     onClick={() => handleBuy(item)}
-                    className={`font-sans text-sm font-medium px-4 py-2 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-[#4A5D23]/40 focus:ring-offset-2 ${
+                    className={`font-sans text-sm font-medium px-4 py-2 rounded-lg transition-all focus:outline-none focus:ring-2 focus:ring-[#4A5D23]/40 focus:ring-offset-2 ${
                       canAfford
-                        ? 'bg-[#4A5D23] text-[#FDFCF5] hover:bg-[#3d4e1c]'
+                        ? 'bg-[#4A5D23] text-[#FDFCF5] hover:bg-[#3d4e1c] hover:shadow-md active:scale-[0.98]'
                         : 'bg-stone-200 text-stone-400 cursor-not-allowed'
                     }`}
                   >
@@ -111,6 +124,42 @@ export default function SpiritShop({ onClose }) {
           </button>
         </div>
       </motion.div>
+
+      {/* Purchase celebration overlay */}
+      <AnimatePresence>
+        {justBought && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.3 }}
+            className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+            onClick={() => setJustBought(null)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              transition={{ duration: 0.5, ease: 'easeOut' }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-white p-8 rounded-3xl text-center shadow-2xl max-w-sm mx-4"
+            >
+              <div className="text-6xl mb-4 animate-bounce">🎉</div>
+              <h3 className="font-serif text-2xl text-stone-800 mb-2">Beautiful choice!</h3>
+              <p className="font-sans text-stone-600 mb-6">
+                You have added <strong className="text-moss-600">{justBought}</strong> to your collection.
+              </p>
+              <button
+                type="button"
+                onClick={() => setJustBought(null)}
+                className="px-6 py-2 bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-full font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-stone-300"
+              >
+                Back to Exchange
+              </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

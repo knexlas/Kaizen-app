@@ -40,25 +40,33 @@ const STAGE_EMOJI = { seed: '🌱', sprout: '🌿', bloom: '🌸', harvest: '�
 const PROJECT_STAGE_EMOJI = { seed: '🫘', sprout: '🪴', bloom: '🌻', harvest: '🏆' };
 const DECORATION_EMOJI = { bench: '🪑', pond: '🐟', lantern: '🏮', torii: '⛩️', cherry: '🌸' };
 
-function PixelPlant({ stage, type = 'kaizen' }) {
+/** 50+ flora emojis for Kaizen goals — deterministic per goal.id */
+const FLORA = [
+  '🌻', '🌺', '🌹', '🌸', '🪷', '🍄', '🌾', '🌿', '🍀', '🪴', '🎋', '🌵', '🌴', '🌳', '🌲', '🍁', '🍂', '🍇', '🫐', '🍓',
+  '🍒', '🍑', '🥝', '🍋', '🍊', '🌶️', '🥕', '🥬', '🥦', '🌽', '🫑', '🍅', '🥑', '🫒', '🌰', '🥜', '🪻', '🌼', '🏵️', '💐',
+  '🪹', '🌱', '🪺', '🌴', '🪸', '🍀', '🌷', '🪷', '🌺', '🥀', '🪻',
+];
+
+/** Water/pond emojis for Vitality goals */
+const PONDS = ['🌊', '💧', '🧊', '🐟', '🐸', '🦆', '🪼', '🐚', '🦀', '🐢'];
+
+/** Rock/zen emojis for Routine goals */
+const ROCKS = ['🪨', '🗿', '⛰️', '🗻', '🏯', '⛩️', '🪵', '🪷', '🪸', '🏔️'];
+
+function getHash(str) {
+  if (!str) return 0;
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  return Math.abs(hash);
+}
+
+function PixelPlant({ goal, stage, type = 'kaizen' }) {
   const showVariation = stage === 'sprout' || stage === 'bloom' || stage === 'harvest';
   const scaleClass = stage === 'sprout' ? 'scale-75 opacity-90' : 'scale-100';
 
-  if (showVariation && type === 'routine') {
-    return (
-      <div className="flex flex-col items-center justify-center w-full h-full" aria-hidden>
-        <div className={scaleClass}>
-          <svg viewBox="0 0 16 14" className="w-10 h-9 shrink-0" fill="none" stroke="none">
-            <ellipse cx="8" cy="12" rx="5" ry="2" fill="#9e9e9e" />
-            <rect x="6" y="10" width="4" height="2" fill="#757575" />
-            <circle cx="8" cy="8" r="2.5" fill="#4caf50" />
-            <circle cx="7" cy="7" r="1" fill="#66bb6a" />
-            <circle cx="9" cy="7.5" r="0.8" fill="#66bb6a" />
-          </svg>
-        </div>
-      </div>
-    );
-  }
+  const plantList = type === 'vitality' ? PONDS : type === 'routine' ? ROCKS : FLORA;
+  const selectedEmoji = plantList[getHash(goal?.id) % plantList.length];
+
   if (showVariation && type === 'project') {
     return (
       <div className="flex flex-col items-center justify-center w-full h-full" aria-hidden>
@@ -73,22 +81,8 @@ function PixelPlant({ stage, type = 'kaizen' }) {
       </div>
     );
   }
-  if (showVariation && type === 'vitality') {
-    return (
-      <div className="flex flex-col items-center justify-center w-full h-full" aria-hidden>
-        <div className={scaleClass}>
-          <svg viewBox="0 0 20 12" className="w-11 h-8 shrink-0" fill="none" stroke="none">
-            <ellipse cx="10" cy="8" rx="8" ry="3" fill="#42a5f5" />
-            <ellipse cx="10" cy="7" rx="6" ry="2" fill="#64b5f6" />
-            <ellipse cx="10" cy="5" rx="4" ry="1.5" fill="#90caf9" />
-            <circle cx="10" cy="4" r="2.5" fill="#4caf50" />
-            <circle cx="10" cy="4" r="1.2" fill="#66bb6a" />
-          </svg>
-        </div>
-      </div>
-    );
-  }
-  if (showVariation && type === 'kaizen') {
+
+  if ((showVariation || stage === 'seed') && (type === 'kaizen' || type === 'routine' || type === 'vitality')) {
     return (
       <div className="flex flex-col items-center justify-center w-full h-full">
         <div className={scaleClass}>
@@ -98,14 +92,14 @@ function PixelPlant({ stage, type = 'kaizen' }) {
             transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut' }}
             aria-hidden
           >
-            🌸
+            {selectedEmoji}
           </motion.div>
         </div>
       </div>
     );
   }
 
-  const emoji = type === 'project' ? (PROJECT_STAGE_EMOJI[stage] ?? '🫘') : type === 'routine' ? (stage === 'seed' ? '🪨' : stage === 'sprout' ? '🪴' : '🌿') : type === 'vitality' ? (stage === 'seed' ? '💧' : '💧') : (STAGE_EMOJI[stage] ?? '🌱');
+  const emoji = type === 'project' ? (PROJECT_STAGE_EMOJI[stage] ?? '🫘') : (STAGE_EMOJI[stage] ?? '🌱');
   return (
     <div className="flex flex-col items-center justify-center w-full h-full">
       <motion.div
@@ -240,14 +234,12 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
               const key = `${col},${row}`;
               const goal = goalByCell[key];
               const isMochi = mochiCell.x === col && mochiCell.y === row;
-              const isEven = (col + row) % 2 === 0;
-              const cellBg = isEven ? '#dcedc8' : '#c5e1a5';
+              const cellBgClass = (row + col) % 2 === 0 ? 'bg-[#dcedc8]' : 'bg-[#c5e1a5]';
 
               return (
                 <div
                   key={key}
-                  className="relative rounded-lg overflow-hidden"
-                  style={{ backgroundColor: cellBg }}
+                  className={`relative rounded-lg overflow-hidden ${cellBgClass}`}
                 >
                   {goal ? (
                     <button
@@ -259,7 +251,7 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
                           : 'bg-[#dcedc8]/80 hover:bg-[#c8e6a0]/90 focus:ring-[#558b2f]/50'
                       } ${isProjectDone(goal) ? 'opacity-70' : ''}`}
                     >
-                      <PixelPlant stage={getPlantStage(getGoalProgressPercent(goal))} type={goal._projectGoal ? 'project' : (goal.type || 'kaizen')} />
+                      <PixelPlant goal={goal} stage={getPlantStage(getGoalProgressPercent(goal))} type={goal._projectGoal ? 'project' : (goal.type || 'kaizen')} />
                       <span className={`font-sans text-xs mt-0.5 truncate max-w-full px-1 ${goal._projectGoal ? 'text-amber-700' : 'text-stone-600'}`}>
                         {goal.title}
                       </span>

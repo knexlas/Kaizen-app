@@ -55,7 +55,16 @@ function getMetricValueDaysAgo(goal, daysAgo) {
 export default function HorizonsMetrics({ goals = [], logMetric, onRecord }) {
   const { deleteGoal } = useGarden();
   const [daysAgo, setDaysAgo] = useState(3);
-  const vitalityGoals = useMemo(() => (goals || []).filter((g) => g.type === 'vitality'), [goals]);
+  const vitalityGoals = useMemo(
+    () =>
+      (goals || []).filter(
+        (g) =>
+          g.type === 'vitality' ||
+          (g.metricSettings && g.metricSettings.targetValue !== undefined) ||
+          g.targetValue !== undefined
+      ),
+    [goals]
+  );
 
   if (vitalityGoals.length === 0) {
     return (
@@ -94,7 +103,9 @@ export default function HorizonsMetrics({ goals = [], logMetric, onRecord }) {
               <div className="flex items-center justify-between gap-2 mb-2">
                 <div className="flex items-center gap-2 min-w-0">
                   <span className="text-lg">💧</span>
-                  <span className="font-sans text-sm font-medium text-stone-800 truncate">{goal.title}</span>
+                  <span className="font-sans text-sm font-medium text-stone-800 truncate">
+                    {goal.metricSettings?.metricName ?? goal.title}
+                  </span>
                 </div>
                 {deleteGoal && (
                   <button

@@ -23,16 +23,20 @@ export default function ProjectPlanner({ open, onClose, onCreateGoals }) {
   const [sliceError, setSliceError] = useState(null);
   const [selectedTasks, setSelectedTasks] = useState(new Set());
   const [linkedGoals, setLinkedGoals] = useState({});
+  const [feedback, setFeedback] = useState('');
 
-  const handleSlice = useCallback(async () => {
+  const handleGeneratePlan = useCallback(async (userFeedback = '') => {
     if (!name.trim()) return;
     setIsSlicing(true);
-    setPlan(null);
-    setSliceError(null);
+    if (!userFeedback) {
+      setPlan(null);
+      setSliceError(null);
+    }
     try {
-      const result = await sliceProject(name, deadline || null, description, goals);
+      const result = await sliceProject(name, deadline || null, userFeedback || '', description, goals);
       if (result && Array.isArray(result.phases) && result.phases.length > 0) {
         setPlan(result);
+        setFeedback('');
         const allTasks = new Set();
         result.phases.forEach((phase) => {
           (phase.tasks || []).forEach((t) => allTasks.add(t.title));
@@ -224,6 +228,26 @@ export default function ProjectPlanner({ open, onClose, onCreateGoals }) {
                         </p>
                       </div>
                     )}
+                    <div className="mt-4 pt-4 border-t border-stone-200">
+                      <label className="text-xs font-sans font-medium text-stone-600 block mb-2">Missing something? Ask Mochi to adjust:</label>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={feedback}
+                          onChange={(e) => setFeedback(e.target.value)}
+                          placeholder="e.g., &quot;Add a testing phase&quot; or &quot;Make it 2 weeks shorter&quot;"
+                          className="flex-1 text-sm py-2 px-3 rounded-lg border border-stone-200 focus:ring-2 focus:ring-moss-500 focus:border-moss-500 bg-white font-sans text-stone-900 placeholder-stone-400"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleGeneratePlan(feedback)}
+                          disabled={isSlicing}
+                          className="px-3 py-2 bg-stone-100 hover:bg-stone-200 text-stone-700 text-sm font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-sans"
+                        >
+                          ✨ Refine
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 )}
 
@@ -302,7 +326,7 @@ export default function ProjectPlanner({ open, onClose, onCreateGoals }) {
                 </button>
                 <button
                   type="button"
-                  onClick={handleSlice}
+                  onClick={() => handleGeneratePlan()}
                   disabled={!name.trim() || isSlicing}
                   className="flex-1 py-2.5 rounded-lg bg-moss-600 text-white font-sans text-sm font-medium hover:bg-moss-700 focus:outline-none focus:ring-2 focus:ring-moss-500/50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >

@@ -444,11 +444,16 @@ function subtaskStatus(st) {
   return est > 0 && done >= est ? 'bloom' : 'bud';
 }
 
-function SeedChip({ goal, assignments = {}, onSeedClick, onMilestoneCheck, onEditGoal, onCompostGoal, onAddRoutineTime, onPlantRoutineBlock, onAddSubtask, onStartFocus, compact = false }) {
+function SeedChip({ goal, item, isRitual = false, assignments = {}, onSeedClick, onMilestoneCheck, onEditGoal, onCompostGoal, onAddRoutineTime, onPlantRoutineBlock, onAddSubtask, onStartFocus, compact = false }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuAnchorRef = useRef(null);
-  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: goal.id, data: { goal } });
+  const dragId = isRitual && item?.id ? `ritual-${goal?.id}-${item.id}` : goal?.id;
+  const dragData = isRitual && item ? { goal, ritualTitle: item.title } : { goal };
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: dragId, data: dragData });
   const isRoutine = goal?.type === 'routine';
+  const displayTitle = isRitual && item?.title != null ? item.title : goal?.title;
+  const smallLabel = isRitual && item ? (goal?.title ?? 'Routine') : (goal?.domain || (isRoutine ? 'Routine' : goal?.type || 'Kaizen'));
+  const isBoost = goal?.energyImpact === 'boost' || item?.energyImpact === 'boost';
   const subtasks = goal?.subtasks ?? [];
   const milestones = goal?.milestones ?? [];
   const completedCount = milestones.filter((m) => m.completed).length;
@@ -467,18 +472,21 @@ function SeedChip({ goal, assignments = {}, onSeedClick, onMilestoneCheck, onEdi
 
   if (compact) {
     const hoursLabel = isRoutine ? `${filledHours + plannedHoursFromSlots}/${targetHours}h` : `${displayHours}/${targetHours}h`;
+    const chipClass = isRitual
+      ? `shrink-0 flex flex-col gap-0.5 px-3 py-2 rounded-lg border-2 border-amber-200 bg-amber-50/80 shadow-sm font-sans text-sm text-stone-800 hover:border-amber-400 transition-colors relative ${isDragging ? 'opacity-50 shadow-md cursor-grabbing' : 'cursor-grab'}`
+      : `shrink-0 flex flex-col gap-0.5 px-3 py-2 rounded-lg border border-stone-200 bg-white shadow-sm font-sans text-sm text-stone-800 hover:border-moss-500/50 transition-colors relative ${isDragging ? 'opacity-50 shadow-md cursor-grabbing' : 'cursor-grab'}`;
     return (
-      <div
-        ref={setNodeRef}
-        className={`shrink-0 flex flex-col gap-0.5 px-3 py-2 rounded-lg border border-stone-200 bg-white shadow-sm font-sans text-sm text-stone-800 hover:border-moss-500/50 transition-colors relative ${isDragging ? 'opacity-50 shadow-md cursor-grabbing' : 'cursor-grab'}`}
-      >
+      <div ref={setNodeRef} className={chipClass}>
         <div className="flex items-center gap-1 min-w-0">
           <div {...listeners} {...attributes} className="flex-1 min-w-0 flex flex-col">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-moss-600 mb-0.5 truncate">{goal.domain || (isRoutine ? 'Routine' : goal.type || 'Kaizen')}</span>
-            <span className="font-sans text-sm text-stone-900 font-medium truncate">{goal.title}</span>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-moss-600 mb-0.5 truncate">{smallLabel}</span>
+            <span className="font-sans text-sm text-stone-900 font-medium truncate flex items-center gap-1">
+              {displayTitle}
+              {isBoost && <span className="shrink-0 text-amber-500" aria-hidden title="Gives energy">⚡</span>}
+            </span>
           </div>
           {onStartFocus && (
-            <button type="button" onClick={(e) => { e.stopPropagation(); onStartFocus(goal.id, null, goal.title, undefined); }} className="shrink-0 flex items-center gap-1 px-2 py-1 rounded font-sans text-xs bg-moss-600 text-stone-50 hover:bg-moss-700 focus:outline-none focus:ring-2 focus:ring-moss-500/50" aria-label={`Do ${goal.title} now`}>
+            <button type="button" onClick={(e) => { e.stopPropagation(); onStartFocus(goal.id, null, displayTitle, undefined); }} className="shrink-0 flex items-center gap-1 px-2 py-1 rounded font-sans text-xs bg-moss-600 text-stone-50 hover:bg-moss-700 focus:outline-none focus:ring-2 focus:ring-moss-500/50" aria-label={`Do ${displayTitle} now`}>
               <span aria-hidden>▶️</span><span>Do It Now</span>
             </button>
           )}
@@ -499,26 +507,27 @@ function SeedChip({ goal, assignments = {}, onSeedClick, onMilestoneCheck, onEdi
     );
   }
 
+  const fullChipClass = isRitual
+    ? `shrink-0 flex flex-col gap-1 px-3 py-2 rounded-lg border-2 border-amber-200 bg-amber-50/80 shadow-sm font-sans text-sm text-stone-800 hover:border-amber-400 transition-colors relative ${isDragging ? 'opacity-50 shadow-md cursor-grabbing' : 'cursor-grab'}`
+    : `shrink-0 flex flex-col gap-1 px-3 py-2 rounded-lg border border-stone-200 bg-white shadow-sm font-sans text-sm text-stone-800 hover:border-moss-500/50 transition-colors relative ${isDragging ? 'opacity-50 shadow-md cursor-grabbing' : 'cursor-grab'}`;
   return (
-    <div
-      ref={setNodeRef}
-      className={`shrink-0 flex flex-col gap-1 px-3 py-2 rounded-lg border border-stone-200 bg-white shadow-sm font-sans text-sm text-stone-800 hover:border-moss-500/50 transition-colors relative ${
-        isDragging ? 'opacity-50 shadow-md cursor-grabbing' : 'cursor-grab'
-      }`}
-    >
+    <div ref={setNodeRef} className={fullChipClass}>
       <div className="flex items-center gap-1 min-w-0">
         <div {...listeners} {...attributes} className="flex-1 min-w-0 flex flex-col">
           <span className="text-[10px] font-bold uppercase tracking-wider text-moss-600 mb-0.5 truncate">
-            {goal.domain || (isRoutine ? 'Routine' : goal.type || 'Kaizen')}
+            {smallLabel}
           </span>
-          <span className="font-sans text-sm text-stone-900 font-medium truncate">{goal.title}</span>
+          <span className="font-sans text-sm text-stone-900 font-medium truncate flex items-center gap-1">
+            {displayTitle}
+            {isBoost && <span className="shrink-0 text-amber-500" aria-hidden title="Gives energy">⚡</span>}
+          </span>
         </div>
         {onStartFocus && (
           <button
             type="button"
-            onClick={(e) => { e.stopPropagation(); onStartFocus(goal.id, null, goal.title, undefined); }}
+            onClick={(e) => { e.stopPropagation(); onStartFocus(goal.id, null, displayTitle, undefined); }}
             className="shrink-0 flex items-center gap-1 px-2 py-1 rounded font-sans text-xs bg-moss-600 text-stone-50 hover:bg-moss-700 focus:outline-none focus:ring-2 focus:ring-moss-500/50"
-            aria-label={`Do ${goal.title} now`}
+            aria-label={`Do ${displayTitle} now`}
           >
             <span aria-hidden>▶️</span>
             <span>Do It Now</span>
@@ -1373,6 +1382,25 @@ function TimeSlicer({
   const isControlled = onAssignmentsChange != null;
   const assignments = isControlled ? controlledAssignments ?? {} : internalAssignments;
 
+  const viewedDate = editingDate ? new Date(editingDate + 'T12:00:00') : now;
+  const currentDay = viewedDate.getDay();
+  const dayOfMonth = viewedDate.getDate();
+  const isEvenWeek = Math.floor((viewedDate.getTime() - new Date(viewedDate.getFullYear(), 0, 1).getTime()) / (7 * 24 * 60 * 60 * 1000)) % 2 === 0;
+  const routines = goals.filter((g) => g.type === 'routine');
+  const todayRitualEntries = useMemo(
+    () =>
+      routines.flatMap((goal) =>
+        (goal.rituals || [])
+          .filter((r) => {
+            if (r.frequency === 'monthly') return Number(r.monthDay) === dayOfMonth;
+            if (r.frequency === 'biweekly' && !isEvenWeek) return false;
+            return r.days && r.days.includes(currentDay);
+          })
+          .map((r) => ({ goal, ritual: r }))
+      ),
+    [goals, currentDay, dayOfMonth, isEvenWeek]
+  );
+
   useEffect(() => {
     const tick = () => setNow(new Date());
     tick();
@@ -1782,7 +1810,7 @@ function TimeSlicer({
               Drag or tap a slot to add a task.
             </p>
             <div className="flex flex-col gap-4 min-h-0 max-h-[50vh] overflow-y-auto">
-              {todayRitualItems.length === 0 && goalBank.length === 0 ? (
+              {todayRitualEntries.length === 0 && goalBank.length === 0 ? (
                 <div className="py-6 text-center">
                   <p className="font-sans text-sm text-stone-500 mb-3">
                     Seed bag empty.
@@ -1802,14 +1830,15 @@ function TimeSlicer({
                   <div>
                     <h4 className="font-sans text-xs font-medium text-amber-800 mb-2">🌱 Today&apos;s Rituals</h4>
                     <div className="flex flex-wrap gap-2">
-                      {todayRitualItems.length === 0 ? (
+                      {todayRitualEntries.length === 0 ? (
                         <p className="font-sans text-xs text-stone-400">No rituals today.</p>
                       ) : (
-                        todayRitualItems.map(({ goal, ritualTitle }) => (
-                          <RitualSeedChip
-                            key={`ritual-${goal.id}`}
+                        todayRitualEntries.map(({ goal, ritual }) => (
+                          <SeedChip
+                            key={ritual.id}
                             goal={goal}
-                            ritualTitle={ritualTitle}
+                            item={{ ...ritual, goalId: goal.id, _type: 'routine' }}
+                            isRitual={true}
                             assignments={assignments}
                             onSeedClick={onSeedClick}
                             onMilestoneCheck={onMilestoneCheck}
@@ -1974,19 +2003,19 @@ function TimeSlicer({
                 <p className="font-sans text-sm text-stone-500 mt-0.5">Choose what to schedule.</p>
               </div>
               <div className="p-4 max-h-[60vh] overflow-y-auto space-y-4">
-                {todayRitualItems.length > 0 && (
+                {todayRitualEntries.length > 0 && (
                   <div>
                     <h3 className="font-sans text-xs font-medium text-amber-800 mb-2">🌱 Today&apos;s Rituals</h3>
                     <div className="flex flex-col gap-2">
-                      {todayRitualItems.map(({ goal, ritualTitle }) => (
+                      {todayRitualEntries.map(({ goal, ritual }) => (
                         <button
-                          key={`ritual-${goal.id}-${ritualTitle}`}
+                          key={`ritual-${goal.id}-${ritual.id}`}
                           type="button"
-                          onClick={() => handleSelectSeedForSlot(seedPickerTargetHour, goal, ritualTitle ?? undefined)}
+                          onClick={() => handleSelectSeedForSlot(seedPickerTargetHour, goal, ritual.title ?? undefined)}
                           className="w-full py-3 px-4 rounded-xl border-2 border-amber-200 bg-amber-50/80 font-sans text-sm text-stone-800 hover:bg-amber-100 hover:border-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-500/40 text-left transition-colors"
                         >
                           <span className="text-[10px] font-bold uppercase tracking-wider text-moss-600 block mb-0.5">{goal.title}</span>
-                          <span className="font-medium">{ritualTitle || goal.title}</span>
+                          <span className="font-medium">{ritual.title || goal.title}</span>
                         </button>
                       ))}
                     </div>

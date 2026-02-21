@@ -30,6 +30,15 @@ export default {
         serif: ['Merriweather', 'serif'], // For Headings
         sans: ['Inter', 'sans-serif'],    // For UI
       },
+      keyframes: {
+        'bounce-slow': {
+          '0%, 100%': { transform: 'translateY(0)' },
+          '50%': { transform: 'translateY(-6px)' },
+        },
+      },
+      animation: {
+        'bounce-slow': 'bounce-slow 2s ease-in-out infinite',
+      },
     },
   },
   plugins: [],

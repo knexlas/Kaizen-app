@@ -338,6 +338,17 @@ function GardenDashboard() {
     }
   }, [goals?.length, logs?.length]);
 
+  /** Auto-trigger tour when user just finished onboarding (WelcomeGarden set triggerTour flag). */
+  useEffect(() => {
+    if (typeof localStorage !== 'undefined' && localStorage.getItem('triggerTour') === 'true') {
+      const t = setTimeout(() => {
+        setShowTour(true);
+        localStorage.removeItem('triggerTour');
+      }, 1000);
+      return () => clearTimeout(t);
+    }
+  }, []);
+
   useEffect(() => {
     const check = () => setIsMobileNav(window.innerWidth < 640);
     check();
@@ -1543,19 +1554,11 @@ function GardenDashboard() {
       )}
 
       <main className={`flex-1 w-full min-w-0 px-4 py-8 max-w-5xl mx-auto relative ${isMobileNav ? 'pb-20' : ''}`}>
-        {showSpiritDialogue && (
-          <div className="flex justify-center py-4 mb-2">
-            <MochiSpiritWithDialogue
-              message={displaySpiritMessage}
-              showBubble
-              isThinking={spiritThinking}
-            />
-          </div>
-        )}
         {activeTab === 'focus' && (
           <>
             <div className="mb-6 flex gap-3">
               <button
+                id="plant-seed-btn"
                 type="button"
                 onClick={() => setIsPlanting(true)}
                 className="flex-1 py-3 px-4 rounded-xl bg-moss-600 text-white font-sans font-medium hover:bg-moss-700 transition-colors flex items-center justify-center gap-2 shadow-sm shadow-moss-900/20"

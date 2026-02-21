@@ -29,6 +29,7 @@ export default function WelcomeGarden() {
   const handleSpiritComplete = () => {
     const hasGoals = Array.isArray(goals) && goals.length > 0;
     if (hasGoals) {
+      if (typeof localStorage !== 'undefined') localStorage.setItem('triggerTour', 'true');
       setUserSettings?.({ ...(userSettings ?? {}), hasOnboarded: true });
       return;
     }
@@ -46,6 +47,7 @@ export default function WelcomeGarden() {
       initializeStarterGarden(title, null);
     } finally {
       setIsPlanting(false);
+      if (typeof localStorage !== 'undefined') localStorage.setItem('triggerTour', 'true');
       setUserSettings?.({ ...(userSettings ?? {}), hasOnboarded: true });
     }
   };

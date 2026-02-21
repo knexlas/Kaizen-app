@@ -82,6 +82,8 @@ function newRitual(overrides = {}) {
     id: crypto.randomUUID?.() ?? `r-${Date.now()}-${Math.random().toString(36).slice(2)}`,
     title: '',
     days: [],
+    frequency: 'weekly',
+    monthDay: null,
     ...overrides,
   };
 }
@@ -113,6 +115,7 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
   const [domain, setDomain] = useState('');
   const [estimatedMinutes, setEstimatedMinutes] = useState(60);
   const [targetHours, setTargetHours] = useState(5);
+  const [energyImpact, setEnergyImpact] = useState('drain'); // 'drain' | 'boost'
   const [rituals, setRituals] = useState(() => [newRitual()]);
   const [milestones, setMilestones] = useState(() => []);
   const [milestoneInput, setMilestoneInput] = useState('');
@@ -140,6 +143,7 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
   const [tributaryGoalIds, setTributaryGoalIds] = useState([]); // Routine Rocks that feed this Vitality goal
   // Vines (subtasks) for routine / kaizen
   const [vines, setVines] = useState([]);
+  const [suggestedVines, setSuggestedVines] = useState([]);
   const [vineTitle, setVineTitle] = useState('');
   const [vineHours, setVineHours] = useState('');
   const [vineDeadline, setVineDeadline] = useState('');
@@ -226,6 +230,13 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
   const updateRitualTitle = (ritualId, value) => {
     setRituals((prev) => prev.map((r) => (r.id === ritualId ? { ...r, title: value } : r)));
   };
+  const updateRitualFrequency = (ritualId, value) => {
+    setRituals((prev) => prev.map((r) => (r.id === ritualId ? { ...r, frequency: value, ...(value === 'monthly' ? { monthDay: r.monthDay ?? 1 } : {}) } : r)));
+  };
+  const updateRitualMonthDay = (ritualId, value) => {
+    const num = Math.max(1, Math.min(31, parseInt(value, 10) || 1));
+    setRituals((prev) => prev.map((r) => (r.id === ritualId ? { ...r, monthDay: num } : r)));
+  };
 
   const removeRitual = (ritualId) => {
     setRituals((prev) => (prev.length <= 1 ? prev : prev.filter((r) => r.id !== ritualId)));
@@ -286,6 +297,7 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
         const fallbackReason = suggestion._reason;
         if (isFallback) { delete suggestion._fallback; delete suggestion._reason; }
 
+        // Only update structure from AI — never overwrite the user's title
         if (suggestion.estimatedMinutes) setEstimatedMinutes(suggestion.estimatedMinutes);
         if (suggestion.targetHours) setTargetHours(suggestion.targetHours);
 
@@ -298,7 +310,7 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
         }
 
         if (Array.isArray(suggestion.vines)) {
-          setVines(suggestion.vines.map((t) => newVine({ title: typeof t === 'string' ? t : t.title, estimatedHours: 0.5 })));
+          setSuggestedVines(suggestion.vines);
         }
         if (Array.isArray(suggestion.milestones)) {
           setMilestones(suggestion.milestones.map((t) => newMilestone(t)));
@@ -366,11 +378,12 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
       domain: domain || DOMAINS[0].id,
       estimatedMinutes: isVitality ? undefined : (estimatedMinutes ?? 60),
       targetHours: isVitality ? undefined : (targetHours ?? 5),
+      energyImpact: isVitality ? undefined : (energyImpact || 'drain'),
       ...(isRoutine && schedulerSettings && { schedulerSettings }),
       ...(isVitality && { metricSettings, metrics: [], tributaryGoalIds: tributaryGoalIds.length ? [...tributaryGoalIds] : [] }),
       rituals: isRoutine || isVitality ? [] : rituals
         .filter((r) => r.title.trim())
-        .map((r) => ({ id: r.id, title: r.title.trim(), days: r.days })),
+        .map((r) => ({ id: r.id, title: r.title.trim(), days: r.days || [], frequency: r.frequency || 'weekly', monthDay: r.monthDay ?? null })),
       milestones: isRoutine || isVitality ? [] : milestones.map((m) => ({ id: m.id, title: m.title.trim() || m.title, completed: m.completed ?? false })),
       notes: isRoutine || isVitality ? '' : notes.trim(),
       ...((isRoutine || goalType === 'kaizen') && { subtasks: vines.map((v) => ({ id: v.id, title: v.title, estimatedHours: Number(v.estimatedHours) || 0, completedHours: 0, deadline: v.deadline || null, color: null })) }),
@@ -417,6 +430,7 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
     setDomain('');
     setEstimatedMinutes(60);
     setTargetHours(5);
+    setEnergyImpact('drain');
     setRituals([newRitual()]);
     setMilestones([]);
     setMilestoneInput('');
@@ -438,6 +452,7 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
     setMetricDirection('lower');
     setTributaryGoalIds([]);
     setVines([]);
+    setSuggestedVines([]);
     setVineTitle('');
     setVineHours('');
     setVineDeadline('');
@@ -538,13 +553,23 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
                 </div>
               </div>
 
+              <div className="mb-6 p-4 bg-gradient-to-br from-moss-50 to-stone-50 border border-moss-200/60 rounded-xl flex gap-4 items-start shadow-sm">
+                <div className="text-3xl animate-bounce-slow">✨</div>
+                <div>
+                  <p className="font-serif text-moss-900 text-lg mb-1">Let's plant a new seed.</p>
+                  <p className="font-sans text-sm text-moss-700 leading-relaxed">
+                    Don't worry about the details yet. Just type what you want to achieve below, and click <strong className="bg-moss-100 px-1 rounded">✨ Suggest</strong>. I will help you break it down into tiny, Kaizen-sized steps!
+                  </p>
+                </div>
+              </div>
+
               {/* Name */}
               <label className="block font-sans text-sm font-medium text-stone-600 mb-1">Name</label>
               <input
                 type="text"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
-                placeholder="e.g. Profitable Trading"
+                placeholder="e.g., Learn to play piano, Drink more water, or Read a book..."
                 className="w-full py-2 bg-transparent border-0 border-b-2 border-stone-200 text-stone-900 font-sans placeholder-stone-400 focus:outline-none focus:border-moss-500 focus:ring-0 mb-6"
               />
 
@@ -564,6 +589,33 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
                   </button>
                 ))}
               </div>
+
+              {/* Energy Impact (kaizen + routine only) */}
+              {(goalType === 'kaizen' || goalType === 'routine') && (
+                <>
+                  <label className="block font-sans text-sm font-medium text-stone-600 mb-2">Energy impact</label>
+                  <div className="flex gap-2 mb-6">
+                    <button
+                      type="button"
+                      onClick={() => setEnergyImpact('drain')}
+                      className={`flex-1 py-2.5 px-4 rounded-xl font-sans text-sm font-medium transition-colors border-2 ${
+                        energyImpact === 'drain' ? 'border-amber-400 bg-amber-50 text-amber-800' : 'border-stone-200 bg-stone-50 text-stone-600 hover:border-stone-300'
+                      }`}
+                    >
+                      🔋 Takes energy
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEnergyImpact('boost')}
+                      className={`flex-1 py-2.5 px-4 rounded-xl font-sans text-sm font-medium transition-colors border-2 ${
+                        energyImpact === 'boost' ? 'border-moss-400 bg-moss-50 text-moss-800' : 'border-stone-200 bg-stone-50 text-stone-600 hover:border-stone-300'
+                      }`}
+                    >
+                      ⚡ Gives energy
+                    </button>
+                  </div>
+                </>
+              )}
 
               {/* Vitality: Tracking (existing metric or create new) */}
               {goalType === 'vitality' && (() => {
@@ -924,7 +976,7 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
               </div>
               <div className="space-y-3 mb-4">
                 {rituals.map((r) => (
-                  <div key={r.id} className="flex items-center gap-2 flex-wrap">
+                  <div key={r.id} className="flex flex-wrap items-center gap-2">
                     <input
                       type="text"
                       value={r.title}
@@ -932,20 +984,43 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
                       placeholder="Ritual name"
                       className="flex-1 min-w-[120px] py-2 px-2 border-b border-stone-200 bg-transparent font-sans text-sm placeholder-stone-400 focus:outline-none focus:border-moss-500"
                     />
-                    <div className="flex items-center gap-0.5">
-                      {DAY_LETTERS.map((letter, j) => (
-                        <button
-                          key={j}
-                          type="button"
-                          onClick={() => toggleDay(r.id, j)}
-                          className={`w-7 h-7 rounded font-sans text-xs font-medium transition-colors ${
-                            r.days.includes(j) ? 'bg-moss-600 text-stone-50' : 'bg-stone-100 text-stone-500 hover:bg-stone-200'
-                          }`}
-                        >
-                          {letter}
-                        </button>
-                      ))}
-                    </div>
+                    <select
+                      value={r.frequency || 'weekly'}
+                      onChange={(e) => updateRitualFrequency(r.id, e.target.value)}
+                      className="py-1.5 px-2 rounded-lg border border-stone-200 bg-white font-sans text-xs text-stone-700 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
+                    >
+                      <option value="weekly">Weekly</option>
+                      <option value="biweekly">Bi-weekly</option>
+                      <option value="monthly">Monthly</option>
+                    </select>
+                    {(r.frequency || 'weekly') === 'monthly' ? (
+                      <label className="flex items-center gap-1 font-sans text-xs text-stone-600">
+                        Day of month
+                        <input
+                          type="number"
+                          min={1}
+                          max={31}
+                          value={r.monthDay ?? 1}
+                          onChange={(e) => updateRitualMonthDay(r.id, e.target.value)}
+                          className="w-12 py-1 px-1.5 rounded border border-stone-200 font-sans text-sm"
+                        />
+                      </label>
+                    ) : (
+                      <div className="flex items-center gap-0.5">
+                        {DAY_LETTERS.map((letter, j) => (
+                          <button
+                            key={j}
+                            type="button"
+                            onClick={() => toggleDay(r.id, j)}
+                            className={`w-7 h-7 rounded font-sans text-xs font-medium transition-colors ${
+                              (r.days || []).includes(j) ? 'bg-moss-600 text-stone-50' : 'bg-stone-100 text-stone-500 hover:bg-stone-200'
+                            }`}
+                          >
+                            {letter}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                     <button
                       type="button"
                       onClick={() => removeRitual(r.id)}
@@ -1097,6 +1172,26 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
                 <div className="border-t border-stone-200 pt-5 mt-6">
                   <h3 className="font-sans text-sm font-medium text-stone-700 mb-3">🍃 Vines (optional)</h3>
                   <p className="font-sans text-xs text-stone-500 mb-3">Add subtasks now or later from the goal edit.</p>
+                  {suggestedVines.length > 0 && (
+                    <div className="mb-4 p-3 bg-moss-50 border border-moss-200 rounded-lg">
+                      <p className="text-xs font-sans font-medium text-moss-800 mb-2">✨ Mochi suggests these steps (Click to add):</p>
+                      <div className="flex flex-wrap gap-2">
+                        {suggestedVines.map((sv, idx) => (
+                          <button
+                            key={idx}
+                            type="button"
+                            onClick={() => {
+                              setVines((prev) => [...prev, newVine({ title: typeof sv === 'string' ? sv : sv.title, estimatedHours: 0.5 })]);
+                              setSuggestedVines((prev) => prev.filter((_, i) => i !== idx));
+                            }}
+                            className="text-[10px] py-1 px-2 rounded-full bg-white border border-moss-300 text-moss-700 hover:bg-moss-100 transition-colors font-sans"
+                          >
+                            + {typeof sv === 'string' ? sv : sv.title}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   <div className="flex flex-wrap gap-2 mb-3">
                     <input
                       type="text"

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useGarden } from '../../context/GardenContext';
+import { tweakMilestones } from '../../services/geminiService';
 
 const DOMAINS = [
   { id: 'finance', label: 'Finance', emoji: '📈' },
@@ -15,18 +16,27 @@ const COLOR_PRESETS = [
   { id: 'amber', label: 'Amber', class: 'bg-amber-500' },
 ];
 
+const DAY_LETTERS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+
 export default function GoalEditor({ open, goal, onClose, onSave, addSubtask, updateSubtask, deleteSubtask }) {
   const { metrics = [], addMetric, toggleMilestone } = useGarden();
   const [title, setTitle] = useState('');
   const [domain, setDomain] = useState('');
   const [color, setColor] = useState('');
   const [metricId, setMetricId] = useState('');
+  const [metricTargetValue, setMetricTargetValue] = useState('');
+  const [metricCurrentValue, setMetricCurrentValue] = useState('');
   const [vineTitle, setVineTitle] = useState('');
   const [vineHours, setVineHours] = useState('');
   const [vineDeadline, setVineDeadline] = useState('');
   const [targetHours, setTargetHours] = useState(5);
+  const [energyImpact, setEnergyImpact] = useState('drain'); // 'drain' | 'boost'
+  const [isTweaking, setIsTweaking] = useState(false);
+  const [rituals, setRituals] = useState([]);
   const [expandedPhases, setExpandedPhases] = useState({});
   const togglePhase = (id) => setExpandedPhases((prev) => ({ ...prev, [id]: !prev[id] }));
+
+  const uid = () => crypto.randomUUID?.() ?? `ms-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 
   useEffect(() => {
     if (goal) {
@@ -34,7 +44,11 @@ export default function GoalEditor({ open, goal, onClose, onSave, addSubtask, up
       setDomain(goal.domain ?? '');
       setColor(goal.color ?? '');
       setMetricId(goal.metricId ?? '');
+      setMetricTargetValue(goal.metricSettings?.targetValue !== undefined && goal.metricSettings?.targetValue !== null ? String(goal.metricSettings.targetValue) : '');
+      setMetricCurrentValue(goal.metricSettings?.currentValue !== undefined && goal.metricSettings?.currentValue !== null ? String(goal.metricSettings.currentValue) : '');
       setTargetHours(Math.max(0, Number(goal.targetHours) ?? 5));
+      setEnergyImpact(goal.energyImpact === 'boost' ? 'boost' : 'drain');
+      setRituals((goal.rituals ?? []).map((r) => ({ id: r.id, title: r.title ?? '', days: r.days ?? [], frequency: r.frequency || 'weekly', monthDay: r.monthDay ?? null })));
     }
   }, [goal]);
 
@@ -62,6 +76,35 @@ export default function GoalEditor({ open, goal, onClose, onSave, addSubtask, up
     ? subtasks.reduce((sum, st) => sum + (Number(st.estimatedHours) || 0), 0)
     : 0;
 
+  const handleTweakMilestones = async (instruction) => {
+    if (!goal?.id || !onSave) return;
+    setIsTweaking(true);
+    try {
+      const currentTitles = (goal.milestones ?? []).map((m) => m.title);
+      const newTitles = await tweakMilestones(goal.title, currentTitles, instruction);
+      if (!Array.isArray(newTitles) || newTitles.length === 0) return;
+
+      const isAddNext = /add next|next steps|next logical/i.test(instruction);
+      const existing = goal.milestones ?? [];
+
+      let newMilestones;
+      if (isAddNext) {
+        const appended = newTitles.map((t) => ({ id: uid(), title: t, completed: false }));
+        newMilestones = [...existing, ...appended];
+      } else {
+        const completed = existing.filter((m) => m.completed);
+        const replacement = newTitles.map((t) => ({ id: uid(), title: t, completed: false }));
+        newMilestones = [...completed, ...replacement];
+      }
+
+      onSave({ milestones: newMilestones });
+    } catch (e) {
+      console.error('Tweak milestones failed', e);
+    } finally {
+      setIsTweaking(false);
+    }
+  };
+
   const handleSubmit = (e) => {
     e.preventDefault();
     const trimmedTitle = title.trim();
@@ -71,7 +114,24 @@ export default function GoalEditor({ open, goal, onClose, onSave, addSubtask, up
       domain: domain || undefined,
       color: color || undefined,
       metricId: metricId || undefined,
+      energyImpact: (goal?.type === 'kaizen' || goal?.type === 'routine' || goal?._projectGoal) ? energyImpact : undefined,
     };
+    if (goal?.type === 'routine') {
+      updates.rituals = rituals.map((r) => ({ id: r.id, title: r.title.trim(), days: r.days || [], frequency: r.frequency || 'weekly', monthDay: r.monthDay ?? null }));
+    }
+    if (metricId) {
+      const selectedMetric = metrics.find((m) => m.id === metricId);
+      const metricName = selectedMetric?.name ?? goal?.metricSettings?.metricName ?? trimmedTitle;
+      const targetNum = metricTargetValue.trim() !== '' && !Number.isNaN(Number(metricTargetValue)) ? Number(metricTargetValue) : undefined;
+      const currentNum = metricCurrentValue.trim() !== '' && !Number.isNaN(Number(metricCurrentValue)) ? Number(metricCurrentValue) : undefined;
+      updates.metricSettings = {
+        metricName: metricName,
+        unit: goal?.metricSettings?.unit ?? '',
+        targetValue: targetNum,
+        currentValue: currentNum,
+        direction: goal?.metricSettings?.direction ?? 'higher',
+      };
+    }
     const showHours = goal?.type === 'kaizen' || goal?.type === 'routine' || goal?._projectGoal;
     if (showHours) {
       updates.targetHours = isProject ? projectTotalHours : (typeof targetHours === 'number' && targetHours >= 0 ? targetHours : 5);
@@ -175,9 +235,34 @@ export default function GoalEditor({ open, goal, onClose, onSave, addSubtask, up
                 ))}
               </div>
             </div>
+            {(goal?.type === 'kaizen' || goal?.type === 'routine' || goal?._projectGoal) && (
+              <div>
+                <label className="block font-sans text-sm font-medium text-stone-600 mb-2">Energy impact</label>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEnergyImpact('drain')}
+                    className={`flex-1 py-2 px-4 rounded-xl font-sans text-sm font-medium transition-colors border-2 ${
+                      energyImpact === 'drain' ? 'border-amber-400 bg-amber-50 text-amber-800' : 'border-stone-200 bg-stone-50 text-stone-600 hover:border-stone-300'
+                    }`}
+                  >
+                    🔋 Takes energy
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEnergyImpact('boost')}
+                    className={`flex-1 py-2 px-4 rounded-xl font-sans text-sm font-medium transition-colors border-2 ${
+                      energyImpact === 'boost' ? 'border-moss-400 bg-moss-50 text-moss-800' : 'border-stone-200 bg-stone-50 text-stone-600 hover:border-stone-300'
+                    }`}
+                  >
+                    ⚡ Gives energy
+                  </button>
+                </div>
+              </div>
+            )}
             <div>
               <label className="block font-sans text-sm font-medium text-stone-600 mb-2">Tracking (Vitality)</label>
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2 mb-2">
                 <select
                   value={metricId}
                   onChange={(e) => setMetricId(e.target.value)}
@@ -205,6 +290,32 @@ export default function GoalEditor({ open, goal, onClose, onSave, addSubtask, up
                   New Metric
                 </button>
               </div>
+              {metricId && (
+                <div className="flex flex-wrap items-center gap-3 mt-2">
+                  <label className="flex items-center gap-2 font-sans text-xs text-stone-600">
+                    Target value
+                    <input
+                      type="number"
+                      step="any"
+                      value={metricTargetValue}
+                      onChange={(e) => setMetricTargetValue(e.target.value)}
+                      placeholder="Optional"
+                      className="w-20 py-1.5 px-2 rounded-lg border border-stone-200 text-stone-900 font-sans text-sm focus:outline-none focus:ring-2 focus:ring-moss-500/40"
+                    />
+                  </label>
+                  <label className="flex items-center gap-2 font-sans text-xs text-stone-600">
+                    Current value
+                    <input
+                      type="number"
+                      step="any"
+                      value={metricCurrentValue}
+                      onChange={(e) => setMetricCurrentValue(e.target.value)}
+                      placeholder="Optional"
+                      className="w-20 py-1.5 px-2 rounded-lg border border-stone-200 text-stone-900 font-sans text-sm focus:outline-none focus:ring-2 focus:ring-moss-500/40"
+                    />
+                  </label>
+                </div>
+              )}
             </div>
 
             <div>
@@ -225,11 +336,97 @@ export default function GoalEditor({ open, goal, onClose, onSave, addSubtask, up
               </div>
             </div>
 
+            {goal?.type === 'routine' && (
+              <div className="border-t border-stone-200 pt-5 mb-5">
+                <h3 className="font-sans text-sm font-medium text-stone-700 mb-3">🪨 Rituals</h3>
+                <div className="space-y-3">
+                  {rituals.length === 0 && (
+                    <p className="font-sans text-xs text-stone-500 py-1">No rituals yet. Add one below.</p>
+                  )}
+                  {rituals.map((r) => (
+                    <div key={r.id} className="flex flex-wrap items-center gap-2 py-2 px-3 rounded-lg bg-stone-100/80 border border-stone-200/60">
+                      <input
+                        type="text"
+                        value={r.title}
+                        onChange={(e) => setRituals((prev) => prev.map((x) => (x.id === r.id ? { ...x, title: e.target.value } : x)))}
+                        placeholder="Ritual name"
+                        className="flex-1 min-w-[100px] py-1.5 px-2 border-b border-stone-200 bg-transparent font-sans text-sm focus:outline-none focus:border-moss-500"
+                      />
+                      <select
+                        value={r.frequency || 'weekly'}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setRituals((prev) => prev.map((x) => (x.id === r.id ? { ...x, frequency: v, ...(v === 'monthly' ? { monthDay: x.monthDay ?? 1 } : {}) } : x)));
+                        }}
+                        className="py-1.5 px-2 rounded-lg border border-stone-200 bg-white font-sans text-xs focus:outline-none focus:ring-2 focus:ring-moss-500/40"
+                      >
+                        <option value="weekly">Weekly</option>
+                        <option value="biweekly">Bi-weekly</option>
+                        <option value="monthly">Monthly</option>
+                      </select>
+                      {(r.frequency || 'weekly') === 'monthly' ? (
+                        <label className="flex items-center gap-1 font-sans text-xs text-stone-600">
+                          Day
+                          <input
+                            type="number"
+                            min={1}
+                            max={31}
+                            value={r.monthDay ?? 1}
+                            onChange={(e) => {
+                              const num = Math.max(1, Math.min(31, parseInt(e.target.value, 10) || 1));
+                              setRituals((prev) => prev.map((x) => (x.id === r.id ? { ...x, monthDay: num } : x)));
+                            }}
+                            className="w-12 py-1 px-1.5 rounded border border-stone-200 font-sans text-sm"
+                          />
+                        </label>
+                      ) : (
+                        <div className="flex items-center gap-0.5">
+                          {DAY_LETTERS.map((letter, j) => (
+                            <button
+                              key={j}
+                              type="button"
+                              onClick={() => {
+                                const days = (r.days || []).includes(j) ? (r.days || []).filter((d) => d !== j) : [...(r.days || []), j].sort((a, b) => a - b);
+                                setRituals((prev) => prev.map((x) => (x.id === r.id ? { ...x, days } : x)));
+                              }}
+                              className={`w-6 h-6 rounded font-sans text-[10px] font-medium transition-colors ${
+                                (r.days || []).includes(j) ? 'bg-moss-600 text-stone-50' : 'bg-stone-200 text-stone-500 hover:bg-stone-300'
+                              }`}
+                            >
+                              {letter}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setRituals((prev) => prev.filter((x) => x.id !== r.id))}
+                        className="w-6 h-6 rounded text-stone-400 hover:text-red-600 hover:bg-red-50 font-sans text-sm"
+                        aria-label="Remove ritual"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setRituals((prev) => [...prev, { id: uid(), title: '', days: [], frequency: 'weekly', monthDay: null }])}
+                  className="mt-2 font-sans text-xs text-moss-600 hover:text-moss-700"
+                >
+                  + Add ritual
+                </button>
+              </div>
+            )}
+
             {goal?.milestones?.length > 0 && (
               <div className="border-t border-stone-200 pt-5 mb-5">
                 <h3 className="font-sans text-sm font-medium text-stone-700 mb-3">📍 Phases / Milestones</h3>
                 <ul className="space-y-2">
-                  {goal.milestones.map((m) => {
+                  {[...(goal.milestones || [])].sort((a, b) => {
+                    if (a.completed === b.completed) return 0;
+                    return a.completed ? 1 : -1;
+                  }).map((m) => {
                     const isExpanded = expandedPhases[m.id];
                     const phaseSubtasks = subtasks.filter((st) => st.phaseId === m.id);
 
@@ -287,6 +484,35 @@ export default function GoalEditor({ open, goal, onClose, onSave, addSubtask, up
                     );
                   })}
                 </ul>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {isTweaking ? (
+                    <span className="text-xs text-stone-400 italic">✨ Mochi is thinking...</span>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => handleTweakMilestones('Make these steps smaller and give me more time')}
+                        className="text-[10px] bg-stone-100 hover:bg-stone-200 text-stone-600 px-2 py-1 rounded font-sans"
+                      >
+                        🐢 Give me more time
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleTweakMilestones('Make these steps bigger, I want to move faster')}
+                        className="text-[10px] bg-stone-100 hover:bg-stone-200 text-stone-600 px-2 py-1 rounded font-sans"
+                      >
+                        🐇 I want to move faster
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleTweakMilestones('Keep the current ones but generate the next 3 logical steps to follow them')}
+                        className="text-[10px] bg-stone-100 hover:bg-stone-200 text-stone-600 px-2 py-1 rounded font-sans"
+                      >
+                        ➕ Add next steps
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
             )}
 

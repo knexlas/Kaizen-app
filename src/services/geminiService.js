@@ -322,53 +322,78 @@ function buildContextNote(context) {
 }
 
 /**
- * Chat with the Mochi Spirit (multi-turn). Uses context so Mochi knows weather, energy, goals.
- * User messages are redacted (PII) before sending; only user input is redacted, not assistant output.
+ * Chat with the Mochi Spirit (multi-turn). Plain-text completion, no JSON parsing.
+ * Tries Groq first (fast), then Gemini. Returns a short reply so the chat actually works.
  * @param {Array<{ role: 'user' | 'model', text: string }>} history - Conversation so far
  * @param {{ logs?: Array, goals?: Array, energy?: number, weather?: string }} context - Garden state
- * @returns {Promise<{ text: string, meta?: { redactionCount: number } }|null>} - Reply and optional meta, or null
+ * @returns {Promise<{ text: string }|null>} - Reply text, or null
  */
 export async function chatWithSpirit(history, context) {
-  const apiKey = getApiKey();
-  if (!apiKey) return null;
+  const groqKey = typeof import.meta !== 'undefined' && import.meta.env?.VITE_GROQ_API_KEY;
+  const contextNote = buildContextNote(context || {});
+
+  const messages = [
+    {
+      role: 'system',
+      content: 'You are Mochi, a gentle, brief, and encouraging garden spirit. Answer in 1-2 short sentences.' + (contextNote ? ` Context: ${contextNote}` : ''),
+    },
+    ...(Array.isArray(history) && history.length > 0
+      ? history.map((h) => ({
+          role: h.role === 'user' ? 'user' : 'assistant',
+          content: (h.text || '').trim() || '(no text)',
+        }))
+      : []),
+  ].filter((m) => m.content && m.content !== '(no text)');
 
   try {
-    const { GoogleGenerativeAI } = await import('@google/generative-ai');
-    const genAI = new GoogleGenerativeAI(apiKey);
-
-    let totalRedactions = 0;
-    const historyForPrompt =
-      Array.isArray(history) && history.length > 0
-        ? history
-            .map((m) => {
-              if (m.role === 'user') {
-                const { redactedText, redactionCount } = redactUserText((m.text || '').trim());
-                totalRedactions += redactionCount;
-                return 'Gardener: ' + redactedText;
-              }
-              return 'Mochi: ' + (m.text || '').trim();
-            })
-            .join('\n')
-        : '';
-    const prompt =
-      historyForPrompt.length > 0
-        ? `${historyForPrompt}\n\nMochi, reply in character (2 sentences max):`
-        : 'The gardener is about to send a message. Reply in character (2 sentences max) when they do.';
-
-    const result = await tryGenerate(genAI, prompt, {
-      systemInstruction: SYSTEM_INSTRUCTIONS + '\n\nSystem Note (current context): ' + buildContextNote(context || {}),
-    });
-    const text = result?.response?.text?.();
-    if (typeof text === 'string') {
-      const reply = text.trim().replace(/\n+/g, ' ').slice(0, 320);
-      const meta = totalRedactions > 0 ? { redactionCount: totalRedactions } : undefined;
-      return { text: reply, ...(meta && { meta }) };
+    if (groqKey) {
+      const model = getGroqModel();
+      const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${groqKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model,
+          messages,
+          temperature: 0.7,
+        }),
+      });
+      const data = await response.json();
+      if (data.choices?.[0]?.message?.content) {
+        const text = String(data.choices[0].message.content).trim().replace(/\n+/g, ' ').slice(0, 320);
+        return { text };
+      }
     }
-    return null;
   } catch (err) {
-    console.warn('Gemini chatWithSpirit:', err?.message || err);
-    return null;
+    console.error('Chat Error (Groq):', err);
   }
+
+  const apiKey = getApiKey();
+  if (apiKey) {
+    try {
+      const { GoogleGenerativeAI } = await import('@google/generative-ai');
+      const genAI = new GoogleGenerativeAI(apiKey);
+      const historyForPrompt =
+        Array.isArray(history) && history.length > 0
+          ? history.map((m) => (m.role === 'user' ? 'Gardener: ' + (m.text || '').trim() : 'Mochi: ' + (m.text || '').trim())).join('\n')
+          : '';
+      const prompt =
+        historyForPrompt.length > 0
+          ? `${historyForPrompt}\n\nMochi, reply in character (2 sentences max):`
+          : 'The gardener is about to send a message. Reply in character (2 sentences max) when they do.';
+      const result = await tryGenerate(genAI, prompt, {
+        systemInstruction: SYSTEM_INSTRUCTIONS + (contextNote ? '\n\nSystem Note (current context): ' + contextNote : ''),
+      });
+      const text = result?.response?.text?.();
+      if (typeof text === 'string') {
+        const reply = text.trim().replace(/\n+/g, ' ').slice(0, 320);
+        return { text: reply };
+      }
+    } catch (err) {
+      console.warn('Gemini chatWithSpirit:', err?.message || err);
+    }
+  }
+
+  return { text: "The garden winds are quiet right now. Let's focus on your next step." };
 }
 
 /**
@@ -797,14 +822,57 @@ Return strict JSON (no markdown):
 }
 
 /**
+ * Tweak or extend milestones for a goal based on natural-language instruction.
+ * @param {string} goalTitle - Goal name
+ * @param {string[]} currentMilestones - Current milestone titles
+ * @param {string} instruction - User instruction (e.g. "Make these steps smaller")
+ * @returns {Promise<string[]>} 3-5 new milestone title strings
+ */
+export async function tweakMilestones(goalTitle, currentMilestones, instruction) {
+  const prompt = `Goal: "${goalTitle}". Current Milestones: ${currentMilestones.join(', ')}.
+Instruction: "${instruction}".
+Return EXACTLY a JSON array of 3-5 strings representing the new or updated milestones. Do not return an object, return an Array [].`;
+  try {
+    const apiKey = getApiKey();
+    if (apiKey) {
+      const { GoogleGenerativeAI } = await import('@google/generative-ai');
+      const genAI = new GoogleGenerativeAI(apiKey);
+      const result = await tryGenerate(genAI, prompt);
+      const text = result?.response?.text?.();
+      if (typeof text === 'string') {
+        const raw = sanitizeJsonResponse(text);
+        const jsonMatch = raw.match(/\[[\s\S]*\]/);
+        const parsed = JSON.parse(jsonMatch ? jsonMatch[0] : raw);
+        if (Array.isArray(parsed)) {
+          return parsed.filter((s) => typeof s === 'string').map((s) => String(s).trim()).filter(Boolean);
+        }
+      }
+    }
+  } catch (e) {
+    console.error('tweakMilestones:', e);
+  }
+  try {
+    const groqText = await fetchFromGroq(prompt);
+    const raw = sanitizeJsonResponse(groqText);
+    const jsonMatch = raw.match(/\[[\s\S]*\]/);
+    const parsed = JSON.parse(jsonMatch ? jsonMatch[0] : raw);
+    if (Array.isArray(parsed)) {
+      return parsed.filter((s) => typeof s === 'string').map((s) => String(s).trim()).filter(Boolean);
+    }
+  } catch (_) {}
+  return ['Adjusted step 1', 'Adjusted step 2', 'Adjusted step 3'];
+}
+
+/**
  * AI Project Planner: slices a project into phases, milestones, and tasks with a timeline.
  * @param {string} projectName
  * @param {string|null} deadline - ISO date string or null
+ * @param {string} feedback - optional user feedback for revision (e.g. "Add a testing phase")
  * @param {string} description - optional project description
  * @param {Array} existingGoals - existing goals that could be linked
  * @returns {{ summary, phases: [{ title, weekRange, tasks: [{ title, estimatedHours, type }], milestone }], suggestedLinks: [{ taskTitle, goalId, goalTitle }], mochiFeedback: string }}
  */
-export async function sliceProject(projectName, deadline, description = '', existingGoals = []) {
+export async function sliceProject(projectName, deadline, feedback = '', description = '', existingGoals = []) {
   const apiKey = getApiKey();
   if (!apiKey) { console.error("Missing API Key"); return null; }
 
@@ -823,6 +891,8 @@ Act as a Kaizen project planner. Break this project into manageable phases.
 Project: "${projectName}"
 ${description ? `Description: ${description}` : ''}
 ${deadlineStr}
+
+${feedback ? `CRITICAL USER FEEDBACK FOR REVISION: The user reviewed your previous plan and said: "${feedback}". You MUST adjust the phases and tasks to accommodate this feedback.` : ''}
 
 Existing goals the user already has:
 ${goalList || 'None yet.'}
