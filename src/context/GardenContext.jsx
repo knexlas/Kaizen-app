@@ -648,13 +648,13 @@ export function GardenProvider({ children }) {
       totalMinutes: 0,
       createdAt: now,
       subtasks: (aiStructure?.vines?.length
-        ? aiStructure.vines.map((v) => ({ id: uid(), title: typeof v === 'string' ? v : v?.title ?? 'Step', estimatedHours: 0.5, completedHours: 0 }))
-        : [{ id: uid(), title: 'Take the first 5-minute step', estimatedHours: 0.5, completedHours: 0 }]),
+        ? aiStructure.vines.map((v) => ({ id: uid(), title: typeof v === 'string' ? v : v?.title ?? 'Step', estimatedHours: 0.1, completedHours: 0 }))
+        : [{ id: uid(), title: 'Take the first 5-minute step', estimatedHours: 0.1, completedHours: 0 }]),
       rituals: (aiStructure?.rituals?.length ? aiStructure.rituals.map((r) => ({ ...r, id: uid() })) : []),
       milestones: (aiStructure?.milestones?.length ? aiStructure.milestones.map((m) => ({ id: uid(), title: typeof m === 'string' ? m : m?.title ?? '', completed: false })) : []),
     });
 
-    // 2. Care & Hygiene (one generic daily ritual)
+    // 2. Care & Hygiene (Highly defined daily tasks)
     addGoal({
       id: uid(),
       type: 'routine',
@@ -662,11 +662,13 @@ export function GardenProvider({ children }) {
       totalMinutes: 0,
       createdAt: now,
       rituals: [
-        { id: uid(), title: 'One 5-minute care task (e.g. stretch, hydrate)', days: [0, 1, 2, 3, 4, 5, 6] },
+        { id: uid(), title: 'Morning: Brush teeth & hydrate', days: [0, 1, 2, 3, 4, 5, 6] },
+        { id: uid(), title: 'Evening: Wash face & brush teeth', days: [0, 1, 2, 3, 4, 5, 6] },
+        { id: uid(), title: '10-minute stretch or step outside', days: [0, 1, 2, 3, 4, 5, 6] },
       ],
     });
 
-    // 3. Life Admin (one generic daily ritual)
+    // 3. Life Admin (Spaced out to avoid overwhelm)
     addGoal({
       id: uid(),
       type: 'routine',
@@ -674,7 +676,9 @@ export function GardenProvider({ children }) {
       totalMinutes: 0,
       createdAt: now,
       rituals: [
-        { id: uid(), title: 'One 5-minute admin task (e.g. email, tidy)', days: [0, 1, 2, 3, 4, 5, 6] },
+        { id: uid(), title: 'Clear email & messages for 5 mins', days: [1, 2, 3, 4, 5] },
+        { id: uid(), title: 'Tidy one surface (desk/kitchen)', days: [2, 4, 6] },
+        { id: uid(), title: 'Financial check-in / Plan the week', days: [0] },
       ],
     });
   }, [addGoal]);
@@ -787,7 +791,7 @@ export function GardenProvider({ children }) {
           if (allDone) {
             milestones.push({
               id: crypto.randomUUID?.() ?? `ms-${Date.now()}`,
-              title: 'Keep growing: Next level',
+              title: 'Kaizen: Increase your previous time by 5 minutes',
               completed: false,
             });
           }

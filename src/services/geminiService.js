@@ -593,9 +593,9 @@ export async function suggestGoalStructure(title, type = 'kaizen', currentMetric
 
       Requirements:
       1. "strategy": One sentence of strategic advice.
-      2. "vines": Array of 3-5 small, immediate subtasks (e.g. "Buy shoes", "Download app").
+      2. "vines": Array of 3-5 immediate subtasks that physically take less than 5 minutes to do (e.g. "Put shoes by the door", "Open a blank document").
       3. "rituals": 1-2 recurring habits (title + days 0-6).
-      4. "milestones": EXACTLY 4 progressive milestones.
+      4. "milestones": EXACTLY 4 milestones that scale up in difficulty. Milestone 1 = a 5-minute action. Milestone 2 = a 15-minute action. Milestone 3 = a 30-minute action. Milestone 4 = achieving consistency (e.g., "Do it 3 days in a row").
       5. "estimatedMinutes": Session duration (15, 30, 45, 60).
       6. "targetHours": Weekly goal (integer).
       7. "suggestedMetrics": 1-3 measurable metrics to track progress. Each: { "name": string, "unit": string, "direction": "higher"|"lower" }.
@@ -616,11 +616,11 @@ export async function suggestGoalStructure(title, type = 'kaizen', currentMetric
     _fallback: true,
     _reason: 'gemini_and_groq_failed',
     strategy: 'Start small, stay consistent.',
-    vines: ['Research the basics', 'Set aside 15 minutes tomorrow', 'Track your first session'],
+    vines: ['Clear your workspace', 'Set a 5-minute timer', 'Take one deep breath'],
     estimatedMinutes: 30,
     targetHours: 3,
     rituals: [{ title: 'Daily Practice', days: [1, 3, 5] }],
-    milestones: ['Complete first session', 'Build a 1-week streak', 'Reflect and adjust', 'Reach your first milestone'],
+    milestones: ['Complete a 5-minute session', 'Complete a 15-minute session', 'Complete a 30-minute session', 'Do it 3 days in a row'],
     suggestedMetrics: [{ name: 'Sessions completed', unit: 'count', direction: 'higher' }],
   });
 
