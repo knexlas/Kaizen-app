@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import { useGarden } from '../../context/GardenContext';
 
 const SNOOZE_MS = 30 * 60 * 1000;
@@ -224,6 +224,8 @@ export default function NextTinyStep({
     setSnoozedUntil((prev) => ({ ...prev, [itemId]: Date.now() + SNOOZE_MS }));
   }, []);
 
+  const [showRewardToast, setShowRewardToast] = useState(false);
+
   const handleMarkDone = useCallback(
     (suggestion) => {
       if ((suggestion.source === 'plan' || suggestion.source === 'recent' || suggestion.source === 'project') && suggestion.goal) {
@@ -231,12 +233,19 @@ export default function NextTinyStep({
         const current = suggestion.goal.totalMinutes ?? 0;
         if (current < est) editGoal?.(suggestion.goalId, { totalMinutes: Math.max(current, est) });
         onMarkPlanItemDone?.(suggestion);
+        setShowRewardToast(true);
       } else if (suggestion.source === 'compost' && suggestion.compostItem) {
         onCompostMarkDone?.(suggestion.compostItem);
       }
     },
     [editGoal, onMarkPlanItemDone, onCompostMarkDone]
   );
+
+  useEffect(() => {
+    if (!showRewardToast) return;
+    const t = setTimeout(() => setShowRewardToast(false), 3000);
+    return () => clearTimeout(t);
+  }, [showRewardToast]);
 
   const handleMoveToCompost = useCallback(
     (suggestion) => {
@@ -262,6 +271,7 @@ export default function NextTinyStep({
   if (suggestions.length === 0) return null;
 
   return (
+    <>
     <div
       className={`rounded-xl border-2 border-stone-200 bg-stone-50/90 ${compact ? 'p-3' : 'p-4'} ${className}`}
       aria-label="Next tiny steps"
@@ -327,5 +337,15 @@ export default function NextTinyStep({
         ))}
       </ul>
     </div>
+    {showRewardToast && (
+      <div
+        role="status"
+        aria-live="polite"
+        className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-3 rounded-xl bg-emerald-500 text-white font-sans text-sm font-medium shadow-lg border border-emerald-600/50"
+      >
+        ✨ Momentum generated! +1 Spoon recovered
+      </div>
+    )}
+    </>
   );
 }

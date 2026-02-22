@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const DURATION_SECONDS = 25 * 60; // 25 minutes
+const BREAK_DURATION_SECONDS = 5 * 60; // 5 minutes
 const BREATH_CYCLE_SECONDS = 4;
 const CONTROLS_IDLE_MS = 2500;
 const AMBIENCE_STORAGE_KEY = 'kaizenFocusAmbience';
@@ -120,9 +121,11 @@ export default function FocusSession({
   durationSeconds = DURATION_SECONDS,
 }) {
   const [secondsLeft, setSecondsLeft] = useState(durationSeconds);
+  const [sessionMode, setSessionMode] = useState('focus'); // 'focus' | 'break'
   const [isPaused, setIsPaused] = useState(false);
   const [isComplete, setIsComplete] = useState(false);
   const [completedTimeSpentMinutes, setCompletedTimeSpentMinutes] = useState(null);
+  const hasPlayedBreakGongRef = useRef(false);
   const [showControls, setShowControls] = useState(false);
   const [showBrokenPath, setShowBrokenPath] = useState(false);
   const [ambience, setAmbience] = useState(getStoredAmbience);
@@ -243,6 +246,22 @@ export default function FocusSession({
     setShowBrokenPath(true);
   };
 
+  const handleCommitClick = useCallback(() => {
+    setHasCommitted(true);
+    hasAudioInteractionRef.current = true;
+    const unlock = (el) => {
+      if (!el) return;
+      const saved = el.volume;
+      el.volume = 0;
+      el.play().catch(() => {});
+      el.pause();
+      el.currentTime = 0;
+      el.volume = saved;
+    };
+    unlock(ambienceAudioRef.current);
+    unlock(gongAudioRef.current);
+  }, []);
+
   const handleHarvestEarly = () => {
     setShowBrokenPath(false);
     const timeSpentMinutes = Math.max(1, Math.floor(elapsedSeconds / 60));
@@ -286,19 +305,38 @@ export default function FocusSession({
 
   // Timer tick (only after user has committed)
   useEffect(() => {
-    if (!hasCommitted || isComplete || isPaused) return;
+    if (!hasCommitted || isPaused) return;
+    if (sessionMode === 'focus' && isComplete) return;
     if (secondsLeft <= 0) {
-      const mins = Math.max(1, Math.floor(durationSeconds / 60));
-      setCompletedTimeSpentMinutes(mins);
-      setIsComplete(true);
+      if (sessionMode === 'focus') {
+        const mins = Math.max(1, Math.floor(durationSeconds / 60));
+        setCompletedTimeSpentMinutes(mins);
+        setIsComplete(true);
+      }
       return;
     }
     const t = setInterval(() => setSecondsLeft((s) => s - 1), 1000);
     return () => clearInterval(t);
-  }, [hasCommitted, isComplete, isPaused, secondsLeft, durationSeconds]);
+  }, [hasCommitted, isComplete, isPaused, secondsLeft, durationSeconds, sessionMode]);
 
   const progressPercent =
-    secondsLeft <= 0 ? 100 : ((durationSeconds - secondsLeft) / durationSeconds) * 100;
+    sessionMode === 'break'
+      ? (secondsLeft <= 0 ? 100 : ((BREAK_DURATION_SECONDS - secondsLeft) / BREAK_DURATION_SECONDS) * 100)
+      : (secondsLeft <= 0 ? 100 : ((durationSeconds - secondsLeft) / durationSeconds) * 100);
+
+  const isBreakComplete = sessionMode === 'break' && secondsLeft <= 0;
+
+  // Gong when break timer hits 0
+  useEffect(() => {
+    if (!isBreakComplete) return;
+    if (hasPlayedBreakGongRef.current) return;
+    hasPlayedBreakGongRef.current = true;
+    const gong = gongAudioRef.current;
+    if (gong) {
+      gong.src = SOUNDS.gong;
+      safePlay(gong, volume, 'Gong');
+    }
+  }, [isBreakComplete, volume]);
 
   useEffect(() => {
     document.body.style.overflow = 'hidden';
@@ -329,7 +367,7 @@ export default function FocusSession({
           </p>
           <button
             type="button"
-            onClick={() => setHasCommitted(true)}
+            onClick={handleCommitClick}
             className="px-8 py-3 bg-moss-600 hover:bg-moss-700 text-white rounded-full font-medium transition-transform hover:scale-105 shadow-md shadow-moss-900/20"
           >
             I commit to this single step
@@ -402,7 +440,7 @@ export default function FocusSession({
 
       {/* Top-right: Pause / X (opens Broken Path overlay) */}
       <AnimatePresence>
-        {showControls && !isComplete && !showBrokenPath && (
+        {showControls && !isComplete && !isBreakComplete && !showBrokenPath && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -485,12 +523,40 @@ export default function FocusSession({
 
       {/* Center: Spirit + task title */}
       <div className="flex flex-col items-center justify-center flex-1 px-6">
-        <MochiSpirit isComplete={isComplete} />
+        <MochiSpirit isComplete={isComplete && sessionMode === 'focus'} />
         <h1 className="mt-8 font-serif text-3xl md:text-4xl text-stone-900 text-center max-w-md">
-          {activeTask.title}
+          {sessionMode === 'break' ? 'Rest your eyes' : activeTask.title}
         </h1>
         <AnimatePresence mode="wait">
-          {!isComplete ? (
+          {isBreakComplete ? (
+            <motion.div
+              key="break-done"
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              className="mt-8 flex flex-wrap justify-center gap-3"
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  hasPlayedBreakGongRef.current = false;
+                  setSessionMode('focus');
+                  setSecondsLeft(durationSeconds);
+                  setIsComplete(false);
+                }}
+                className="px-4 py-2.5 font-sans text-sm bg-moss-500 text-stone-50 rounded-lg hover:bg-moss-600 focus:outline-none focus:ring-2 focus:ring-moss-500/50"
+              >
+                Resume Focus
+              </button>
+              <button
+                type="button"
+                onClick={() => onComplete?.({ timeSpentMinutes: completedTimeSpentMinutes })}
+                className="px-4 py-2.5 font-sans text-sm border border-stone-300 text-stone-700 rounded-lg hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/50"
+              >
+                Log &amp; Exit
+              </button>
+            </motion.div>
+          ) : !isComplete ? (
             <motion.p
               key="flow"
               initial={{ opacity: 0 }}
@@ -498,7 +564,7 @@ export default function FocusSession({
               exit={{ opacity: 0 }}
               className="mt-2 font-sans text-sm text-stone-500"
             >
-              Flow state active.
+              {sessionMode === 'break' ? 'Break in progress.' : 'Flow state active.'}
             </motion.p>
           ) : (
             <motion.div
@@ -510,7 +576,12 @@ export default function FocusSession({
             >
               <button
                 type="button"
-                onClick={() => onComplete?.({ timeSpentMinutes: completedTimeSpentMinutes, action: 'break' })}
+                onClick={() => {
+                  hasPlayedBreakGongRef.current = false;
+                  setSecondsLeft(BREAK_DURATION_SECONDS);
+                  setSessionMode('break');
+                  setIsComplete(false);
+                }}
                 className="px-4 py-2.5 font-sans text-sm bg-moss-500 text-stone-50 rounded-lg hover:bg-moss-600 focus:outline-none focus:ring-2 focus:ring-moss-500/50"
               >
                 Take 5m Break

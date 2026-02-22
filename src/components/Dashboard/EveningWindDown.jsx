@@ -37,7 +37,7 @@ export default function EveningWindDown({
   // Normalize assignments into items with hour, val (with id, goalId, title for UI)
   const unfinishedItems = useMemo(() => {
     return Object.entries(assignments)
-      .filter(([, val]) => val != null)
+      .filter(([key, val]) => key !== 'anytime' && val != null)
       .map(([hour, val]) => {
         const goalId = getGoalId(val);
         const title = getTitle(val, goalId, goals);

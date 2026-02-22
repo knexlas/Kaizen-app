@@ -172,6 +172,7 @@ function TimeSlot({
   maxSlots,
   onStartFocus,
   onMilestoneCheck,
+  onHarvestedClick,
   cloudSaved = false,
   now = null,
   isMobile = false,
@@ -336,6 +337,7 @@ function TimeSlot({
                   type="button"
                   onClick={(e) => {
                     triggerHarvestConfetti(e);
+                    onHarvestedClick?.();
                     onStartFocus(goal.id, hour, slotRitualTitle ?? undefined, assignment?.subtaskId);
                   }}
                   className="shrink-0 flex items-center gap-1 px-2 py-1 rounded font-sans text-xs bg-moss-600/90 text-stone-50 font-medium hover:bg-moss-600 focus:outline-none focus:ring-2 focus:ring-moss-500/50"
@@ -351,6 +353,7 @@ function TimeSlot({
                 type="button"
                 onClick={(e) => {
                   triggerHarvestConfetti(e);
+                  onHarvestedClick?.();
                   onStartFocus(goal.id, hour, slotRitualTitle ?? undefined, assignment?.subtaskId);
                 }}
                 className="self-start mt-1 font-sans text-xs text-moss-700 hover:text-moss-800 underline underline-offset-1 focus:outline-none focus:ring-2 focus:ring-moss-500/40 rounded"
@@ -388,6 +391,96 @@ function TimeSlot({
             {onEmptySlotClick ? (isMobile ? 'Tap to add' : 'Add task') : 'Add task'}
           </span>
         )}
+      </div>
+    </div>
+  );
+}
+
+/** Anytime Today (Flexible) drop zone: tasks without a fixed hour. */
+function AnytimePoolSection({
+  assignments,
+  goals,
+  onStartFocus,
+  onRemove,
+  onMilestoneCheck,
+}) {
+  const { setNodeRef, isOver } = useDroppable({ id: 'anytime-pool' });
+  const list = assignments?.anytime ?? [];
+  return (
+    <div className="mb-4">
+      <h3 className="font-sans text-sm font-semibold text-stone-700 mb-2 flex items-center gap-2">
+        <span aria-hidden>💧</span>
+        Anytime Today (Flexible)
+      </h3>
+      <div
+        ref={setNodeRef}
+        className={`min-h-[56px] rounded-xl border-2 border-dashed transition-colors flex flex-wrap items-stretch gap-2 p-2 ${
+          isOver ? 'border-moss-500/60 bg-moss-50/50' : 'border-stone-300 bg-stone-50/80'
+        } ${list.length === 0 ? 'justify-center items-center' : ''}`}
+      >
+        {list.length === 0 && (
+          <span className="font-sans text-sm text-stone-400 py-2">Drop liquid tasks here — no fixed time</span>
+        )}
+        {list.map((assignment, index) => {
+          const goalId = getGoalIdFromAssignment(assignment);
+          const slotRitualTitle = getRitualTitleFromAssignment(assignment);
+          const subtask = getSubtaskFromAssignment(assignment);
+          const routineSession = isRoutineSession(assignment);
+          const goal = goalId ? goals?.find((g) => g.id === goalId) : null;
+          const title = routineSession ? (assignment.title ?? goal?.title ?? 'Routine') : (goal?.title ?? 'Task');
+          const firstUncompleted = goal?.milestones?.find((m) => !m.completed);
+          const milestoneTitle = firstUncompleted?.title ?? firstUncompleted?.text;
+          return (
+            <div
+              key={assignment.id ?? `anytime-${index}`}
+              className={`flex items-center gap-2 px-3 py-2 rounded-lg border shrink-0 ${
+                routineSession ? 'bg-slate-200 border-slate-300' : 'bg-moss-200 border-moss-500/50'
+              } text-stone-800`}
+            >
+              <div className="flex flex-col min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  {routineSession && <RepeatIcon />}
+                  <span className="font-sans text-sm font-medium truncate">{title}</span>
+                </div>
+                {subtask?.title && (
+                  <span className="font-sans text-xs text-moss-700 truncate block" title={subtask.title}>🌱 {subtask.title}</span>
+                )}
+                {milestoneTitle && firstUncompleted && (
+                  <div className="flex items-center gap-2 mt-1">
+                    <input
+                      type="checkbox"
+                      checked={false}
+                      onChange={() => onMilestoneCheck?.(goal?.id, firstUncompleted.id, true)}
+                      className="rounded border-stone-300 text-moss-500 focus:ring-moss-500/50 shrink-0"
+                      aria-label={`Complete milestone: ${milestoneTitle}`}
+                    />
+                    <span className="font-sans text-xs text-stone-600 truncate">Next: {milestoneTitle}</span>
+                  </div>
+                )}
+              </div>
+              {onStartFocus && goal && (
+                <button
+                  type="button"
+                  onClick={() => onStartFocus(goal.id, null, slotRitualTitle ?? undefined, assignment?.subtaskId)}
+                  className="shrink-0 flex items-center gap-1 px-2 py-1 rounded font-sans text-xs bg-stone-800 text-stone-50 hover:bg-stone-700 focus:outline-none focus:ring-2 focus:ring-moss-500/50"
+                >
+                  <span aria-hidden>▶</span>
+                  <span>Play</span>
+                </button>
+              )}
+              <label className="flex items-center gap-1.5 shrink-0 cursor-pointer font-sans text-xs text-stone-600 hover:text-stone-800">
+                <input
+                  type="checkbox"
+                  checked={false}
+                  onChange={() => onRemove(index)}
+                  className="rounded border-stone-300 text-moss-500 focus:ring-moss-500/50"
+                  aria-label={`Complete and remove: ${title}`}
+                />
+                <span>Complete</span>
+              </label>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -1394,6 +1487,7 @@ function TimeSlicer({
   const [seedPickerTargetHour, setSeedPickerTargetHour] = useState(null);
   const [spoonsToast, setSpoonsToast] = useState(false);
   const [autoPlanToast, setAutoPlanToast] = useState(false);
+  const [energyToast, setEnergyToast] = useState(false);
   const [lightenedTasksFeedback, setLightenedTasksFeedback] = useState([]);
   const [now, setNow] = useState(() => new Date());
   const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < MOBILE_BREAKPOINT);
@@ -1438,7 +1532,19 @@ function TimeSlicer({
   }, [viewMode, loadWeekPlans]);
 
   const applyAssignment = (time, value) => {
-    const next = { ...assignments, [time]: value };
+    const next = { ...assignments };
+    if (time === 'anytime') {
+      next.anytime = [...(next.anytime || []), value];
+    } else {
+      next[time] = value;
+    }
+    if (isControlled) onAssignmentsChange(next);
+    else setInternalAssignments(next);
+  };
+
+  const removeFromAnytime = (index) => {
+    const list = (assignments.anytime || []).filter((_, i) => i !== index);
+    const next = { ...assignments, anytime: list };
     if (isControlled) onAssignmentsChange(next);
     else setInternalAssignments(next);
   };
@@ -1460,6 +1566,12 @@ function TimeSlicer({
     const t = setTimeout(() => setAutoPlanToast(false), 3000);
     return () => clearTimeout(t);
   }, [autoPlanToast]);
+
+  useEffect(() => {
+    if (!energyToast) return;
+    const t = setTimeout(() => setEnergyToast(false), 3000);
+    return () => clearTimeout(t);
+  }, [energyToast]);
 
   const handleAutoPlanDay = () => {
     const energyLevel =
@@ -1529,15 +1641,56 @@ function TimeSlicer({
     else setInternalAssignments(next);
   };
 
+  const handleMilestoneCheck = useCallback((goalId, milestoneId, completed) => {
+    setEnergyToast(true);
+    onMilestoneCheck?.(goalId, milestoneId, completed);
+  }, [onMilestoneCheck]);
+
+  const handleHarvestedClick = useCallback(() => {
+    setEnergyToast(true);
+  }, []);
+
   const handleDragEnd = (event) => {
     const { active, over } = event;
     if (!over || !active) return;
     const time = String(over.id);
-    if (!HOURS.includes(time)) return;
     const data = active.data?.current;
     const ritualTitle = data?.ritualTitle;
     const goalId = data?.goal?.id ?? active.id;
     const goal = goals.find((g) => g.id === goalId);
+
+    if (time === 'anytime-pool') {
+      let value;
+      if (goal?.type === 'routine') {
+        value = {
+          id: crypto.randomUUID?.() ?? `s-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+          parentGoalId: goal.id,
+          title: goal.title,
+          type: 'routine',
+          duration: 60,
+          spoonCost: getSpoonCost(goal),
+        };
+        const subtasks = goal.subtasks ?? [];
+        if (subtasks.length > 0) {
+          setPendingRoutineDrop({ time: 'anytime', goal, value });
+          return;
+        }
+      } else if (goal?.type === 'kaizen') {
+        const vines = goal.subtasks ?? [];
+        if (vines.length > 0) {
+          value = { goalId: goal.id };
+          setPendingRoutineDrop({ time: 'anytime', goal, value });
+          return;
+        }
+        value = ritualTitle ? { goalId, ritualTitle } : goalId;
+      } else {
+        value = ritualTitle ? { goalId, ritualTitle } : goalId;
+      }
+      applyAssignment('anytime', value);
+      return;
+    }
+
+    if (!HOURS.includes(time)) return;
     const targetWasEmpty = !assignments[time];
 
     let value;
@@ -1799,6 +1952,13 @@ function TimeSlicer({
             </p>
           </div>
         )}
+        <AnytimePoolSection
+          assignments={assignments}
+          goals={goals}
+          onStartFocus={onStartFocus}
+          onRemove={removeFromAnytime}
+          onMilestoneCheck={handleMilestoneCheck}
+        />
         <div className="flex flex-col gap-6 min-w-0">
           {/* Schedule — Bamboo Timeline (scrollable) */}
           <div className="flex gap-3 max-h-[70vh] md:max-h-[420px] overflow-y-auto overflow-x-hidden rounded-lg">
@@ -1841,7 +2001,8 @@ function TimeSlicer({
                     filledCount={filledSpoonTotal}
                     maxSlots={maxSlots}
                     onStartFocus={onStartFocus}
-                    onMilestoneCheck={onMilestoneCheck}
+                    onMilestoneCheck={handleMilestoneCheck}
+                    onHarvestedClick={handleHarvestedClick}
                     cloudSaved={recentlyExportedSlot === hour}
                     now={now}
                     isMobile={isMobile}
@@ -1891,7 +2052,7 @@ function TimeSlicer({
                             isRitual={true}
                             assignments={assignments}
                             onSeedClick={onSeedClick}
-                            onMilestoneCheck={onMilestoneCheck}
+                            onMilestoneCheck={handleMilestoneCheck}
                             onEditGoal={onEditGoal}
                             onCompostGoal={onCompostGoal}
                             onAddRoutineTime={onAddRoutineTime}
@@ -1908,7 +2069,7 @@ function TimeSlicer({
                     const routineSeeds = goalBank.filter((g) => g.type === 'routine');
                     const vitalitySeeds = goalBank.filter((g) => g.type === 'vitality');
                     const projectSeeds = goalBank.filter((g) => g._projectGoal);
-                    const chipProps = (goal) => ({ key: goal.id, goal, assignments, onSeedClick, onMilestoneCheck, onEditGoal, onCompostGoal, onAddRoutineTime, onPlantRoutineBlock: handlePlantRoutineBlock, onAddSubtask, onStartFocus });
+                    const chipProps = (goal) => ({ key: goal.id, goal, assignments, onSeedClick, onMilestoneCheck: handleMilestoneCheck, onEditGoal, onCompostGoal, onAddRoutineTime, onPlantRoutineBlock: handlePlantRoutineBlock, onAddSubtask, onStartFocus });
                     const hasAny = goalBank.length > 0;
                     if (!hasAny) return (
                       <div className="py-2">
@@ -2021,6 +2182,23 @@ function TimeSlicer({
             role="alert"
           >
             <p className="font-medium">You are out of spoons. Rest, or borrow from tomorrow?</p>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Energy restored toast (Harvested / milestone complete) */}
+      <AnimatePresence>
+        {energyToast && (
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 4 }}
+            transition={{ duration: 0.25 }}
+            className="fixed bottom-6 left-4 right-4 z-50 mx-auto max-w-sm rounded-xl border border-emerald-300 bg-emerald-500 px-4 py-3 shadow-lg font-sans text-sm font-medium text-white"
+            role="status"
+            aria-live="polite"
+          >
+            Great job! Energy restored.
           </motion.div>
         )}
       </AnimatePresence>

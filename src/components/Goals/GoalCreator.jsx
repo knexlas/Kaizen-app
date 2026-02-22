@@ -149,6 +149,7 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
   const [vineTitle, setVineTitle] = useState('');
   const [vineHours, setVineHours] = useState('');
   const [vineDeadline, setVineDeadline] = useState('');
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   useEffect(() => {
     if (toast) {
@@ -162,7 +163,10 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
   }, [open, initialTitle]);
 
   useEffect(() => {
-    if (!open) setGoalType(null);
+    if (!open) {
+      setGoalType(null);
+      setShowAdvanced(false);
+    }
   }, [open]);
 
   useEffect(() => {
@@ -576,9 +580,25 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 placeholder="e.g., Learn to play piano, Drink more water, or Read a book..."
-                className="w-full py-2 bg-transparent border-0 border-b-2 border-stone-200 text-stone-900 font-sans placeholder-stone-400 focus:outline-none focus:border-moss-500 focus:ring-0 mb-6"
+                className="w-full py-2 bg-transparent border-0 border-b-2 border-stone-200 text-stone-900 font-sans placeholder-stone-400 focus:outline-none focus:border-moss-500 focus:ring-0 mb-4"
               />
 
+              {/* Suggest based on Title — always visible for low-friction start */}
+              <div className="mb-6 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleSuggest}
+                  disabled={isSuggesting}
+                  className="px-4 py-2 rounded-xl font-sans text-sm font-medium bg-moss-100 text-moss-800 hover:bg-moss-200 border border-moss-300 focus:outline-none focus:ring-2 focus:ring-moss-500/40 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  {isSuggesting ? '…' : '✨ Suggest based on Title'}
+                </button>
+                <span className="font-sans text-xs text-stone-400">Session length, steps, and more from Mochi.</span>
+              </div>
+
+              {/* Advanced: Color, Energy, Spoons, Activation, Tracking, Schedule, Target Hours, Notes */}
+              {showAdvanced && (
+              <div className="space-y-6 border-t border-stone-200 pt-6">
               {/* Color (domain) */}
               <label className="block font-sans text-sm font-medium text-stone-600 mb-2">Color</label>
               <div className="flex flex-wrap gap-2 mb-6">
@@ -1271,6 +1291,18 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
                   </ul>
                 </div>
               )}
+              </div>
+              )}
+
+              {/* Advanced Settings toggle — above footer */}
+              <button
+                type="button"
+                onClick={() => setShowAdvanced((v) => !v)}
+                className="mt-6 w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl font-sans text-sm font-medium text-stone-600 bg-stone-100 hover:bg-stone-200 border border-stone-200 focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors"
+              >
+                <span>{showAdvanced ? '▼' : '▶'}</span>
+                <span>⚙️ Advanced Settings</span>
+              </button>
 
               {/* Footer */}
               <div className="flex gap-3 mt-8">

@@ -13,6 +13,16 @@ export default function GuidedEmptyState({
   const a11y = lowStim ?? getSettings().lowStim;
   const isPlain = a11y;
 
+  const [dynamicSuggestions] = useState(() => {
+    const adminTasks = ['Wipe down one counter', 'Reply to one email', 'Put 5 items away', 'Clear your downloads folder'];
+    const careTasks = ['Drink a glass of water', 'Stretch your shoulders', 'Wash your face', 'Take 10 deep breaths'];
+    return [
+      { key: 'life-admin', label: `Admin: ${adminTasks[Math.floor(Math.random() * adminTasks.length)]}` },
+      { key: 'personal', label: 'Goal: Do 5-mins of a Seed Bag project' },
+      { key: 'care', label: `Care: ${careTasks[Math.floor(Math.random() * careTasks.length)]}` },
+    ];
+  });
+
   if (variant === 'needEnergy') {
     return (
       <div
@@ -43,11 +53,6 @@ export default function GuidedEmptyState({
   }
 
   if (variant === 'noTasks') {
-    const suggestions = [
-      { key: 'life-admin', label: 'One tiny life-admin thing' },
-      { key: 'personal', label: 'One personal goal step' },
-      { key: 'care', label: 'One care task' },
-    ];
     return (
       <div
         className={
@@ -61,7 +66,7 @@ export default function GuidedEmptyState({
           Start tiny — 5 minutes, 1 spoon. Tap one to add and start focus.
         </p>
         <div className="flex flex-col gap-2">
-          {suggestions.map(({ key, label }) => (
+          {dynamicSuggestions.map(({ key, label }) => (
             <div key={key} className="flex flex-col sm:flex-row sm:items-center gap-2">
               <button
                 type="button"

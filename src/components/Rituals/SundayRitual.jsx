@@ -1,13 +1,12 @@
 import { useState, useEffect } from 'react';
 import { useEnergy } from '../../context/EnergyContext';
-import { mockEvents } from '../../data/mockCalendar';
 import GardenIntro from './GardenIntro';
 
 const WEATHER_CYCLE = ['storm', 'cloud', 'sun'];
 const WEATHER_ICONS = { storm: '⛈️', cloud: '☁️', sun: '☀️' };
 
-/** Stone cost: Storm +2, Cloud +1, Sun -1 (restorative). */
-const STONE_COST = { storm: 2, cloud: 1, sun: -1 };
+/** Spoon cost: Storm +2, Cloud +1, Sun -1 (restorative). */
+const SPOON_COST = { storm: 2, cloud: 1, sun: -1 };
 
 const BORDER_CLASS = {
   storm: 'border-l-4 border-slate-400',
@@ -19,14 +18,20 @@ function formatDay(date) {
   return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
+const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
 function EventRow({ event, weather, onWeatherClick }) {
   const borderClass = BORDER_CLASS[weather];
+  const dayLabel = event.date
+    ? formatDay(event.date instanceof Date ? event.date : new Date(event.date))
+    : (event.dayIndex != null ? DAY_LABELS[event.dayIndex] : '—');
+  const timeLabel = event.time ?? '';
   return (
     <li
       className={`flex items-center gap-4 py-3 px-4 bg-stone-50 border-l-4 ${borderClass} border-b border-stone-200/80 last:border-b-0 font-sans text-sm transition-[border-color] duration-300`}
     >
       <span className="text-stone-500 w-40 shrink-0">
-        {formatDay(event.date)} · {event.time}
+        {dayLabel}{timeLabel ? ` · ${timeLabel}` : ''}
       </span>
       <span className="flex-1 text-stone-900 truncate">{event.title}</span>
       <button
@@ -57,15 +62,14 @@ function Toast({ message, visible }) {
 
 const DEFAULT_WEEKLY_WEATHER = ['cloud', 'storm', 'sun', 'cloud', 'storm', 'sun', 'cloud'];
 
-function SundayRitual() {
+function SundayRitual({ events = [], onCompleteRitual }) {
   const [showGardenIntro, setShowGardenIntro] = useState(true);
-  const [events] = useState(mockEvents);
   const [overrides, setOverrides] = useState({});
   const [toast, setToast] = useState(null);
   const { dailyEnergy } = useEnergy();
 
-  const weeklyWeather = mockEvents.length >= 7
-    ? mockEvents.slice(0, 7).map((e) => e.defaultWeather)
+  const weeklyWeather = events.length >= 7
+    ? events.slice(0, 7).map((e) => e.defaultWeather ?? e.type ?? 'cloud')
     : DEFAULT_WEEKLY_WEATHER;
 
   if (showGardenIntro) {
@@ -77,7 +81,7 @@ function SundayRitual() {
     );
   }
 
-  const getWeather = (event) => overrides[event.id] ?? event.defaultWeather;
+  const getWeather = (event) => overrides[event.id] ?? event.defaultWeather ?? event.type ?? 'cloud';
 
   const handleWeatherClick = (event) => {
     const current = getWeather(event);
@@ -87,12 +91,16 @@ function SundayRitual() {
     setToast('Insight saved.');
   };
 
-  const totalStoneCost = events.reduce((sum, ev) => sum + STONE_COST[getWeather(ev)], 0);
+  const totalSpoonCost = events.reduce((sum, ev) => sum + (SPOON_COST[getWeather(ev)] ?? 0), 0);
   const weeklyAvailable = dailyEnergy * 7;
 
   const handleCommit = () => {
-    const required = Math.max(0, totalStoneCost);
-    setToast(`This week requires ${required} Stones. You have ${weeklyAvailable} available.`);
+    if (typeof onCompleteRitual === 'function') {
+      onCompleteRitual(overrides);
+    } else {
+      const required = Math.max(0, totalSpoonCost);
+      setToast(`This week requires ${required} Spoons. You have ${weeklyAvailable} available.`);
+    }
   };
 
   useEffect(() => {

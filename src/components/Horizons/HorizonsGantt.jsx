@@ -23,15 +23,27 @@ export default function HorizonsGantt({
 
   const projectGoals = useMemo(() => goals.filter((g) => g._projectGoal), [goals]);
 
-  const weekLabels = useMemo(() => {
+  const { weekLabels, currentWeekIndex } = useMemo(() => {
     const today = new Date();
     const monday = new Date(today);
     monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
-    return Array.from({ length: TOTAL_WEEKS }, (_, i) => {
+    const mondayMs = monday.getTime();
+    const todayMs = today.getTime();
+    const oneWeekMs = 7 * 24 * 60 * 60 * 1000;
+    let currentWeekIndex = 0;
+    for (let i = 0; i < TOTAL_WEEKS; i++) {
+      const weekStart = mondayMs + i * oneWeekMs;
+      if (todayMs >= weekStart && todayMs < weekStart + oneWeekMs) {
+        currentWeekIndex = i;
+        break;
+      }
+    }
+    const weekLabels = Array.from({ length: TOTAL_WEEKS }, (_, i) => {
       const w = new Date(monday);
       w.setDate(monday.getDate() + i * 7);
       return w.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
     });
+    return { weekLabels, currentWeekIndex };
   }, []);
 
   if (projectGoals.length === 0) {
@@ -52,9 +64,18 @@ export default function HorizonsGantt({
           <thead>
             <tr className="border-b border-stone-200">
               <th className="text-left py-2 px-3 font-medium text-stone-600 w-40 shrink-0">Project / Phase</th>
-              {weekLabels.map((label, i) => (
-                <th key={i} className="text-center py-1 px-0.5 font-normal text-stone-400 text-[10px] w-10">{label}</th>
-              ))}
+              {weekLabels.map((label, i) => {
+                const isCurrentWeek = i === currentWeekIndex;
+                return (
+                  <th
+                    key={i}
+                    className={`text-center py-1 px-0.5 font-normal text-[10px] w-10 ${isCurrentWeek ? 'bg-moss-50/50 border-l border-r border-moss-200/60' : 'text-stone-400'}`}
+                  >
+                    {label}
+                    {isCurrentWeek && <span className="block text-[9px] text-moss-600 font-medium mt-0.5">Now</span>}
+                  </th>
+                );
+              })}
               <th className="text-left py-2 px-2 font-medium text-stone-500 text-xs w-24">Deadline</th>
             </tr>
           </thead>
@@ -62,12 +83,23 @@ export default function HorizonsGantt({
             {projectGoals.flatMap((goal) => {
               const rows = [];
               const isOverdue = goal._projectDeadline && new Date(goal._projectDeadline + 'T23:59:59') < new Date();
+              const subtasksAll = goal.subtasks || [];
+              const subtaskTotal = subtasksAll.length;
+              const subtaskDone = subtasksAll.filter((st) => (st.completedHours ?? 0) >= (st.estimatedHours || 1)).length;
+              const progressPct = subtaskTotal > 0 ? Math.round((subtaskDone / subtaskTotal) * 100) : 0;
 
               // 1. MASTER PROJECT ROW
               rows.push(
                 <tr key={`proj-${goal.id}`} className="border-b border-stone-200 bg-stone-50/50">
                   <td className="py-2 px-3 flex items-center justify-between gap-2">
-                    <span className="font-medium text-stone-800 font-serif">{goal.title}</span>
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                      <span className="font-medium text-stone-800 font-serif truncate">{goal.title}</span>
+                      {subtaskTotal > 0 && (
+                        <div className="shrink-0 w-16 h-1.5 rounded-full bg-stone-200 overflow-hidden" title={`${subtaskDone}/${subtaskTotal} tasks`}>
+                          <div className="h-full rounded-full bg-moss-500 transition-all" style={{ width: `${progressPct}%` }} />
+                        </div>
+                      )}
+                    </div>
                     <div className="flex items-center gap-1 shrink-0">
                       <button type="button" onClick={(e) => { e.stopPropagation(); onGoalClick?.(goal); }} className="text-xs text-stone-400 hover:text-stone-600 px-2 py-1 rounded bg-stone-100">
                         ✏️ Edit
@@ -86,9 +118,30 @@ export default function HorizonsGantt({
                       )}
                     </div>
                   </td>
-                  {weekLabels.map((_, i) => <td key={i} className="bg-stone-50/50 border-l border-white/50" />)}
-                  <td className={`py-2 px-2 text-stone-500 text-xs shrink-0 ${isOverdue ? 'text-amber-600' : ''}`}>
-                    {goal._projectDeadline ? new Date(goal._projectDeadline + 'T12:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '—'}
+                  {weekLabels.map((_, i) => {
+                    const isCurrentWeek = i === currentWeekIndex;
+                    return (
+                      <td key={i} className={`bg-stone-50/50 border-l border-white/50 ${isCurrentWeek ? 'bg-moss-50/50 border-l border-r border-moss-200/40' : ''}`} />
+                    );
+                  })}
+                  <td className="py-2 px-2 text-stone-500 text-xs shrink-0">
+                    {goal._projectDeadline ? (
+                      <span className="flex items-center gap-1.5 flex-wrap">
+                        <span>{new Date(goal._projectDeadline + 'T12:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
+                        {isOverdue && (
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); onGoalClick?.(goal); }}
+                            className="inline-flex items-center gap-0.5 text-stone-400 hover:text-stone-600 font-normal underline underline-offset-1 focus:outline-none focus:ring-2 focus:ring-moss-500/40 rounded px-0.5"
+                            title="Update deadline or plan in Edit"
+                          >
+                            🔄 Needs adjusting
+                          </button>
+                        )}
+                      </span>
+                    ) : (
+                      '—'
+                    )}
                   </td>
                 </tr>
               );
@@ -118,13 +171,16 @@ export default function HorizonsGantt({
                       <span className="text-stone-400 text-xs">{isExpanded ? '▼' : '▶'}</span>
                       <span className={`font-sans text-sm ${isDone ? 'text-stone-400 line-through' : 'text-stone-700'}`}>{phase.title}</span>
                     </td>
-                    {weekLabels.map((_, i) => (
-                      <td key={i} className="py-1 px-0.5 align-middle w-10">
-                        {i >= startWeek && i <= endWeek && (
-                          <div className={`h-3 rounded-full ${isDone ? 'bg-stone-300' : 'bg-amber-300'}`} />
-                        )}
-                      </td>
-                    ))}
+                    {weekLabels.map((_, i) => {
+                      const isCurrentWeek = i === currentWeekIndex;
+                      return (
+                        <td key={i} className={`py-1 px-0.5 align-middle w-10 ${isCurrentWeek ? 'bg-moss-50/50 border-l border-r border-moss-200/40' : ''}`}>
+                          {i >= startWeek && i <= endWeek && (
+                            <div className={`h-3 rounded-full ${isDone ? 'bg-stone-300' : 'bg-amber-300'}`} />
+                          )}
+                        </td>
+                      );
+                    })}
                     <td className="py-2 px-2 text-stone-400 text-[10px]">{phase.weekRange}</td>
                   </tr>
                 );
@@ -155,13 +211,16 @@ export default function HorizonsGantt({
                           )}
                           <span className={`font-sans text-xs ${stDone ? 'text-stone-400 line-through' : 'text-stone-500'}`}>↳ {st.title}</span>
                         </td>
-                        {weekLabels.map((_, i) => (
-                          <td key={i} className="py-1 px-0.5 align-middle">
-                            {i >= stStartWeek && i <= stEndWeek && (
-                              <div className="h-0.5 w-full bg-stone-200" />
-                            )}
-                          </td>
-                        ))}
+                        {weekLabels.map((_, i) => {
+                          const isCurrentWeek = i === currentWeekIndex;
+                          return (
+                            <td key={i} className={`py-1 px-0.5 align-middle ${isCurrentWeek ? 'bg-moss-50/50 border-l border-r border-moss-200/40' : ''}`}>
+                              {i >= stStartWeek && i <= stEndWeek && (
+                                <div className="h-0.5 w-full bg-stone-200" />
+                              )}
+                            </td>
+                          );
+                        })}
                         <td className="py-1.5 px-2 text-stone-400 text-[10px]">{st.estimatedHours}h{stWeekRange !== phase.weekRange ? ` · ${stWeekRange}` : ''}</td>
                       </tr>
                     );

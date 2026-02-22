@@ -218,36 +218,59 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
     e.dataTransfer.dropEffect = 'move';
   }, []);
 
+  const growingCount = goals.filter((g) => !isProjectDone(g) && getGoalProgressPercent(g) < 100).length;
+  const harvestedCount = goals.filter((g) => isProjectDone(g) || getGoalProgressPercent(g) >= 100).length;
+
   return (
     <div className="w-full flex flex-col gap-6">
-      {/* Cozy Tile Grid */}
-      <div className="relative rounded-2xl overflow-hidden border-2 border-[#7cb342]/40 shadow-lg">
+      {/* Ambient garden background */}
+      <div
+        className="relative rounded-3xl overflow-hidden"
+        style={{
+          background: 'linear-gradient(165deg, #f5f7f0 0%, #e8edd8 28%, #d4e4c4 55%, #c5d9b0 85%, #b8cf9e 100%)',
+          boxShadow: 'inset 0 1px 0 0 rgba(255,255,255,0.6), 0 20px 40px -12px rgba(94,114,52,0.25), 0 4px 12px -4px rgba(0,0,0,0.08)',
+        }}
+      >
+        {/* Subtle grain / paper texture overlay */}
         <div
-          className="grid gap-4 p-6"
+          className="absolute inset-0 pointer-events-none opacity-[0.03] rounded-3xl"
           style={{
-            gridTemplateColumns: `repeat(${GRID_COLS}, minmax(0, 1fr))`,
-            gridTemplateRows: `repeat(${GRID_ROWS}, minmax(64px, 1fr))`,
+            backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E")`,
           }}
-        >
-          {Array.from({ length: GRID_ROWS }, (_, row) =>
-            Array.from({ length: GRID_COLS }, (_, col) => {
-              const key = `${col},${row}`;
-              const goal = goalByCell[key];
-              const isMochi = mochiCell.x === col && mochiCell.y === row;
-              const progressPct = goal
-                ? Math.min(100, ((goal.totalMinutes || 0) / ((goal.targetHours || 1) * 60)) * 100)
-                : 0;
-              const nextMilestone = goal?.milestones?.find((m) => !m?.completed);
+          aria-hidden
+        />
+        {/* Cozy Tile Grid */}
+        <div className="relative rounded-3xl overflow-hidden border border-[#8b9f6e]/30 m-2 sm:m-3">
+          <div
+            className="grid gap-3 sm:gap-4 p-4 sm:p-6"
+            style={{
+              gridTemplateColumns: `repeat(${GRID_COLS}, minmax(0, 1fr))`,
+              gridTemplateRows: `repeat(${GRID_ROWS}, minmax(64px, 1fr))`,
+            }}
+          >
+            {Array.from({ length: GRID_ROWS }, (_, row) =>
+              Array.from({ length: GRID_COLS }, (_, col) => {
+                const key = `${col},${row}`;
+                const goal = goalByCell[key];
+                const isMochi = mochiCell.x === col && mochiCell.y === row;
+                const progressPct = goal
+                  ? Math.min(100, ((goal.totalMinutes || 0) / ((goal.targetHours || 1) * 60)) * 100)
+                  : 0;
+                const nextMilestone = goal?.milestones?.find((m) => !m?.completed);
+                const stage = goal ? getPlantStage(getGoalProgressPercent(goal)) : null;
+                const isHarvest = stage === 'harvest';
 
-              return (
-                <div
-                  key={key}
-                  className={`group relative aspect-square rounded-2xl transition-all duration-300 ease-out flex flex-col items-center justify-center hover:z-40 ${
-                    goal
-                      ? 'bg-[#dcedc8] shadow-[0_6px_0_0_#c5e1a5,0_10px_10px_-5px_rgba(0,0,0,0.1)] hover:-translate-y-1 hover:shadow-[0_8px_0_0_#c5e1a5,0_15px_15px_-5px_rgba(0,0,0,0.15)] cursor-pointer'
-                      : 'bg-stone-50/50 border-2 border-dashed border-stone-200 hover:border-moss-300 hover:bg-moss-50 cursor-pointer shadow-sm'
-                  } ${goal?._projectGoal ? 'ring-2 ring-amber-300/50' : ''}`}
-                >
+                return (
+                  <div
+                    key={key}
+                    className={`group relative aspect-square rounded-2xl transition-all duration-300 ease-out flex flex-col items-center justify-center hover:z-40 ${
+                      goal
+                        ? isHarvest
+                          ? 'bg-gradient-to-br from-amber-50 to-moss-100/90 shadow-[0_4px_0_0_#a8c68a,0_8px_16px_-4px_rgba(94,114,52,0.2)] hover:-translate-y-0.5 hover:shadow-[0_6px_0_0_#a8c68a,0_12px_24px_-4px_rgba(94,114,52,0.25)] cursor-pointer ring-1 ring-amber-300/30'
+                          : 'bg-gradient-to-br from-[#e5f0dc] to-[#d4e8c8] shadow-[0_4px_0_0_#b8d4a0,0_8px_16px_-4px_rgba(94,114,52,0.15)] hover:-translate-y-0.5 hover:shadow-[0_6px_0_0_#b8d4a0,0_12px_20px_-4px_rgba(94,114,52,0.2)] cursor-pointer'
+                        : 'bg-white/40 border-2 border-dashed border-stone-300/80 hover:border-moss-400/60 hover:bg-moss-50/70 cursor-pointer shadow-sm backdrop-blur-[1px]'
+                    } ${goal?._projectGoal ? 'ring-2 ring-amber-400/40' : ''}`}
+                  >
                   {goal && (
                     <div className="absolute bottom-full mb-4 left-1/2 -translate-x-1/2 w-48 p-3 bg-white/95 backdrop-blur-md rounded-xl shadow-xl border border-stone-100 opacity-0 group-hover:opacity-100 transition-all duration-200 pointer-events-none z-50 scale-95 group-hover:scale-100 flex flex-col gap-1">
                       <div className="absolute top-full left-1/2 -translate-x-1/2 border-8 border-transparent border-t-white/95" aria-hidden />
@@ -327,42 +350,45 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
               );
             })
           )}
-        </div>
-        {/* Decorations layer: drag to reposition */}
-        {decorations?.length > 0 && (
-          <div
-            ref={gridContainerRef}
-            className="absolute inset-0 z-20 p-2"
-            onDragOver={handleGridDragOver}
-            onDrop={handleDecorationDrop}
-            style={{ pointerEvents: 'auto' }}
-            aria-hidden
-          >
-            {decorations.map((d) => {
-              const left = typeof d.x === 'number' ? `${d.x}%` : d.x;
-              const top = typeof d.y === 'number' ? `${d.y}%` : d.y;
-              const emoji = DECORATION_EMOJI[d.type] ?? '🪴';
-              return (
-                <div
-                  key={d.id}
-                  draggable
-                  onDragStart={(e) => handleDecorationDragStart(e, d.id)}
-                  onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
-                  onDrop={handleDecorationDrop}
-                  className="absolute w-10 h-10 flex items-center justify-center cursor-grab active:cursor-grabbing text-2xl drop-shadow-sm hover:scale-110 transition-transform select-none"
-                  style={{
-                    left,
-                    top,
-                    transform: 'translate(-50%, -50%)',
-                  }}
-                  title="Drag to move"
-                >
-                  {emoji}
-                </div>
-              );
-            })}
           </div>
-        )}
+          {/* Decorations layer: drag to reposition */}
+          {decorations?.length > 0 && (
+            <div
+              ref={gridContainerRef}
+              className="absolute inset-0 z-20 p-2 pointer-events-none"
+              style={{ pointerEvents: 'auto' }}
+              aria-hidden
+            >
+              <div className="absolute inset-0" onDragOver={handleGridDragOver} onDrop={handleDecorationDrop} />
+              {decorations.map((d) => {
+                const left = typeof d.x === 'number' ? `${d.x}%` : d.x;
+                const top = typeof d.y === 'number' ? `${d.y}%` : d.y;
+                const emoji = DECORATION_EMOJI[d.type] ?? '🪴';
+                return (
+                  <motion.div
+                    key={d.id}
+                    draggable
+                    onDragStart={(e) => handleDecorationDragStart(e, d.id)}
+                    onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
+                    onDrop={handleDecorationDrop}
+                    className="absolute w-12 h-12 flex items-center justify-center cursor-grab active:cursor-grabbing text-3xl select-none rounded-full"
+                    style={{
+                      left,
+                      top,
+                      transform: 'translate(-50%, -50%)',
+                      filter: 'drop-shadow(0 4px 8px rgba(0,0,0,0.12)) drop-shadow(0 2px 4px rgba(94,114,52,0.15))',
+                    }}
+                    whileHover={{ scale: 1.15 }}
+                    whileTap={{ scale: 1.05 }}
+                    title="Drag to move"
+                  >
+                    {emoji}
+                  </motion.div>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Plant Details Modal */}
@@ -382,7 +408,11 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
               onClick={(e) => e.stopPropagation()}
-              className="w-full max-w-sm rounded-2xl bg-[#FDFCF5] border border-stone-200 shadow-xl p-6"
+              className="w-full max-w-sm rounded-2xl border border-stone-200/80 shadow-2xl p-6 overflow-hidden"
+              style={{
+                background: 'linear-gradient(180deg, #FDFCF5 0%, #f5f3eb 100%)',
+                boxShadow: '0 25px 50px -12px rgba(0,0,0,0.15), 0 0 0 1px rgba(0,0,0,0.04)',
+              }}
             >
               <div className="flex items-center gap-2 mb-3">
                 <h3 className="font-serif text-lg text-stone-900 flex-1">{selectedGoal.title}</h3>
@@ -502,13 +532,25 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
       </AnimatePresence>
 
       {/* Control Bar */}
-      <div className="flex justify-between items-center px-2">
-        <h3 className="font-serif text-xl text-stone-800">My Garden</h3>
+      <div className="flex flex-wrap justify-between items-center gap-4 px-2">
+        <div>
+          <h3 className="font-serif text-2xl text-stone-800">My Garden</h3>
+          <p className="font-sans text-sm text-stone-500 mt-0.5">
+            {goals.length === 0
+              ? 'Plant your first seed to begin.'
+              : `${growingCount} growing · ${harvestedCount} ${harvestedCount === 1 ? 'harvest' : 'harvests'}`}
+          </p>
+        </div>
         <button
           onClick={() => setShowShop(true)}
-          className="flex items-center gap-2 px-5 py-2.5 bg-stone-800 text-stone-50 rounded-lg font-sans text-sm hover:bg-stone-700 transition-colors shadow"
+          className="flex items-center gap-2 px-5 py-3 rounded-xl font-sans text-sm font-medium transition-all shadow-md hover:shadow-lg hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-moss-500/50 focus:ring-offset-2"
+          style={{
+            background: 'linear-gradient(135deg, #4a5d23 0%, #3d4e1c 100%)',
+            color: '#FDFCF5',
+          }}
         >
-          <span>🛍️</span> Garden Shop
+          <span className="text-lg" aria-hidden>🛍️</span>
+          Garden Shop
         </button>
       </div>
 

@@ -7,7 +7,6 @@ import { buildReward } from '../../services/dopamineEngine';
 import { getSettings } from '../../services/userSettings';
 import { pickStarterTask } from '../../services/startAssist';
 import { localISODate, diffDays, weekdayIndexMon0, jsDayFromMon0 } from '../../services/dateUtils';
-import StartAssistModal from '../StartAssist/StartAssistModal';
 import StartNowModal from '../StartAssist/StartNowModal';
 import GentleRestartModal from '../Onboarding/GentleRestartModal';
 import GuidedEmptyState from '../EmptyStates/GuidedEmptyState';
@@ -243,9 +242,6 @@ function GardenDashboard() {
   const [showSpiritMirror, setShowSpiritMirror] = useState(false);
   const [showProjectPlanner, setShowProjectPlanner] = useState(false);
   const [horizonsView, setHorizonsView] = useState('planning'); // 'planning' | 'metrics'
-  const [showStartAssistModal, setShowStartAssistModal] = useState(false);
-  const [startAssistSuggestedTask, setStartAssistSuggestedTask] = useState(null);
-  const [startAssistNoTasks, setStartAssistNoTasks] = useState(false);
   const [showStartNowModal, setShowStartNowModal] = useState(false);
   const [startNowCandidate, setStartNowCandidate] = useState(null);
   const [scheduleExpanded, setScheduleExpanded] = useState(false);
@@ -853,13 +849,11 @@ function GardenDashboard() {
   const handleOpenStartAssist = useCallback(() => {
     const candidate = pickStarterTask({ todayTasks: todayTaskEntries });
     if (candidate) {
-      setStartAssistSuggestedTask(candidate);
-      setStartAssistNoTasks(false);
+      setStartNowCandidate(candidate?.goal != null ? candidate : { goal: candidate });
     } else {
-      setStartAssistSuggestedTask(null);
-      setStartAssistNoTasks(true);
+      setStartNowCandidate(null);
     }
-    setShowStartAssistModal(true);
+    setShowStartNowModal(true);
   }, [todayTaskEntries]);
 
   /** Primary CTA: "Help me start (5 min)". Opens StartNowModal with best task or 3 suggestions. */
@@ -935,59 +929,10 @@ function GardenDashboard() {
     setStartNowCandidate(null);
   }, [addGoal, assignments, setAssignments]);
 
-  const handleStartAssistStart = useCallback((durationMinutes, task) => {
-    if (!task) return;
-    setActiveSession({
-      ...task,
-      sessionDurationMinutes: Math.max(1, Math.min(120, durationMinutes)),
-      subtaskId: null,
-    });
-    setShowStartAssistModal(false);
-    setStartAssistSuggestedTask(null);
-    setStartAssistNoTasks(false);
-  }, []);
-
-  const handleStartAssistClose = useCallback(() => {
-    setShowStartAssistModal(false);
-    setStartAssistSuggestedTask(null);
-    setStartAssistNoTasks(false);
-    pushReward({ message: 'No worries — starting is the hard part.', tone: 'slate', icon: '🌿', sound: null });
-  }, [pushReward]);
-
-  const STARTER_TITLES = {
-    'life-admin': 'One tiny life-admin thing',
-    personal: 'One personal goal step',
-    care: 'One care task',
-  };
-
-  const handleStartAssistChooseSuggestion = useCallback((key, dynamicTitle) => {
-    const title = dynamicTitle ?? STARTER_TITLES[key] ?? 'One tiny step';
-    const id = crypto.randomUUID?.() ?? `goal-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-    const newGoal = {
-      id,
-      type: 'routine',
-      title,
-      estimatedMinutes: 5,
-      totalMinutes: 0,
-      createdAt: new Date().toISOString(),
-    };
-    addGoal(newGoal);
-    const firstEmpty = HOURS.find((h) => !assignments[h]);
-    if (firstEmpty) setAssignments((prev) => ({ ...prev, [firstEmpty]: id }));
-    setActiveSession({
-      ...newGoal,
-      sessionDurationMinutes: 5,
-      subtaskId: null,
-    });
-    setShowStartAssistModal(false);
-    setStartAssistSuggestedTask(null);
-    setStartAssistNoTasks(false);
-  }, [addGoal, assignments, setAssignments]);
-
   /** Guided empty state: add starter suggestion to plan and start 5 min focus. */
   const handleGuidedSuggestion = useCallback((key) => {
-    handleStartAssistChooseSuggestion(key);
-  }, [handleStartAssistChooseSuggestion]);
+    handleStartNowCreateSuggestion(key);
+  }, [handleStartNowCreateSuggestion]);
 
   /** Guided empty state: pick a goal for this week — assign to first slot and start 5 min. */
   const handleGuidedPickGoal = useCallback((goal) => {
@@ -2128,17 +2073,6 @@ function GardenDashboard() {
         open={showProjectPlanner}
         onClose={() => setShowProjectPlanner(false)}
         onCreateGoals={handleProjectGoals}
-      />
-
-      <StartAssistModal
-        open={showStartAssistModal}
-        suggestedTask={startAssistSuggestedTask}
-        noTasksMode={startAssistNoTasks}
-        defaultDurationMinutes={todaySpoonCount != null && todaySpoonCount <= 4 ? 5 : 5}
-        onStart={handleStartAssistStart}
-        onPickDifferent={() => setShowStartAssistModal(false)}
-        onClose={handleStartAssistClose}
-        onChooseSuggestion={handleStartAssistChooseSuggestion}
       />
 
       <StartNowModal

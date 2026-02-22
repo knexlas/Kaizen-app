@@ -73,10 +73,15 @@ const RATING_LABEL = {
   bloomed: '🌸 Bloomed',
 };
 
+function uid() {
+  return crypto.randomUUID?.() ?? `id-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
 export default function WeeklyReview({ onComplete }) {
-  const { logs, goals, deleteGoal } = useGarden();
+  const { logs, goals, deleteGoal, compost = [], addGoal, removeFromCompost } = useGarden();
   const [step, setStep] = useState(1);
   const [pruningChoices, setPruningChoices] = useState({});
+  const [compostChoices, setCompostChoices] = useState({}); // id -> 'plant' | 'letGo' | 'leave'
 
   const weekLogs = useMemo(() => getLast7DaysLogs(logs), [logs]);
   const stats = useMemo(() => computeStats(weekLogs), [weekLogs]);
@@ -85,6 +90,25 @@ export default function WeeklyReview({ onComplete }) {
   const handlePruningChoice = (goalId, action) => {
     setPruningChoices((prev) => ({ ...prev, [goalId]: action }));
     if (action === 'compost') deleteGoal(goalId);
+  };
+
+  const handleCompostAction = (item, action) => {
+    setCompostChoices((prev) => ({ ...prev, [item.id]: action }));
+    if (action === 'plant') {
+      addGoal({
+        id: uid(),
+        type: 'kaizen',
+        title: item.text?.trim() || 'Restored from compost',
+        totalMinutes: 0,
+        createdAt: new Date().toISOString(),
+        subtasks: [{ id: uid(), title: 'First step', estimatedHours: 0.1, completedHours: 0 }],
+        milestones: [],
+      });
+      removeFromCompost(item.id);
+    } else if (action === 'letGo') {
+      removeFromCompost(item.id);
+    }
+    // 'leave' = no state change
   };
 
   const handleFinish = () => {
@@ -229,6 +253,81 @@ export default function WeeklyReview({ onComplete }) {
                           }`}
                         >
                           ♻️ Compost
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              <button
+                type="button"
+                onClick={() => setStep(4)}
+                className="w-full py-3 font-sans text-stone-800 bg-moss-500 text-stone-50 rounded-xl hover:bg-moss-600 focus:outline-none focus:ring-2 focus:ring-moss-500/50 transition-colors"
+              >
+                Next
+              </button>
+            </motion.div>
+          )}
+
+          {step === 4 && (
+            <motion.div
+              key="step4"
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -12 }}
+              transition={{ duration: 0.3 }}
+            >
+              <h2 className="font-serif text-stone-500 text-sm uppercase tracking-wider mb-2 text-center">
+                Turn the Compost
+              </h2>
+              <p className="font-sans text-sm text-stone-600 text-center mb-6 max-w-md mx-auto">
+                Out of sight, out of mind. Let&apos;s review what we put on pause. No shame in letting things go permanently.
+              </p>
+
+              {compost.length === 0 ? (
+                <p className="font-sans text-stone-500 text-center py-6">Your compost is empty. Nothing to turn this week.</p>
+              ) : (
+                <ul className="space-y-3 mb-8">
+                  {compost.map((item) => (
+                    <li
+                      key={item.id}
+                      className="flex flex-col sm:flex-row sm:items-center gap-3 p-4 rounded-xl border border-stone-200 bg-white"
+                    >
+                      <span className="font-sans text-stone-800 flex-1 min-w-0 break-words">{item.text || 'Untitled'}</span>
+                      <div className="flex flex-wrap gap-2 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => handleCompostAction(item, 'plant')}
+                          className={`px-3 py-1.5 font-sans text-sm rounded-lg transition-colors ${
+                            compostChoices[item.id] === 'plant'
+                              ? 'bg-moss-100 text-moss-800 border border-moss-500/50'
+                              : 'bg-stone-100 text-stone-600 hover:bg-stone-200 border border-transparent'
+                          }`}
+                        >
+                          🌱 Plant it
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleCompostAction(item, 'letGo')}
+                          className={`px-3 py-1.5 font-sans text-sm rounded-lg transition-colors ${
+                            compostChoices[item.id] === 'letGo'
+                              ? 'bg-red-100 text-red-800 border border-red-500/50'
+                              : 'bg-stone-100 text-stone-600 hover:bg-stone-200 border border-transparent'
+                          }`}
+                        >
+                          🗑️ Let it go
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleCompostAction(item, 'leave')}
+                          className={`px-3 py-1.5 font-sans text-sm rounded-lg transition-colors ${
+                            compostChoices[item.id] === 'leave'
+                              ? 'bg-sky-100 text-sky-800 border border-sky-500/50'
+                              : 'bg-stone-100 text-stone-600 hover:bg-stone-200 border border-transparent'
+                          }`}
+                        >
+                          💤 Leave it
                         </button>
                       </div>
                     </li>

@@ -1,11 +1,5 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { getSettings } from '../../services/userSettings';
-
-const SUGGESTIONS = [
-  { key: 'life-admin', label: 'One tiny life-admin thing' },
-  { key: 'personal', label: 'One personal goal step' },
-  { key: 'care', label: 'One care task' },
-];
 
 /**
  * "Start tiny" modal: one primary path to a 5-min session.
@@ -16,12 +10,24 @@ export default function StartNowModal({
   open,
   mode = 'hasTasks',
   candidateTask = null,
-  suggestions = SUGGESTIONS,
+  suggestions: suggestionsProp,
   onStart,
   onPickDifferent,
   onCreateSuggestion,
   onClose,
 }) {
+  const [dynamicSuggestions] = useState(() => {
+    const adminTasks = ['Wipe down one counter', 'Reply to one email', 'Put 5 items away', 'Clear your downloads folder'];
+    const careTasks = ['Drink a glass of water', 'Stretch your shoulders', 'Wash your face', 'Take 10 deep breaths'];
+    return [
+      { key: 'life-admin', label: `Admin: ${adminTasks[Math.floor(Math.random() * adminTasks.length)]}` },
+      { key: 'personal', label: 'Goal: Do 5-mins of a Seed Bag project' },
+      { key: 'care', label: `Care: ${careTasks[Math.floor(Math.random() * careTasks.length)]}` },
+    ];
+  });
+
+  const suggestions = suggestionsProp ?? dynamicSuggestions;
+
   useEffect(() => {
     if (!open) return;
     const handle = (e) => { if (e.key === 'Escape') onClose?.(); };
@@ -84,7 +90,7 @@ export default function StartNowModal({
               No tasks on today&apos;s plan. Choose one to create and start:
             </p>
             <div className="flex flex-col gap-2">
-              {(suggestions || SUGGESTIONS).map(({ key, label }) => (
+              {suggestions.map(({ key, label }) => (
                 <button
                   key={key}
                   type="button"
