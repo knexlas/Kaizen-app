@@ -175,7 +175,7 @@ export async function ensureModelCheckDone() {
 function sanitizeJsonResponse(text) {
   if (typeof text !== 'string') return '';
   let raw = text.trim();
-  raw = raw.replace(/^```json\s*/i, '').replace(/\s*```\s*$/g, '').trim();
+  raw = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/g, '').trim();
   return raw;
 }
 
@@ -906,7 +906,7 @@ Return strict JSON (no markdown):
       "title": "Phase name",
       "weekRange": "Week 1-2",
       "tasks": [
-        { "title": "Task name", "estimatedHours": 5, "type": "kaizen" }
+        { "title": "Task name", "estimatedHours": 5, "type": "kaizen", "weekRange": "Week 1" }
       ],
       "milestone": "What success looks like at the end of this phase"
     }
@@ -920,6 +920,7 @@ Return strict JSON (no markdown):
 Guidelines:
 - Break into 3-6 phases.
 - You MUST fit all phases strictly within the ${availableWeeks} weeks available.
+- SEQUENTIAL TASKS: Within each phase, tasks are often sequential (the first must be done before the second can start). Give each task its own "weekRange" that falls inside the phase. Example: if the phase is "Week 1-2", the first task might be "Week 1", the second "Week 2". If a phase is "Week 3-4", use "Week 3", "Week 4" for consecutive tasks. If tasks can run in parallel, give them the same weekRange. Order tasks in the array in the order they should be done.
 - Calculate the total estimated hours vs available weeks. In "mochiFeedback", assess the feasibility. If it's a heavy load, gently warn the user and suggest scheduling rest or self-care afterwards. If manageable, be encouraging.
 - LINKING RULE: ONLY populate suggestedLinks if the task is an EXACT, undeniable match to an existing goal. If it is only vaguely related, leave suggestedLinks empty!
 `;
@@ -928,23 +929,30 @@ Guidelines:
     const { GoogleGenerativeAI } = await import('@google/generative-ai');
     const genAI = new GoogleGenerativeAI(apiKey);
     const result = await tryGenerate(genAI, prompt);
-    const text = result?.response?.text?.();
+    const text = typeof result?.response?.text === 'function' ? result.response.text() : result?.response?.text;
     if (!text) throw new Error('Empty response');
     let raw = sanitizeJsonResponse(text);
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
     if (jsonMatch) raw = jsonMatch[0];
     const parsed = JSON.parse(raw);
-    // Normalize so consumers get a stable shape
+    // Normalize so consumers get a stable shape (accept tasks from tasks, subtasks, items, or steps)
     if (!Array.isArray(parsed.phases)) parsed.phases = [];
+    const getPhaseTasks = (p) =>
+      Array.isArray(p.tasks) ? p.tasks
+        : Array.isArray(p.subtasks) ? p.subtasks
+          : Array.isArray(p.items) ? p.items
+            : Array.isArray(p.steps) ? p.steps
+              : [];
     parsed.phases = parsed.phases.map((p) => {
-      const phase = { ...p, tasks: Array.isArray(p.tasks) ? p.tasks : [] };
-      phase.tasks = phase.tasks.map((t) => ({
+      const rawTasks = getPhaseTasks(p);
+      const tasks = rawTasks.map((t) => ({
         ...t,
-        title: String(t?.title ?? '').trim() || 'Task',
-        estimatedHours: Math.max(0, Number(t?.estimatedHours) || 2),
+        title: String(t?.title ?? t?.name ?? '').trim() || 'Task',
+        estimatedHours: Math.max(0, Number(t?.estimatedHours ?? t?.hours) || 2),
         type: t?.type === 'routine' ? 'routine' : 'kaizen',
+        weekRange: t?.weekRange != null && String(t.weekRange).trim() ? String(t.weekRange).trim() : null,
       }));
-      return phase;
+      return { ...p, tasks };
     });
     if (!Array.isArray(parsed.suggestedLinks)) parsed.suggestedLinks = [];
     parsed.mochiFeedback = parsed.mochiFeedback != null ? String(parsed.mochiFeedback).trim() : '';
@@ -958,15 +966,22 @@ Guidelines:
       if (jsonMatch) raw = jsonMatch[0];
       const parsed = JSON.parse(raw);
       if (!Array.isArray(parsed.phases)) parsed.phases = [];
+      const getPhaseTasksGroq = (p) =>
+        Array.isArray(p.tasks) ? p.tasks
+          : Array.isArray(p.subtasks) ? p.subtasks
+            : Array.isArray(p.items) ? p.items
+              : Array.isArray(p.steps) ? p.steps
+                : [];
       parsed.phases = parsed.phases.map((p) => {
-        const phase = { ...p, tasks: Array.isArray(p.tasks) ? p.tasks : [] };
-        phase.tasks = phase.tasks.map((t) => ({
+        const rawTasks = getPhaseTasksGroq(p);
+        const tasks = rawTasks.map((t) => ({
           ...t,
-          title: String(t?.title ?? '').trim() || 'Task',
-          estimatedHours: Math.max(0, Number(t?.estimatedHours) || 2),
+          title: String(t?.title ?? t?.name ?? '').trim() || 'Task',
+          estimatedHours: Math.max(0, Number(t?.estimatedHours ?? t?.hours) || 2),
           type: t?.type === 'routine' ? 'routine' : 'kaizen',
+          weekRange: t?.weekRange != null && String(t.weekRange).trim() ? String(t.weekRange).trim() : null,
         }));
-        return phase;
+        return { ...p, tasks };
       });
       if (!Array.isArray(parsed.suggestedLinks)) parsed.suggestedLinks = [];
       parsed.mochiFeedback = parsed.mochiFeedback != null ? String(parsed.mochiFeedback).trim() : '';

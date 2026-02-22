@@ -33,6 +33,7 @@ export default function GoalEditor({ open, goal, onClose, onSave, addSubtask, up
   const [energyImpact, setEnergyImpact] = useState('drain'); // 'drain' | 'boost'
   const [spoonCost, setSpoonCost] = useState(1);
   const [activationEnergy, setActivationEnergy] = useState(1);
+  const [projectDeadline, setProjectDeadline] = useState('');
   const [isTweaking, setIsTweaking] = useState(false);
   const [rituals, setRituals] = useState([]);
   const [expandedPhases, setExpandedPhases] = useState({});
@@ -52,6 +53,7 @@ export default function GoalEditor({ open, goal, onClose, onSave, addSubtask, up
       setEnergyImpact(goal.energyImpact === 'boost' ? 'boost' : 'drain');
       setSpoonCost(goal.spoonCost >= 1 && goal.spoonCost <= 4 ? goal.spoonCost : 1);
       setActivationEnergy(goal.activationEnergy >= 1 && goal.activationEnergy <= 4 ? goal.activationEnergy : 1);
+      setProjectDeadline(goal?._projectDeadline ?? '');
       setRituals((goal.rituals ?? []).map((r) => ({ id: r.id, title: r.title ?? '', days: r.days ?? [], frequency: r.frequency || 'weekly', monthDay: r.monthDay ?? null })));
     }
   }, [goal]);
@@ -142,6 +144,9 @@ export default function GoalEditor({ open, goal, onClose, onSave, addSubtask, up
     if (showHours) {
       updates.targetHours = isProject ? projectTotalHours : (typeof targetHours === 'number' && targetHours >= 0 ? targetHours : 5);
     }
+    if (isProject) {
+      updates._projectDeadline = projectDeadline.trim() || undefined;
+    }
     onSave?.(updates);
     onClose?.();
   };
@@ -202,6 +207,16 @@ export default function GoalEditor({ open, goal, onClose, onSave, addSubtask, up
                     <p className="font-sans text-stone-800 py-2">
                       Total Project Load: <strong>{projectTotalHours}</strong> hours (Sum of all tasks)
                     </p>
+                    <label htmlFor="edit-goal-project-deadline" className="block font-sans text-sm font-medium text-stone-600 mt-3 mb-1">
+                      Project deadline
+                    </label>
+                    <input
+                      id="edit-goal-project-deadline"
+                      type="date"
+                      value={projectDeadline}
+                      onChange={(e) => setProjectDeadline(e.target.value)}
+                      className="w-full py-2 px-3 rounded-lg border border-stone-200 bg-white text-stone-900 font-sans focus:outline-none focus:ring-2 focus:ring-moss-500/40 focus:border-moss-500"
+                    />
                   </>
                 ) : (
                   <>

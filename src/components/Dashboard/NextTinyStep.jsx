@@ -4,13 +4,50 @@ import { useGarden } from '../../context/GardenContext';
 const SNOOZE_MS = 30 * 60 * 1000;
 const MAX_SUGGESTIONS = 3;
 
-/** Build 1–3 micro-action suggestions from today's plan, compost inbox, and recent activity. */
+function isRoutineOrMaintenance(item) {
+  const g = item?.goal;
+  return g?.type === 'routine' || g?.energyType === 'maintenance';
+}
+
+/** True if goal is low-activation (1 or 2) or has no activationEnergy set (backward compat). */
+function isLowActivationGoal(goal) {
+  const ae = goal?.activationEnergy;
+  return ae === undefined || ae === null || ae === 1 || ae === 2;
+}
+
+/** Parse "Week 1-2" or "Week 3" into 0-based week indices { start, end }. */
+function parseWeekRange(weekRangeStr, totalWeeks = 14) {
+  if (!weekRangeStr || typeof weekRangeStr !== 'string') return { start: 0, end: totalWeeks - 1 };
+  const m = weekRangeStr.trim().match(/Week\s*(\d+)(?:\s*[-–]\s*(\d+))?/i);
+  if (!m) return { start: 0, end: totalWeeks - 1 };
+  const start = Math.max(0, parseInt(m[1], 10) - 1);
+  const end = m[2] ? Math.min(totalWeeks - 1, parseInt(m[2], 10) - 1) : start;
+  return { start: Math.min(start, end), end };
+}
+
+/** Current 0-based week index from project start (deadline - totalWeeks). */
+function getCurrentWeekIndex(projectDeadline, totalWeeks = 14) {
+  if (!projectDeadline || totalWeeks < 1) return 0;
+  const end = new Date(projectDeadline + 'T23:59:59').getTime();
+  const start = end - totalWeeks * 7 * 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  if (now < start) return 0;
+  if (now > end) return totalWeeks - 1;
+  const weekIndex = Math.floor((now - start) / (7 * 24 * 60 * 60 * 1000));
+  return Math.max(0, Math.min(totalWeeks - 1, weekIndex));
+}
+
+/** Build 1–3 micro-action suggestions from today's plan, compost inbox, and recent activity.
+ * Ensures at least one suggestion is a routine or maintenance task from the day's plan when available.
+ * When lowEnergy is true, only suggests tasks with activationEnergy 1 or 2.
+ */
 function useTinyStepSuggestions({
   todayPlanItems,
   compost = [],
   logs = [],
   goals = [],
   snoozedUntil = {},
+  lowEnergy = false,
 }) {
   const isSnoozed = useCallback(
     (id) => {
@@ -23,9 +60,49 @@ function useTinyStepSuggestions({
   return useMemo(() => {
     const out = [];
     const used = new Set();
+    const planItems = lowEnergy ? todayPlanItems.filter((item) => isLowActivationGoal(item.goal)) : todayPlanItems;
+
+    // 0) Active project: first uncompleted subtask from the current phase (or first uncompleted phase)
+    const projectGoals = (goals || []).filter((g) => g._projectGoal === true);
+    for (const goal of projectGoals) {
+      if (lowEnergy && !isLowActivationGoal(goal)) continue;
+      const phases = goal.milestones || [];
+      const totalWeeks = Math.max(1, Number(goal._projectTotalWeeks) || 14);
+      const currentWeek = getCurrentWeekIndex(goal._projectDeadline, totalWeeks);
+
+      let activePhase = null;
+      const phaseInRange = phases.find((p) => {
+        const { start, end } = parseWeekRange(p.weekRange, totalWeeks);
+        return currentWeek >= start && currentWeek <= end;
+      });
+      if (phaseInRange) {
+        activePhase = phaseInRange;
+      } else {
+        activePhase = phases.find((p) => !p.completed) || phases[0] || null;
+      }
+      if (!activePhase) continue;
+
+      const subtasks = (goal.subtasks || []).filter((st) => st.phaseId === activePhase.id);
+      const firstIncomplete = subtasks.find((st) => (st.completedHours ?? 0) < (st.estimatedHours || 1));
+      if (!firstIncomplete) continue;
+
+      const id = `project-${goal.id}-${firstIncomplete.id}`;
+      if (used.has(goal.id) || used.has(id)) continue;
+      used.add(goal.id);
+      used.add(id);
+      out.unshift({
+        id,
+        source: 'project',
+        title: firstIncomplete.title || 'Project task',
+        goalId: goal.id,
+        goal,
+        subtaskId: firstIncomplete.id,
+      });
+      break; // one high-priority project suggestion at the top
+    }
 
     // 1) Today's plan (up to 2)
-    for (const item of todayPlanItems) {
+    for (const item of planItems) {
       if (out.length >= MAX_SUGGESTIONS) break;
       const id = `plan-${item.goalId}-${item.hour ?? ''}`;
       if (used.has(item.goalId) || isSnoozed(id)) continue;
@@ -63,6 +140,7 @@ function useTinyStepSuggestions({
       if (out.length >= MAX_SUGGESTIONS || used.has(goalId)) continue;
       const goal = goals?.find((g) => g.id === goalId);
       if (!goal) continue;
+      if (lowEnergy && !isLowActivationGoal(goal)) continue;
       const id = `recent-${goalId}`;
       if (isSnoozed(id)) continue;
       used.add(goalId);
@@ -75,8 +153,30 @@ function useTinyStepSuggestions({
       });
     }
 
+    // 4) Ensure at least one suggestion is routine/maintenance from today's plan (life admin visibility)
+    const hasRoutineOrMaintenance = out.some(isRoutineOrMaintenance);
+    if (!hasRoutineOrMaintenance && planItems.length > 0) {
+      const firstRoutineOrMaintenance = planItems.find(
+        (item) => isRoutineOrMaintenance(item) && !used.has(item.goalId) && !isSnoozed(`plan-${item.goalId}-${item.hour ?? ''}`)
+      );
+      if (firstRoutineOrMaintenance) {
+        const item = firstRoutineOrMaintenance;
+        const id = `plan-${item.goalId}-${item.hour ?? ''}`;
+        used.add(item.goalId);
+        out.unshift({
+          id,
+          source: 'plan',
+          title: item.ritualTitle || item.goal?.title || 'Task',
+          goalId: item.goalId,
+          goal: item.goal,
+          hour: item.hour,
+          subtaskId: item.subtaskId,
+        });
+      }
+    }
+
     return out.slice(0, MAX_SUGGESTIONS);
-  }, [todayPlanItems, compost, logs, goals, isSnoozed, snoozedUntil]);
+  }, [todayPlanItems, compost, logs, goals, isSnoozed, snoozedUntil, lowEnergy]);
 }
 
 export default function NextTinyStep({
@@ -85,6 +185,7 @@ export default function NextTinyStep({
   onMovePlanItemToCompost,
   onCompostStart5Min,
   onCompostMarkDone,
+  lowEnergy = false,
   compact = false,
   className = '',
 }) {
@@ -116,6 +217,7 @@ export default function NextTinyStep({
     logs,
     goals,
     snoozedUntil,
+    lowEnergy,
   });
 
   const handleSnooze = useCallback((itemId) => {
@@ -124,18 +226,13 @@ export default function NextTinyStep({
 
   const handleMarkDone = useCallback(
     (suggestion) => {
-      if (suggestion.source === 'plan' && suggestion.goal) {
+      if ((suggestion.source === 'plan' || suggestion.source === 'recent' || suggestion.source === 'project') && suggestion.goal) {
         const est = suggestion.goal.estimatedMinutes ?? 60;
         const current = suggestion.goal.totalMinutes ?? 0;
         if (current < est) editGoal?.(suggestion.goalId, { totalMinutes: Math.max(current, est) });
         onMarkPlanItemDone?.(suggestion);
       } else if (suggestion.source === 'compost' && suggestion.compostItem) {
         onCompostMarkDone?.(suggestion.compostItem);
-      } else if (suggestion.source === 'recent' && suggestion.goal) {
-        const est = suggestion.goal.estimatedMinutes ?? 60;
-        const current = suggestion.goal.totalMinutes ?? 0;
-        if (current < est) editGoal?.(suggestion.goalId, { totalMinutes: Math.max(current, est) });
-        onMarkPlanItemDone?.(suggestion);
       }
     },
     [editGoal, onMarkPlanItemDone, onCompostMarkDone]
@@ -143,7 +240,7 @@ export default function NextTinyStep({
 
   const handleMoveToCompost = useCallback(
     (suggestion) => {
-      if (suggestion.source === 'plan' || suggestion.source === 'recent') {
+      if (suggestion.source === 'plan' || suggestion.source === 'recent' || suggestion.source === 'project') {
         onMovePlanItemToCompost?.(suggestion);
       }
       // Compost items are already in compost; no "move to compost" for them
@@ -153,8 +250,8 @@ export default function NextTinyStep({
 
   const handleStart5Min = useCallback(
     (suggestion) => {
-      if (suggestion.source === 'plan' || suggestion.source === 'recent') {
-        if (suggestion.goal?.id) onStartSession?.(suggestion.goalId, null, suggestion.title, suggestion.subtaskId);
+      if (suggestion.source === 'plan' || suggestion.source === 'recent' || suggestion.source === 'project') {
+        if (suggestion.goal?.id) onStartSession?.(suggestion.goalId, suggestion.hour ?? null, suggestion.title, suggestion.subtaskId);
       } else if (suggestion.source === 'compost') {
         onCompostStart5Min?.(suggestion.compostItem);
       }
@@ -190,7 +287,7 @@ export default function NextTinyStep({
               >
                 5 min
               </button>
-              {(s.source === 'plan' || s.source === 'recent') && (
+              {(s.source === 'plan' || s.source === 'recent' || s.source === 'project') && (
                 <>
                   <button
                     type="button"

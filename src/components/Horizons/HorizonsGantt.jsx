@@ -11,7 +11,13 @@ function parseWeekRange(weekRangeStr, totalWeeks = 14) {
 
 const TOTAL_WEEKS = 14;
 
-export default function HorizonsGantt({ goals = [], onGoalClick }) {
+export default function HorizonsGantt({
+  goals = [],
+  onGoalClick,
+  onDeleteGoal,
+  onToggleMilestone,
+  onUpdateSubtask,
+}) {
   const [expandedPhases, setExpandedPhases] = useState({});
   const togglePhase = (id) => setExpandedPhases((prev) => ({ ...prev, [id]: !prev[id] }));
 
@@ -60,11 +66,25 @@ export default function HorizonsGantt({ goals = [], onGoalClick }) {
               // 1. MASTER PROJECT ROW
               rows.push(
                 <tr key={`proj-${goal.id}`} className="border-b border-stone-200 bg-stone-50/50">
-                  <td className="py-2 px-3 flex items-center justify-between">
+                  <td className="py-2 px-3 flex items-center justify-between gap-2">
                     <span className="font-medium text-stone-800 font-serif">{goal.title}</span>
-                    <button type="button" onClick={(e) => { e.stopPropagation(); onGoalClick?.(goal); }} className="text-xs text-stone-400 hover:text-stone-600 px-2 py-1 rounded bg-stone-100">
-                      ✏️ Edit
-                    </button>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button type="button" onClick={(e) => { e.stopPropagation(); onGoalClick?.(goal); }} className="text-xs text-stone-400 hover:text-stone-600 px-2 py-1 rounded bg-stone-100">
+                        ✏️ Edit
+                      </button>
+                      {onDeleteGoal && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (window.confirm('Delete this project? This cannot be undone.')) onDeleteGoal(goal.id);
+                          }}
+                          className="text-xs text-stone-400 hover:text-red-600 px-2 py-1 rounded bg-stone-100"
+                        >
+                          🗑️ Delete
+                        </button>
+                      )}
+                    </div>
                   </td>
                   {weekLabels.map((_, i) => <td key={i} className="bg-stone-50/50 border-l border-white/50" />)}
                   <td className={`py-2 px-2 text-stone-500 text-xs shrink-0 ${isOverdue ? 'text-amber-600' : ''}`}>
@@ -82,6 +102,19 @@ export default function HorizonsGantt({ goals = [], onGoalClick }) {
                 rows.push(
                   <tr key={`ph-${phase.id}`} onClick={() => togglePhase(phase.id)} className="border-b border-stone-100 hover:bg-stone-50 cursor-pointer transition-colors">
                     <td className="py-2 px-3 pl-6 flex items-center gap-2">
+                      {onToggleMilestone && (
+                        <input
+                          type="checkbox"
+                          checked={!!isDone}
+                          onChange={(e) => { e.stopPropagation(); }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onToggleMilestone(goal.id, phase.id);
+                          }}
+                          className="rounded border-stone-300 text-moss-500 focus:ring-moss-500/50 shrink-0"
+                          aria-label={`Mark phase "${phase.title}" as ${isDone ? 'incomplete' : 'complete'}`}
+                        />
+                      )}
                       <span className="text-stone-400 text-xs">{isExpanded ? '▼' : '▶'}</span>
                       <span className={`font-sans text-sm ${isDone ? 'text-stone-400 line-through' : 'text-stone-700'}`}>{phase.title}</span>
                     </td>
@@ -96,24 +129,40 @@ export default function HorizonsGantt({ goals = [], onGoalClick }) {
                   </tr>
                 );
 
-                // 3. SUBTASK ROWS (If Expanded)
+                // 3. SUBTASK ROWS (If Expanded) — use subtask's own weekRange when set (sequential tasks)
                 if (isExpanded) {
+                  const totalWeeks = Math.max(1, Number(goal._projectTotalWeeks) || TOTAL_WEEKS);
                   const subtasks = (goal.subtasks || []).filter((st) => st.phaseId === phase.id);
                   subtasks.forEach((st) => {
                     const stDone = (st.completedHours ?? 0) >= (st.estimatedHours ?? 0);
+                    const stWeekRange = st.weekRange || phase.weekRange;
+                    const { start: stStartWeek, end: stEndWeek } = parseWeekRange(stWeekRange, totalWeeks);
                     rows.push(
                       <tr key={`st-${st.id}`} className="border-b border-stone-50/50 bg-stone-50/30">
-                        <td className="py-1.5 px-3 pl-12">
+                        <td className="py-1.5 px-3 pl-12 flex items-center gap-2">
+                          {onUpdateSubtask && (
+                            <input
+                              type="checkbox"
+                              checked={stDone}
+                              onChange={(e) => { e.stopPropagation(); }}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onUpdateSubtask(goal.id, st.id, { completedHours: stDone ? 0 : (st.estimatedHours || 1) });
+                              }}
+                              className="rounded border-stone-300 text-moss-500 focus:ring-moss-500/50 shrink-0"
+                              aria-label={`Mark "${st.title}" as ${stDone ? 'incomplete' : 'complete'}`}
+                            />
+                          )}
                           <span className={`font-sans text-xs ${stDone ? 'text-stone-400 line-through' : 'text-stone-500'}`}>↳ {st.title}</span>
                         </td>
                         {weekLabels.map((_, i) => (
                           <td key={i} className="py-1 px-0.5 align-middle">
-                            {i >= startWeek && i <= endWeek && (
+                            {i >= stStartWeek && i <= stEndWeek && (
                               <div className="h-0.5 w-full bg-stone-200" />
                             )}
                           </td>
                         ))}
-                        <td className="py-1.5 px-2 text-stone-400 text-[10px]">{st.estimatedHours}h</td>
+                        <td className="py-1.5 px-2 text-stone-400 text-[10px]">{st.estimatedHours}h{stWeekRange !== phase.weekRange ? ` · ${stWeekRange}` : ''}</td>
                       </tr>
                     );
                   });

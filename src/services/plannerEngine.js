@@ -207,9 +207,27 @@ export function autoFillWeek(goals, calendarEvents, startDate) {
           goalId: goal.id,
           subtaskId: st.id,
           title: st.title || 'Task',
+          deadline: st.deadline != null ? st.deadline : null,
+          _projectGoal: goal._projectGoal === true,
         });
       }
     });
+  });
+
+  // Sort: deadlines first (closest first), then project goals, then standard Kaizen
+  incompleteSubtasks.sort((a, b) => {
+    const aHasDeadline = a.deadline != null && String(a.deadline).trim() !== '';
+    const bHasDeadline = b.deadline != null && String(b.deadline).trim() !== '';
+    if (aHasDeadline && !bHasDeadline) return -1;
+    if (!aHasDeadline && bHasDeadline) return 1;
+    if (aHasDeadline && bHasDeadline) {
+      const dateA = new Date(a.deadline).getTime();
+      const dateB = new Date(b.deadline).getTime();
+      return dateA - dateB;
+    }
+    if (a._projectGoal && !b._projectGoal) return -1;
+    if (!a._projectGoal && b._projectGoal) return 1;
+    return 0;
   });
 
   // 1. Routines → 08:00 (early morning) or 18:00 (evening) for every day

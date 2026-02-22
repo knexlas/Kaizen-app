@@ -9,6 +9,7 @@ import { useGarden } from '../../context/GardenContext';
 import { localISODate } from '../../services/dateUtils';
 import { getSettings } from '../../services/userSettings';
 import { shouldReduceMotion } from '../../services/motion';
+import { DefaultSpiritSvg } from './MochiSpirit';
 import WoodenSpoon from '../WoodenSpoon';
 
 const HOUR_START = 6;
@@ -37,6 +38,20 @@ function getSubtaskFromAssignment(a) {
 }
 function isRoutineSession(a) {
   return a && typeof a === 'object' && a.type === 'routine' && a.parentGoalId;
+}
+
+/** Emoji for the user's spirit from Spirit Builder (creation). Matches GardenDashboard / MochiSpirit. */
+function getSpiritEmoji(spiritConfig) {
+  if (!spiritConfig) return '🦉';
+  if (spiritConfig.type === 'custom' && spiritConfig.head) {
+    const HEADS = { bunny: '🐰', cat: '🐱', bear: '🐻', fox: '🦊', bot: '🤖', owl: '🦉' };
+    return HEADS[spiritConfig.head] ?? '✨';
+  }
+  if (spiritConfig.type === 'cat') return '🐱';
+  if (spiritConfig.type === 'ember') return '🔥';
+  if (spiritConfig.type === 'nimbus') return '☁️';
+  if (spiritConfig.type === 'mochi') return '🐱';
+  return '🦉';
 }
 
 function LowBatteryIcon() {
@@ -1368,7 +1383,7 @@ function TimeSlicer({
   onDiscardWeekPlan,
   monthlyRoadmap = null,
 }) {
-  const { googleToken: googleTokenContext } = useGarden();
+  const { googleToken: googleTokenContext, spiritConfig } = useGarden();
   const googleToken = googleTokenProp ?? googleTokenContext ?? null;
 
   const [viewMode, setViewMode] = useState('day'); // 'day' | 'week' | 'month'
@@ -1379,6 +1394,7 @@ function TimeSlicer({
   const [seedPickerTargetHour, setSeedPickerTargetHour] = useState(null);
   const [spoonsToast, setSpoonsToast] = useState(false);
   const [autoPlanToast, setAutoPlanToast] = useState(false);
+  const [lightenedTasksFeedback, setLightenedTasksFeedback] = useState([]);
   const [now, setNow] = useState(() => new Date());
   const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < MOBILE_BREAKPOINT);
   const { weekAssignments, loadWeekPlans, loadDayPlan, saveDayPlanForDate } = useGarden();
@@ -1469,14 +1485,16 @@ function TimeSlicer({
   const isLowEnergy =
     (typeof dailySpoonCount === 'number' && dailySpoonCount <= 4) || dailyEnergyModifier === -2;
   const filledTimes = HOURS.filter((h) => assignments[h] != null);
-  const filledSpoonTotal = HOURS.reduce((sum, h) => {
-    const a = assignments[h];
-    if (!a) return sum;
-    if (a && typeof a === 'object' && (a.type === 'recovery' || a.spoonCost === 0)) return sum;
-    const gid = getGoalIdFromAssignment(a);
-    const goal = goals.find((g) => g.id === gid);
-    return sum + getSpoonCost(goal ?? a);
-  }, 0);
+  const filledSpoonTotal = useMemo(() => {
+    return HOURS.reduce((sum, h) => {
+      const a = assignments[h];
+      if (!a) return sum;
+      if (a && typeof a === 'object' && (a.type === 'recovery' || a.spoonCost === 0)) return sum;
+      const gid = getGoalIdFromAssignment(a);
+      const goal = goals.find((g) => g.id === gid);
+      return sum + getSpoonCost(goal ?? a);
+    }, 0);
+  }, [assignments, goals]);
   const isOverCapacity = filledSpoonTotal > maxSlots;
 
   const handleLightenLoad = () => {
@@ -1488,6 +1506,7 @@ function TimeSlicer({
     if (result != null) {
       if (isControlled) onAssignmentsChange(result.assignments);
       else setInternalAssignments(result.assignments);
+      setLightenedTasksFeedback(result.removedItems ?? []);
       onLoadLightened?.(result.removedItems);
     }
   };
@@ -1536,6 +1555,14 @@ function TimeSlicer({
         setPendingRoutineDrop({ time, goal, value });
         return;
       }
+    } else if (goal?.type === 'kaizen') {
+      const vines = goal.subtasks ?? [];
+      if (vines.length > 0) {
+        value = { goalId: goal.id };
+        setPendingRoutineDrop({ time, goal, value });
+        return;
+      }
+      value = ritualTitle ? { goalId, ritualTitle } : goalId;
     } else {
       value = ritualTitle ? { goalId, ritualTitle } : goalId;
     }
@@ -1592,6 +1619,15 @@ function TimeSlicer({
         setSeedPickerTargetHour(null);
         return;
       }
+    } else if (goal.type === 'kaizen') {
+      const vines = goal.subtasks ?? [];
+      if (vines.length > 0) {
+        value = { goalId: goal.id };
+        setPendingRoutineDrop({ time, goal, value });
+        setSeedPickerTargetHour(null);
+        return;
+      }
+      value = ritualTitle ? { goalId: goal.id, ritualTitle } : goal.id;
     } else {
       value = ritualTitle ? { goalId: goal.id, ritualTitle } : goal.id;
     }
@@ -1751,7 +1787,13 @@ function TimeSlicer({
         )}
         {filledSpoonTotal >= maxSlots && (
           <div className="mb-4 p-3 bg-amber-50/80 border border-amber-200/60 rounded-xl flex items-start gap-3" role="status">
-            <span className="text-xl shrink-0" aria-hidden>🦉</span>
+            <span className="text-xl shrink-0 inline-flex items-center justify-center" aria-hidden>
+              {spiritConfig?.type === 'mochi' ? (
+                <DefaultSpiritSvg className="w-8 h-8" />
+              ) : (
+                getSpiritEmoji(spiritConfig)
+              )}
+            </span>
             <p className="font-sans text-sm text-amber-800 leading-relaxed">
               &ldquo;Your energy is depleted today. You may still plant these seeds, but please consider resting first. The garden will wait for you.&rdquo;
             </p>
@@ -2079,16 +2121,20 @@ function TimeSlicer({
         )}
       </AnimatePresence>
 
-      {/* Project picker: when dropping routine with subtasks */}
+      {/* Project/vine picker: when dropping routine or kaizen goal with subtasks */}
       {pendingRoutineDrop && (
         <div
           className="fixed inset-0 z-[60] flex items-center justify-center bg-stone-900/50 backdrop-blur-sm p-4"
           role="dialog"
           aria-modal="true"
-          aria-label="Choose project"
+          aria-label={pendingRoutineDrop.goal.type === 'kaizen' ? 'Choose vine' : 'Choose project'}
         >
           <div className="bg-stone-50 rounded-2xl border border-stone-200 shadow-xl max-w-sm w-full p-6">
-            <h3 className="font-serif text-stone-900 text-lg mb-2">Which project are we working on?</h3>
+            <h3 className="font-serif text-stone-900 text-lg mb-2">
+              {pendingRoutineDrop.goal.type === 'kaizen'
+                ? 'Which vine are we working on?'
+                : 'Which project are we working on?'}
+            </h3>
             <p className="font-sans text-sm text-stone-500 mb-4">{pendingRoutineDrop.goal.title}</p>
             <div className="flex flex-col gap-2">
               {(pendingRoutineDrop.goal.subtasks ?? []).map((st) => (
@@ -2106,7 +2152,7 @@ function TimeSlicer({
                 onClick={() => handleProjectSelect(null)}
                 className="py-2.5 px-4 rounded-xl border border-stone-200 bg-stone-100 font-sans text-sm text-stone-600 hover:bg-stone-200 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
               >
-                No project
+                {pendingRoutineDrop.goal.type === 'kaizen' ? 'No specific vine' : 'No project'}
               </button>
             </div>
             <button
@@ -2119,6 +2165,40 @@ function TimeSlicer({
           </div>
         </div>
       )}
+
+      {/* Lightened load feedback: show which tasks were removed and why */}
+      <AnimatePresence>
+        {lightenedTasksFeedback.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 10 }}
+            transition={{ duration: 0.2 }}
+            className="fixed bottom-4 left-4 right-4 z-[55] md:left-auto md:right-4 md:max-w-md rounded-2xl border border-stone-200 bg-stone-50 shadow-xl p-6"
+            role="status"
+            aria-live="polite"
+          >
+            <h3 className="font-serif text-stone-900 text-lg mb-2">Load lightened</h3>
+            <p className="font-sans text-sm text-stone-500 mb-4">These tasks were removed to fit your energy:</p>
+            <ul className="space-y-2 mb-4 max-h-40 overflow-y-auto">
+              {lightenedTasksFeedback.map((item, i) => (
+                <li key={`${item.hour}-${item.title}-${i}`} className="py-2.5 px-4 rounded-xl border border-stone-200 bg-white font-sans text-sm text-stone-800">
+                  <span className="font-medium text-stone-900">{item.hour}</span>
+                  <span className="text-stone-700"> — {item.title}</span>
+                  <p className="font-sans text-stone-500 text-xs mt-0.5">{item.reason}</p>
+                </li>
+              ))}
+            </ul>
+            <button
+              type="button"
+              onClick={() => setLightenedTasksFeedback([])}
+              className="w-full py-2.5 px-4 rounded-xl font-sans text-sm font-medium bg-moss-600 text-stone-50 hover:bg-moss-700 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
+            >
+              Dismiss
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

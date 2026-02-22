@@ -398,6 +398,12 @@ function getEnergyType(goal) {
   return 'maintenance';
 }
 
+/** Activation energy 1–4 (higher = harder to start). Default 1. */
+function getActivationEnergy(goal) {
+  const n = goal?.activationEnergy;
+  return Math.max(1, Math.min(4, Number(n) || 1));
+}
+
 /**
  * Suggest a lighter schedule based on energy level and goal energyType.
  * Goals may have energyType: 'high-focus' | 'maintenance' | 'restorative'.
@@ -422,8 +428,9 @@ export function suggestLoadLightening(assignments, goals, maxSlots, energyModifi
     const goal = goalMap.get(gid);
     const title = (a && typeof a === 'object' && a.title) ? a.title : (goal?.title ?? 'Task');
     const energyType = getEnergyType(goal);
+    const activationEnergy = getActivationEnergy(goal);
     const spoonCost = a && typeof a === 'object' && (a.type === 'recovery' || a.spoonCost === 0) ? 0 : getSpoonCost(goal ?? a);
-    return { hour, goalId: gid, title, energyType, spoonCost };
+    return { hour, goalId: gid, title, energyType, activationEnergy, spoonCost };
   });
 
   const filledSpoonTotal = filled.reduce((sum, f) => sum + (f.spoonCost ?? 1), 0);
@@ -435,6 +442,12 @@ export function suggestLoadLightening(assignments, goals, maxSlots, energyModifi
   const highEnergy = modifier > 0;
 
   const sorted = filled.slice().sort((a, b) => {
+    // When low energy, remove high-activation tasks first (4, 3), then use energyType order
+    if (lowEnergy) {
+      const aeA = a.activationEnergy ?? 1;
+      const aeB = b.activationEnergy ?? 1;
+      if (aeA !== aeB) return aeB - aeA; // higher activationEnergy first (remove first)
+    }
     if (removeOrder) {
       const orderA = removeOrder[a.energyType] ?? 1;
       const orderB = removeOrder[b.energyType] ?? 1;
@@ -455,15 +468,15 @@ export function suggestLoadLightening(assignments, goals, maxSlots, energyModifi
     currentTotal -= cost;
     let reason;
     if (lowEnergy) {
-      reason = energyType === 'high-focus'
+      reason = item.energyType === 'high-focus'
         ? 'Low energy: removed high-focus task to protect your capacity.'
-        : energyType === 'maintenance'
+        : item.energyType === 'maintenance'
           ? 'Low energy: removed maintenance task to lighten the load.'
           : 'Low energy: kept restorative tasks; removed this to fit capacity.';
     } else if (highEnergy) {
-      reason = energyType === 'restorative'
+      reason = item.energyType === 'restorative'
         ? 'High energy: removed restorative task to free space for focus work.'
-        : energyType === 'maintenance'
+        : item.energyType === 'maintenance'
           ? 'High energy: removed maintenance task to fit capacity.'
           : 'High energy: kept focus work; removed this to fit capacity.';
     } else {

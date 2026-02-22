@@ -89,6 +89,7 @@ export default function ProjectPlanner({ open, onClose, onCreateGoals }) {
           completedHours: 0,
           deadline: null,
           color: null,
+          weekRange: task.weekRange != null && String(task.weekRange).trim() ? String(task.weekRange).trim() : null,
         });
       });
     });
