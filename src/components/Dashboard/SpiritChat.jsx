@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ThinkingDots } from './MochiSpirit';
+import { DefaultSpiritSvg, ThinkingDots } from './MochiSpirit';
 import { chatWithSpirit } from '../../services/geminiService';
 import { useGarden } from '../../context/GardenContext';
 import { extractActionCandidate, splitIntoSteps } from '../../services/aiActionExtractor';
@@ -47,8 +47,19 @@ function fireToast(message) {
 }
 
 export default function SpiritChat({ open, onClose, context = {} }) {
-  const { addGoal, addToCompost, setAssignments, assignments } = useGarden();
+  const { addGoal, addToCompost, setAssignments, assignments, spiritConfig } = useGarden();
   const [history, setHistory] = useState([]);
+
+  const renderSpiritAvatar = () => {
+    if (!spiritConfig) return <span className="text-4xl">✨</span>;
+    if (spiritConfig.type === 'mochi') return <DefaultSpiritSvg className="w-10 h-10 drop-shadow-sm" />;
+    if (spiritConfig.type === 'custom') {
+      const HEADS = { bunny: '🐰', cat: '🐱', bear: '🐻', fox: '🦊', bot: '🤖', owl: '🦉' };
+      return <span className="text-4xl">{HEADS[spiritConfig.head] || '✨'}</span>;
+    }
+    const ARCHETYPES = { cat: '🐱', ember: '🔥', nimbus: '☁️', owl: '🦉' };
+    return <span className="text-4xl">{ARCHETYPES[spiritConfig.type] || '✨'}</span>;
+  };
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef(null);
@@ -183,8 +194,13 @@ export default function SpiritChat({ open, onClose, context = {} }) {
           className="w-full max-w-md h-full bg-stone-50 border-l border-stone-200 shadow-xl flex flex-col safe-area-pt safe-area-pb max-h-[100dvh]"
         >
           {/* Header */}
-          <div className="flex items-center justify-between px-4 py-3 border-b border-stone-200 bg-white/80">
-            <h2 className="font-serif text-stone-900 text-lg">Chat with Mochi</h2>
+          <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-stone-200 bg-white/80">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="flex-shrink-0 flex items-center justify-center w-10 h-10">
+                {renderSpiritAvatar()}
+              </div>
+              <h2 className="font-serif text-stone-900 text-lg truncate">Chat with Mochi</h2>
+            </div>
             <button
               type="button"
               onClick={onClose}

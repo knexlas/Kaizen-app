@@ -72,8 +72,10 @@ export function optimizeDailySchedule(tasks, energyLevel = 'medium') {
 
 // --- Auto-fill week (7-day window) ---
 
+import { localISODate } from './dateUtils';
+
 function toDateStr(d) {
-  return d.toISOString().slice(0, 10);
+  return localISODate(d);
 }
 
 function parseStartDate(startDate) {

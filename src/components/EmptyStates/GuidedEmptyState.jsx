@@ -118,7 +118,7 @@ export default function GuidedEmptyState({
   }
 
   if (variant === 'noGoals') {
-    const showGoals = (goals || []).slice(0, 3);
+    const showGoals = (goals || []).filter((g) => (g.type === 'kaizen' || g.type === 'project') && !g.completed).slice(0, 3);
     return (
       <div
         className={

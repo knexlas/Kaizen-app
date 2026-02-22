@@ -1,7 +1,9 @@
+import { localISODate } from './dateUtils';
+
 const STORAGE_KEY = 'kaizen_spirit_briefing';
 
 function todayString() {
-  return new Date().toISOString().slice(0, 10);
+  return localISODate();
 }
 
 /**

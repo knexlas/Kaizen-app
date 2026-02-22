@@ -128,6 +128,7 @@ export default function FocusSession({
   const [ambience, setAmbience] = useState(getStoredAmbience);
   const [soundMenuOpen, setSoundMenuOpen] = useState(false);
   const [volume, setVolume] = useState(0.5);
+  const [hasCommitted, setHasCommitted] = useState(false);
   const controlsTimeoutRef = useRef(null);
   const ambienceAudioRef = useRef(null);
   const gongAudioRef = useRef(null);
@@ -283,9 +284,9 @@ export default function FocusSession({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [soundMenuOpen]);
 
-  // Timer tick
+  // Timer tick (only after user has committed)
   useEffect(() => {
-    if (isComplete || isPaused) return;
+    if (!hasCommitted || isComplete || isPaused) return;
     if (secondsLeft <= 0) {
       const mins = Math.max(1, Math.floor(durationSeconds / 60));
       setCompletedTimeSpentMinutes(mins);
@@ -294,7 +295,7 @@ export default function FocusSession({
     }
     const t = setInterval(() => setSecondsLeft((s) => s - 1), 1000);
     return () => clearInterval(t);
-  }, [isComplete, isPaused, secondsLeft, durationSeconds]);
+  }, [hasCommitted, isComplete, isPaused, secondsLeft, durationSeconds]);
 
   const progressPercent =
     secondsLeft <= 0 ? 100 : ((durationSeconds - secondsLeft) / durationSeconds) * 100;
@@ -307,6 +308,43 @@ export default function FocusSession({
   }, []);
 
   if (!activeTask) return null;
+
+  const durationMinutes = Math.round(durationSeconds / 60);
+  const taskTitle = activeTask?.title ?? 'This single step';
+
+  if (!hasCommitted) {
+    return (
+      <div
+        className="fixed inset-0 z-50 bg-stone-100 flex flex-col items-center justify-center px-4"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Single-pointed focus commitment"
+      >
+        <div className="flex flex-col items-center justify-center h-full max-w-md mx-auto text-center animate-in fade-in zoom-in duration-500">
+          <div className="text-5xl mb-6">🍵</div>
+          <h2 className="font-serif text-2xl text-stone-800 mb-4">Let the world fade away.</h2>
+          <p className="font-sans text-stone-600 mb-8 leading-relaxed">
+            &ldquo;For the next <strong className="text-moss-700">{durationMinutes} minutes</strong>, nothing else exists except: <br /><br />
+            <span className="text-lg font-medium text-stone-800 bg-stone-100 px-4 py-2 rounded-lg inline-block mt-2">{taskTitle}</span>&rdquo;
+          </p>
+          <button
+            type="button"
+            onClick={() => setHasCommitted(true)}
+            className="px-8 py-3 bg-moss-600 hover:bg-moss-700 text-white rounded-full font-medium transition-transform hover:scale-105 shadow-md shadow-moss-900/20"
+          >
+            I commit to this single step
+          </button>
+          <button
+            type="button"
+            onClick={onExit}
+            className="mt-4 text-sm text-stone-400 hover:text-stone-600 transition-colors"
+          >
+            Wait, I am not ready
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div

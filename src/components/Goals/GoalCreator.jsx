@@ -116,6 +116,8 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
   const [estimatedMinutes, setEstimatedMinutes] = useState(60);
   const [targetHours, setTargetHours] = useState(5);
   const [energyImpact, setEnergyImpact] = useState('drain'); // 'drain' | 'boost'
+  const [spoonCost, setSpoonCost] = useState(1); // 1–4, per slot
+  const [activationEnergy, setActivationEnergy] = useState(1); // 1–4, optional
   const [rituals, setRituals] = useState(() => [newRitual()]);
   const [milestones, setMilestones] = useState(() => []);
   const [milestoneInput, setMilestoneInput] = useState('');
@@ -379,6 +381,8 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
       estimatedMinutes: isVitality ? undefined : (estimatedMinutes ?? 60),
       targetHours: isVitality ? undefined : (targetHours ?? 5),
       energyImpact: isVitality ? undefined : (energyImpact || 'drain'),
+      spoonCost: isVitality ? undefined : (spoonCost >= 1 && spoonCost <= 4 ? spoonCost : 1),
+      activationEnergy: isVitality ? undefined : (activationEnergy >= 1 && activationEnergy <= 4 ? activationEnergy : 1),
       ...(isRoutine && schedulerSettings && { schedulerSettings }),
       ...(isVitality && { metricSettings, metrics: [], tributaryGoalIds: tributaryGoalIds.length ? [...tributaryGoalIds] : [] }),
       rituals: isRoutine || isVitality ? [] : rituals
@@ -431,6 +435,8 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
     setEstimatedMinutes(60);
     setTargetHours(5);
     setEnergyImpact('drain');
+    setSpoonCost(1);
+    setActivationEnergy(1);
     setRituals([newRitual()]);
     setMilestones([]);
     setMilestoneInput('');
@@ -594,7 +600,7 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
               {(goalType === 'kaizen' || goalType === 'routine') && (
                 <>
                   <label className="block font-sans text-sm font-medium text-stone-600 mb-2">Energy impact</label>
-                  <div className="flex gap-2 mb-6">
+                  <div className="flex gap-2 mb-4">
                     <button
                       type="button"
                       onClick={() => setEnergyImpact('drain')}
@@ -613,6 +619,23 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
                     >
                       ⚡ Gives energy
                     </button>
+                  </div>
+                  <label className="block font-sans text-sm font-medium text-stone-600 mb-1.5">Spoon cost per slot (1–4)</label>
+                  <p className="font-sans text-xs text-stone-500 mb-2">How many spoons this task uses. Rest blocks are added after high-cost tasks.</p>
+                  <div className="flex gap-2 mb-6">
+                    {[1, 2, 3, 4].map((n) => (
+                      <button
+                        key={n}
+                        type="button"
+                        onClick={() => setSpoonCost(n)}
+                        className={`w-10 h-10 rounded-lg font-sans text-sm font-medium transition-colors border-2 ${
+                          spoonCost === n ? 'border-moss-500 bg-moss-100 text-moss-800' : 'border-stone-200 bg-stone-50 text-stone-600 hover:border-stone-300'
+                        }`}
+                        title={`${n} spoon${n > 1 ? 's' : ''}`}
+                      >
+                        {n}
+                      </button>
+                    ))}
                   </div>
                 </>
               )}

@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { useGarden } from '../../context/GardenContext';
+import { localISODate } from '../../services/dateUtils';
 
 const DOMAINS = [
   { id: 'body', label: 'Body', emoji: '🌿', color: '#4A5D23' },
@@ -24,9 +25,9 @@ function useFocusTrend(logs) {
     for (let i = numDays - 1; i >= 0; i--) {
       const d = new Date(now);
       d.setDate(d.getDate() - i);
-      const dateStr = d.toISOString().slice(0, 10);
+      const dateStr = localISODate(d);
       const mins = (logs ?? []).reduce((sum, log) => {
-        const logDate = typeof log.date === 'string' ? log.date.slice(0, 10) : (log.date && log.date.toISOString?.().slice(0, 10));
+        const logDate = typeof log.date === 'string' ? log.date.slice(0, 10) : (log.date ? localISODate(new Date(log.date)) : '');
         if (logDate !== dateStr) return sum;
         return sum + (Number(log.minutes) || 0);
       }, 0);
@@ -57,7 +58,7 @@ function useActivityHeatmap(logs) {
   return useMemo(() => {
     const byDate = {};
     (logs ?? []).forEach((log) => {
-      const dateStr = typeof log.date === 'string' ? log.date.slice(0, 10) : (log.date && log.date.toISOString?.().slice(0, 10));
+      const dateStr = typeof log.date === 'string' ? log.date.slice(0, 10) : (log.date ? localISODate(new Date(log.date)) : '');
       if (!dateStr) return;
       const mins = Number(log.minutes) || 0;
       byDate[dateStr] = (byDate[dateStr] || 0) + mins;
@@ -68,7 +69,7 @@ function useActivityHeatmap(logs) {
     for (let i = totalDays - 1; i >= 0; i--) {
       const d = new Date(now);
       d.setDate(d.getDate() - i);
-      const dateStr = d.toISOString().slice(0, 10);
+      const dateStr = localISODate(d);
       days.push({ date: dateStr, minutes: byDate[dateStr] || 0 });
     }
     const maxMins = Math.max(1, ...days.map((x) => x.minutes));

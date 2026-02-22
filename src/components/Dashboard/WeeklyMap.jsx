@@ -61,9 +61,14 @@ function normalizeEvents(raw) {
   });
 }
 
-export default function WeeklyMap({ weeklyPlan, selectedDate, onSelectDate, weekDateLabels }) {
+export default function WeeklyMap({ weeklyPlan, selectedDate, onSelectDate, weekDateLabels, goals = [] }) {
   const [hoveredDay, setHoveredDay] = useState(null);
   const [selectedDay, setSelectedDay] = useState(null);
+
+  const activeGoals = useMemo(
+    () => (Array.isArray(goals) ? goals.filter((g) => (g.type === 'kaizen' || g.type === 'project') && !g.completed) : []),
+    [goals]
+  );
 
   const events = useMemo(() => normalizeEvents(weeklyPlan), [weeklyPlan]);
 

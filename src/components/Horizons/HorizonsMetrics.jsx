@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useGarden } from '../../context/GardenContext';
+import { localISODate } from '../../services/dateUtils';
 
 /** Minimal SVG sparkline: line of values + optional horizontal dashed target. */
 function Sparkline({ data = [], target }) {
@@ -42,7 +43,7 @@ function getLatestMetricValue(goal) {
 function getMetricValueDaysAgo(goal, daysAgo) {
   const targetDate = new Date();
   targetDate.setDate(targetDate.getDate() - daysAgo);
-  const targetStr = targetDate.toISOString().slice(0, 10);
+  const targetStr = localISODate(targetDate);
   const metrics = Array.isArray(goal?.metrics) ? goal.metrics : [];
   const entry = metrics.find((e) => (e.date || '').slice(0, 10) === targetStr);
   if (entry) return entry.value;

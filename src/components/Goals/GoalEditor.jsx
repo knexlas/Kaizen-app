@@ -31,6 +31,8 @@ export default function GoalEditor({ open, goal, onClose, onSave, addSubtask, up
   const [vineDeadline, setVineDeadline] = useState('');
   const [targetHours, setTargetHours] = useState(5);
   const [energyImpact, setEnergyImpact] = useState('drain'); // 'drain' | 'boost'
+  const [spoonCost, setSpoonCost] = useState(1);
+  const [activationEnergy, setActivationEnergy] = useState(1);
   const [isTweaking, setIsTweaking] = useState(false);
   const [rituals, setRituals] = useState([]);
   const [expandedPhases, setExpandedPhases] = useState({});
@@ -48,6 +50,8 @@ export default function GoalEditor({ open, goal, onClose, onSave, addSubtask, up
       setMetricCurrentValue(goal.metricSettings?.currentValue !== undefined && goal.metricSettings?.currentValue !== null ? String(goal.metricSettings.currentValue) : '');
       setTargetHours(Math.max(0, Number(goal.targetHours) ?? 5));
       setEnergyImpact(goal.energyImpact === 'boost' ? 'boost' : 'drain');
+      setSpoonCost(goal.spoonCost >= 1 && goal.spoonCost <= 4 ? goal.spoonCost : 1);
+      setActivationEnergy(goal.activationEnergy >= 1 && goal.activationEnergy <= 4 ? goal.activationEnergy : 1);
       setRituals((goal.rituals ?? []).map((r) => ({ id: r.id, title: r.title ?? '', days: r.days ?? [], frequency: r.frequency || 'weekly', monthDay: r.monthDay ?? null })));
     }
   }, [goal]);
@@ -115,6 +119,8 @@ export default function GoalEditor({ open, goal, onClose, onSave, addSubtask, up
       color: color || undefined,
       metricId: metricId || undefined,
       energyImpact: (goal?.type === 'kaizen' || goal?.type === 'routine' || goal?._projectGoal) ? energyImpact : undefined,
+      spoonCost: (goal?.type === 'kaizen' || goal?.type === 'routine' || goal?._projectGoal) ? (spoonCost >= 1 && spoonCost <= 4 ? spoonCost : 1) : undefined,
+      activationEnergy: (goal?.type === 'kaizen' || goal?.type === 'routine' || goal?._projectGoal) ? (activationEnergy >= 1 && activationEnergy <= 4 ? activationEnergy : 1) : undefined,
     };
     if (goal?.type === 'routine') {
       updates.rituals = rituals.map((r) => ({ id: r.id, title: r.title.trim(), days: r.days || [], frequency: r.frequency || 'weekly', monthDay: r.monthDay ?? null }));
@@ -236,29 +242,67 @@ export default function GoalEditor({ open, goal, onClose, onSave, addSubtask, up
               </div>
             </div>
             {(goal?.type === 'kaizen' || goal?.type === 'routine' || goal?._projectGoal) && (
-              <div>
-                <label className="block font-sans text-sm font-medium text-stone-600 mb-2">Energy impact</label>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setEnergyImpact('drain')}
-                    className={`flex-1 py-2 px-4 rounded-xl font-sans text-sm font-medium transition-colors border-2 ${
-                      energyImpact === 'drain' ? 'border-amber-400 bg-amber-50 text-amber-800' : 'border-stone-200 bg-stone-50 text-stone-600 hover:border-stone-300'
-                    }`}
-                  >
-                    🔋 Takes energy
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setEnergyImpact('boost')}
-                    className={`flex-1 py-2 px-4 rounded-xl font-sans text-sm font-medium transition-colors border-2 ${
-                      energyImpact === 'boost' ? 'border-moss-400 bg-moss-50 text-moss-800' : 'border-stone-200 bg-stone-50 text-stone-600 hover:border-stone-300'
-                    }`}
-                  >
-                    ⚡ Gives energy
-                  </button>
+              <>
+                <div>
+                  <label className="block font-sans text-sm font-medium text-stone-600 mb-2">Energy impact</label>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setEnergyImpact('drain')}
+                      className={`flex-1 py-2 px-4 rounded-xl font-sans text-sm font-medium transition-colors border-2 ${
+                        energyImpact === 'drain' ? 'border-amber-400 bg-amber-50 text-amber-800' : 'border-stone-200 bg-stone-50 text-stone-600 hover:border-stone-300'
+                      }`}
+                    >
+                      🔋 Takes energy
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEnergyImpact('boost')}
+                      className={`flex-1 py-2 px-4 rounded-xl font-sans text-sm font-medium transition-colors border-2 ${
+                        energyImpact === 'boost' ? 'border-moss-400 bg-moss-50 text-moss-800' : 'border-stone-200 bg-stone-50 text-stone-600 hover:border-stone-300'
+                      }`}
+                    >
+                      ⚡ Gives energy
+                    </button>
+                  </div>
                 </div>
-              </div>
+                <div>
+                  <label className="block font-sans text-sm font-medium text-stone-600 mb-1.5">Spoon cost per slot (1–4)</label>
+                  <div className="flex gap-2">
+                    {[1, 2, 3, 4].map((n) => (
+                      <button
+                        key={n}
+                        type="button"
+                        onClick={() => setSpoonCost(n)}
+                        className={`w-10 h-10 rounded-lg font-sans text-sm font-medium transition-colors border-2 ${
+                          spoonCost === n ? 'border-moss-500 bg-moss-100 text-moss-800' : 'border-stone-200 bg-stone-50 text-stone-600 hover:border-stone-300'
+                        }`}
+                        title={`${n} spoon${n > 1 ? 's' : ''}`}
+                      >
+                        {n}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <label className="block font-sans text-sm font-medium text-stone-600 mb-1.5">Activation energy (1–4)</label>
+                  <div className="flex gap-2">
+                    {[1, 2, 3, 4].map((n) => (
+                      <button
+                        key={n}
+                        type="button"
+                        onClick={() => setActivationEnergy(n)}
+                        className={`w-10 h-10 rounded-lg font-sans text-sm font-medium transition-colors border-2 ${
+                          activationEnergy === n ? 'border-moss-500 bg-moss-100 text-moss-800' : 'border-stone-200 bg-stone-50 text-stone-600 hover:border-stone-300'
+                        }`}
+                        title={`${n}`}
+                      >
+                        {n}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </>
             )}
             <div>
               <label className="block font-sans text-sm font-medium text-stone-600 mb-2">Tracking (Vitality)</label>

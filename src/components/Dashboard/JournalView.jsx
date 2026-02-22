@@ -1,4 +1,5 @@
 import { useGarden } from '../../context/GardenContext';
+import { localISODate } from '../../services/dateUtils';
 
 const RATING_ICON = {
   withered: '🥀',
@@ -28,7 +29,7 @@ export default function JournalView() {
   const { logs } = useGarden();
 
   const byDate = (Array.isArray(logs) ? logs : []).reduce((acc, log) => {
-    const dateKey = log.date ? new Date(log.date).toISOString().slice(0, 10) : 'unknown';
+    const dateKey = log.date ? (typeof log.date === 'string' ? log.date.slice(0, 10) : localISODate(new Date(log.date))) : 'unknown';
     if (!acc[dateKey]) acc[dateKey] = [];
     acc[dateKey].push(log);
     return acc;

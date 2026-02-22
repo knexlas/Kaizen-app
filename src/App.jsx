@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { EnergyProvider } from './context/EnergyContext';
 import { useGarden, todayString } from './context/GardenContext';
+import { localISODate, getThisWeekSundayLocal } from './services/dateUtils';
 import { getSettings } from './services/userSettings';
 import { useReward } from './context/RewardContext';
 import { generateDailyPlan } from './services/schedulerService';
@@ -8,28 +9,18 @@ import { buildReward } from './services/dopamineEngine';
 import { useTheme } from './context/ThemeContext';
 import SundayRitualController from './components/Rituals/SundayRitualController';
 import GardenDashboard from './components/Dashboard/GardenDashboard';
-import MorningCheckIn from './components/Dashboard/MorningCheckIn';
+import MissedDayModal from './components/Onboarding/MissedDayModal';
 import WelcomeGarden from './components/Onboarding/WelcomeGarden';
 import WelcomeOnboarding from './components/Onboarding/WelcomeOnboarding';
 import SeasonParticles from './components/SeasonParticles';
 
 const ONBOARDING_COMPLETE_KEY = 'kaizen_onboarding_complete';
 
-/** YYYY-MM-DD for this week's Sunday (same week as today). */
-function getThisWeekSundayString() {
-  const d = new Date();
-  const day = d.getDay();
-  const sundayOffset = day === 0 ? 0 : -day;
-  const sunday = new Date(d);
-  sunday.setDate(d.getDate() + sundayOffset);
-  return sunday.toISOString().slice(0, 10);
-}
-
-/** YYYY-MM-DD for yesterday. */
+/** YYYY-MM-DD for yesterday, local timezone. */
 function yesterdayString() {
   const d = new Date();
   d.setDate(d.getDate() - 1);
-  return d.toISOString().slice(0, 10);
+  return localISODate(d);
 }
 
 function App() {
@@ -51,6 +42,8 @@ function App() {
     assignments,
     setAssignments,
     addGoal,
+    archivePlanToCompost,
+    weeklyEvents,
   } = useGarden();
   const { pushReward } = useReward();
 
@@ -76,7 +69,7 @@ function App() {
     if (!hydrated) return;
     const today = todayString();
     const currentDay = new Date().toLocaleDateString('en-US', { weekday: 'long' });
-    const thisWeekSunday = getThisWeekSundayString();
+    const thisWeekSunday = getThisWeekSundayLocal();
     const lastSundayRitualCompleted = lastSundayRitualDate === thisWeekSunday;
 
     if (currentDay === 'Sunday' && !lastSundayRitualCompleted) {
@@ -109,15 +102,15 @@ function App() {
     setView(lastCheckInDate !== todayString() ? 'intro' : 'dashboard');
   };
 
-  const handleIntroComplete = (modifier, spoonCount) => {
-    completeMorningCheckIn(spoonCount);
-    const reward = buildReward({ type: 'MORNING_CHECKIN_DONE', payload: { spoonCount } });
+  const handleMissedDayChoose = (choice) => {
+    if (choice == null) return;
+    archivePlanToCompost?.();
+    completeMorningCheckIn(choice);
+    const eventsForPlan = Array.isArray(weeklyEvents) ? weeklyEvents : [];
+    const plan = choice === 0 ? {} : generateDailyPlan(goals, choice, eventsForPlan, { stormBufferMinutes: 30 });
+    setAssignments(plan);
+    const reward = buildReward({ type: 'MORNING_CHECKIN_DONE', payload: { spoonCount: choice } });
     if (reward) pushReward(reward);
-    const hasAnyAssignment = Object.keys(assignments || {}).length > 0;
-    if (!hasAnyAssignment) {
-      const plan = generateDailyPlan(goals, spoonCount);
-      setAssignments(plan);
-    }
     setView('dashboard');
   };
 
@@ -135,12 +128,7 @@ function App() {
             <SundayRitualController onComplete={handleRitualComplete} />
           )}
           {view === 'intro' && (
-            <MorningCheckIn
-              goals={goals}
-              logMetric={logMetric}
-              onComplete={handleIntroComplete}
-              yesterdayPlan={yesterdayPlan}
-            />
+            <MissedDayModal open={true} onChoose={handleMissedDayChoose} />
           )}
           {view === 'dashboard' && (
             <GardenDashboard />

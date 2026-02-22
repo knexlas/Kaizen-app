@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useGarden } from '../../context/GardenContext';
 
 /** Resolve goalId from assignment (string or object). */
 function getGoalId(val) {
@@ -28,6 +29,7 @@ export default function EveningWindDown({
   onAddLog,
   setEveningMode,
 }) {
+  const { addSmallJoy } = useGarden();
   const [step, setStep] = useState('intro'); // intro | wind-down | night-focus | rest
   const [gratitude, setGratitude] = useState('');
   const [selectedFocusId, setSelectedFocusId] = useState(null);
@@ -65,12 +67,13 @@ export default function EveningWindDown({
 
   const handleRest = () => {
     if (gratitude.trim()) {
+      addSmallJoy?.(gratitude.trim());
       onAddLog?.({
         date: new Date(),
-        taskTitle: 'Evening Gratitude',
+        taskTitle: 'Evening Reflection',
         minutes: 0,
         rating: 5,
-        note: gratitude,
+        note: `Ikki no mei: ${gratitude}`,
       });
     }
     setEveningMode?.('sleep');
@@ -153,13 +156,13 @@ export default function EveningWindDown({
               </p>
 
               <label htmlFor="evening-gratitude" className="block text-sm font-medium text-slate-300 mb-2">
-                One small win today:
+                Ikki no mei: What was one tiny thing you liked today?
               </label>
               <textarea
                 id="evening-gratitude"
                 value={gratitude}
                 onChange={(e) => setGratitude(e.target.value)}
-                placeholder="I drank good tea..."
+                placeholder="e.g., The smell of coffee, a warm breeze, a good song..."
                 className="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 mb-6 h-20 resize-none"
               />
 

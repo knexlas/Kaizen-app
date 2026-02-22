@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useEnergy } from '../../context/EnergyContext';
+import { localISODate } from '../../services/dateUtils';
+import { useGarden } from '../../context/GardenContext';
 
 const SPOON_COUNT = 12;
 
@@ -37,11 +38,11 @@ function modifierToSpoonCount(modifier) {
   return 6;
 }
 
-/** Get yesterday as YYYY-MM-DD */
+/** Get yesterday as YYYY-MM-DD (local timezone). */
 function yesterdayString() {
   const d = new Date();
   d.setDate(d.getDate() - 1);
-  return d.toISOString().slice(0, 10);
+  return localISODate(d);
 }
 
 /** Latest metric value for pre-fill (prefer yesterday, else most recent). */
@@ -111,7 +112,11 @@ function Sparkline({ data }) {
 }
 
 export default function MorningCheckIn({ onComplete, onDismiss, goals = [], logMetric, yesterdayPlan = null }) {
-  const { setDailySpoonCount } = useEnergy();
+  const { smallJoys } = useGarden();
+  const [randomJoy] = useState(() => {
+    if (!smallJoys || smallJoys.length === 0) return null;
+    return smallJoys[Math.floor(Math.random() * smallJoys.length)];
+  });
   const [step, setStep] = useState('energy');
   const [selectedSpoonCount, setSelectedSpoonCount] = useState(null);
   const [hoverSpoonCount, setHoverSpoonCount] = useState(null);
@@ -119,6 +124,11 @@ export default function MorningCheckIn({ onComplete, onDismiss, goals = [], logM
 
   const vitalityGoals = useMemo(
     () => (Array.isArray(goals) ? goals.filter((g) => g.type === 'vitality') : []),
+    [goals]
+  );
+
+  const topGoals = useMemo(
+    () => (Array.isArray(goals) ? goals.filter((g) => (g.type === 'kaizen' || g.type === 'project') && !g.completed).slice(0, 3) : []),
     [goals]
   );
 
@@ -130,7 +140,6 @@ export default function MorningCheckIn({ onComplete, onDismiss, goals = [], logM
 
   const handleSpoonSelect = (spoonCount) => {
     setSelectedSpoonCount(spoonCount);
-    setDailySpoonCount(spoonCount);
     const modifier = spoonCountToModifier(spoonCount);
     if (vitalityGoals.length === 0) {
       onComplete?.(modifier, spoonCount);
@@ -146,7 +155,6 @@ export default function MorningCheckIn({ onComplete, onDismiss, goals = [], logM
 
   const finishWithMeasurements = () => {
     const count = selectedSpoonCount ?? 6;
-    setDailySpoonCount(count);
     onComplete?.(spoonCountToModifier(count), count);
   };
 
@@ -203,6 +211,14 @@ export default function MorningCheckIn({ onComplete, onDismiss, goals = [], logM
               <h2 id="morning-checkin-title" className="font-serif text-stone-900 text-xl text-center mb-2">
                 Good Morning.
               </h2>
+              {randomJoy && (
+                <div className="mb-6 px-4 py-3 bg-gradient-to-r from-moss-50 to-stone-50 border border-moss-100 rounded-2xl flex items-center gap-3 shadow-sm" role="status">
+                  <span className="text-xl">🌸</span>
+                  <p className="font-sans text-sm text-stone-600 italic">
+                    &ldquo;A small reason to smile today: <strong className="text-moss-800 font-medium">{randomJoy}</strong>&rdquo;
+                  </p>
+                </div>
+              )}
               <p className="font-sans text-stone-600 text-center mb-4">
                 How many spoons did you wake up with?
               </p>

@@ -4,6 +4,8 @@ import { db } from '../firebase/firebaseConfig';
 import { subscribeToCompost, addCompostItem, deleteCompostItem, subscribeToDailyPlan, saveDailyPlan, getDailyPlan } from '../firebase/services';
 import { loginWithGoogle, logoutUser } from '../services/authService';
 import { loginWithMicrosoft, logoutMicrosoft, fetchOutlookEvents, getAccessTokenSilently } from '../services/microsoftCalendarService';
+import { localISODate, getThisWeekSundayLocal } from '../services/dateUtils';
+
 const STORAGE_KEY = 'gardenData';
 const LAST_OPEN_DATE_KEY = 'gardenLastOpenDate';
 const CLOUD_DEBOUNCE_MS = 2000;
@@ -11,11 +13,11 @@ const CLOUD_DEBOUNCE_MS = 2000;
 function yesterdayString() {
   const d = new Date();
   d.setDate(d.getDate() - 1);
-  return d.toISOString().slice(0, 10);
+  return localISODate(d);
 }
 
 export function todayString() {
-  return new Date().toISOString().slice(0, 10);
+  return localISODate();
 }
 
 const defaultData = {
@@ -23,7 +25,7 @@ const defaultData = {
   weeklyEvents: [],
   userSettings: {},
   dailyEnergyModifier: 0,
-  dailySpoonCount: null, // 1–12 from morning check-in; used as maxSlots for the day when set
+  dailySpoonCount: null, // 0–12 from check-in; 0 = compost-only day, used as maxSlots when set
   lastCheckInDate: null,
   lastSundayRitualDate: null,
   logs: [],
@@ -59,6 +61,13 @@ export function GardenProvider({ children }) {
   const [embers, setEmbers] = useState(defaultData.embers ?? 100);
   const [decorations, setDecorations] = useState(defaultData.decorations);
   const [metrics, setMetrics] = useState(defaultData.metrics);
+  const [smallJoys, setSmallJoys] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem('smallJoys') || '[]');
+    } catch {
+      return [];
+    }
+  });
   const [hydrated, setHydrated] = useState(false);
   const [cloudSaveStatus, setCloudSaveStatus] = useState('idle'); // 'idle' | 'saving' | 'saved'
   const saveTimeoutRef = useRef(null);
@@ -122,7 +131,7 @@ export function GardenProvider({ children }) {
         if (Array.isArray(data.weeklyEvents)) setWeeklyEvents(data.weeklyEvents);
         if (data.userSettings && typeof data.userSettings === 'object') setUserSettings(data.userSettings);
         if (typeof data.dailyEnergyModifier === 'number') setDailyEnergyModifier(data.dailyEnergyModifier);
-        if (typeof data.dailySpoonCount === 'number' && data.dailySpoonCount >= 1 && data.dailySpoonCount <= 12) setDailySpoonCount(data.dailySpoonCount);
+        if (typeof data.dailySpoonCount === 'number' && data.dailySpoonCount >= 0 && data.dailySpoonCount <= 12) setDailySpoonCount(data.dailySpoonCount);
         if (data.lastCheckInDate != null) setLastCheckInDate(data.lastCheckInDate);
         if (data.lastSundayRitualDate != null) setLastSundayRitualDate(data.lastSundayRitualDate);
         if (Array.isArray(data.logs)) setLogs(data.logs);
@@ -266,7 +275,7 @@ export function GardenProvider({ children }) {
     for (let i = 0; i < 7; i++) {
       const d = new Date(monday);
       d.setDate(monday.getDate() + i);
-      const ds = d.toISOString().slice(0, 10);
+      const ds = localISODate(d);
       if (weekAssignmentsRef.current[ds]) {
         results[ds] = weekAssignmentsRef.current[ds];
       } else {
@@ -326,6 +335,20 @@ export function GardenProvider({ children }) {
     },
     [googleUser?.uid]
   );
+
+  const addSmallJoy = useCallback((joy) => {
+    const trimmed = typeof joy === 'string' ? joy.trim() : '';
+    if (!trimmed) return;
+    setSmallJoys((prev) => {
+      const next = [...prev, trimmed].slice(-50);
+      try {
+        localStorage.setItem('smallJoys', JSON.stringify(next));
+      } catch (e) {
+        console.warn('GardenContext: failed to save smallJoys to localStorage', e);
+      }
+      return next;
+    });
+  }, []);
 
   // Save to localStorage when state changes
   useEffect(() => {
@@ -540,6 +563,30 @@ export function GardenProvider({ children }) {
     archiveYesterday();
   }, [hydrated, googleUser?.uid, goals, addToCompost]);
 
+  /** Archive current plan into compost and clear assignments (no lastCheckInDate change). Used for missed-day flow before choosing 1/3/0 spoons. */
+  const archivePlanToCompost = useCallback(() => {
+    const getGoalId = (a) => {
+      if (a == null) return null;
+      if (typeof a === 'string') return a;
+      return a?.goalId ?? a?.parentGoalId ?? null;
+    };
+    const getTitle = (a, goalId) => {
+      if (a && typeof a === 'object' && a.title) return a.title;
+      const g = (goals ?? []).find((goal) => goal.id === goalId);
+      return g?.title ?? goalId ?? 'Task';
+    };
+    const titles = new Set();
+    Object.values(assignments || {}).forEach((val) => {
+      const goalId = getGoalId(val);
+      const title = getTitle(val, goalId);
+      if (title && !titles.has(title)) {
+        titles.add(title);
+        addToCompost(title);
+      }
+    });
+    setAssignments({});
+  }, [assignments, goals, addToCompost, setAssignments]);
+
   /** Shame-free reset: archive current plan into compost, clear today's plan, show morning check-in again. */
   const gentleResetToToday = useCallback(({ gapDays } = {}) => {
     const getGoalId = (a) => {
@@ -592,7 +639,7 @@ export function GardenProvider({ children }) {
     for (let d = 1; d <= olderThanDays; d++) {
       const past = new Date(today + 'T12:00:00');
       past.setDate(past.getDate() - d);
-      const dateStr = past.toISOString().slice(0, 10);
+      const dateStr = localISODate(past);
       try {
         const { assignments: dayAssignments } = await getDailyPlan(uid, dateStr);
         if (!dayAssignments || typeof dayAssignments !== 'object') continue;
@@ -654,7 +701,7 @@ export function GardenProvider({ children }) {
       milestones: (aiStructure?.milestones?.length ? aiStructure.milestones.map((m) => ({ id: uid(), title: typeof m === 'string' ? m : m?.title ?? '', completed: false })) : []),
     });
 
-    // 2. Care & Hygiene (Highly defined daily tasks)
+    // 2. Care & Hygiene (Concrete Daily Actions)
     addGoal({
       id: uid(),
       type: 'routine',
@@ -662,13 +709,14 @@ export function GardenProvider({ children }) {
       totalMinutes: 0,
       createdAt: now,
       rituals: [
-        { id: uid(), title: 'Morning: Brush teeth & hydrate', days: [0, 1, 2, 3, 4, 5, 6] },
+        { id: uid(), title: 'Morning: Brush teeth & drink 1 glass of water', days: [0, 1, 2, 3, 4, 5, 6] },
         { id: uid(), title: 'Evening: Wash face & brush teeth', days: [0, 1, 2, 3, 4, 5, 6] },
-        { id: uid(), title: '10-minute stretch or step outside', days: [0, 1, 2, 3, 4, 5, 6] },
+        { id: uid(), title: 'Shower', days: [0, 2, 4, 6] }, // Sun, Tue, Thu, Sat
+        { id: uid(), title: '10-minute stretch or walk outside', days: [0, 1, 2, 3, 4, 5, 6] },
       ],
     });
 
-    // 3. Life Admin (Spaced out to avoid overwhelm)
+    // 3. Life Admin (Concrete Maintenance Actions)
     addGoal({
       id: uid(),
       type: 'routine',
@@ -676,9 +724,9 @@ export function GardenProvider({ children }) {
       totalMinutes: 0,
       createdAt: now,
       rituals: [
-        { id: uid(), title: 'Clear email & messages for 5 mins', days: [1, 2, 3, 4, 5] },
-        { id: uid(), title: 'Tidy one surface (desk/kitchen)', days: [2, 4, 6] },
-        { id: uid(), title: 'Financial check-in / Plan the week', days: [0] },
+        { id: uid(), title: 'Clear email & messages for 5 mins', days: [1, 2, 3, 4, 5] }, // Weekdays
+        { id: uid(), title: 'Tidy desk/kitchen for 5 mins', days: [0, 1, 2, 3, 4, 5, 6] }, // Everyday
+        { id: uid(), title: 'Plan the upcoming week', days: [0] }, // Sundays
       ],
     });
   }, [addGoal]);
@@ -828,7 +876,7 @@ export function GardenProvider({ children }) {
   /** Append a metric log to a goal's metrics array and history (for vitality graphing). date defaults to today. */
   const logMetric = useCallback((goalId, value, date) => {
     const dateObj = date instanceof Date ? date : date != null ? new Date(date) : new Date();
-    const dateStr = dateObj.toISOString ? dateObj.toISOString().slice(0, 10) : String(dateObj);
+    const dateStr = localISODate(dateObj);
     const newValue = Number(value);
     const nowIso = new Date().toISOString();
     setGoals((prev) =>
@@ -847,6 +895,9 @@ export function GardenProvider({ children }) {
     if (n >= 1 && n <= 12) {
       setDailySpoonCount(n);
       setDailyEnergyModifier(0);
+    } else if (n === 0) {
+      setDailySpoonCount(0);
+      setDailyEnergyModifier(0);
     } else {
       setDailyEnergyModifier(n);
     }
@@ -854,7 +905,7 @@ export function GardenProvider({ children }) {
   }, []);
 
   const markSundayRitualComplete = useCallback(() => {
-    setLastSundayRitualDate(todayString());
+    setLastSundayRitualDate(getThisWeekSundayLocal());
   }, []);
 
   const setSpiritConfig = useCallback((config) => {
@@ -888,7 +939,7 @@ export function GardenProvider({ children }) {
     if (Array.isArray(data.weeklyEvents)) setWeeklyEvents(data.weeklyEvents);
     if (data.userSettings && typeof data.userSettings === 'object') setUserSettings(data.userSettings);
     if (typeof data.dailyEnergyModifier === 'number') setDailyEnergyModifier(data.dailyEnergyModifier);
-    if (typeof data.dailySpoonCount === 'number' && data.dailySpoonCount >= 1 && data.dailySpoonCount <= 12) setDailySpoonCount(data.dailySpoonCount);
+    if (typeof data.dailySpoonCount === 'number' && data.dailySpoonCount >= 0 && data.dailySpoonCount <= 12) setDailySpoonCount(data.dailySpoonCount);
     if (data.lastCheckInDate != null) setLastCheckInDate(data.lastCheckInDate);
     if (data.lastSundayRitualDate != null) setLastSundayRitualDate(data.lastSundayRitualDate);
     if (Array.isArray(data.logs)) setLogs(data.logs);
@@ -978,11 +1029,14 @@ export function GardenProvider({ children }) {
     compost,
     addToCompost,
     removeFromCompost,
+    smallJoys,
+    addSmallJoy,
     soilNutrients,
     consumeSoilNutrients,
     assignments,
     setAssignments,
     gentleResetToToday,
+    archivePlanToCompost,
     archiveStalePlanItems,
     weekAssignments,
     setWeekAssignments,

@@ -4,6 +4,8 @@
  * Times in "HH:mm" (24h). Events: { start, end, type? } with start/end ISO or { dayIndex, start, end, type? }.
  */
 
+import { localISODate } from './dateUtils';
+
 const DEFAULT_HOUR_START = 6;
 const DEFAULT_HOUR_END = 23;
 
@@ -72,15 +74,17 @@ function mergeIntervals(intervals) {
 
 /**
  * Find available (open) time windows for the week.
+ * Storm events are blocked; optional buffer expands storm blocks so time before/after is also unavailable.
  * @param {Array} events - Google/weekly events: { start, end, type? } (ISO) or { dayIndex, start, end, type? }
  * @param {Array} existingPlans - Already scheduled blocks: { dayIndex, start, end } (start/end "HH:mm")
- * @param {Object} options - { weekStartDate?: Date (Monday), startHour?: number, endHour?: number }
- * @returns {Array<{ dayIndex: number, start: string, end: string }>} Open windows. Storm blocks are excluded when possible.
+ * @param {Object} options - { weekStartDate?, startHour?, endHour?, stormBufferMinutes?: number }
+ * @returns {Array<{ dayIndex: number, start: string, end: string }>} Open windows.
  */
 export function findAvailableSlots(events, existingPlans = [], options = {}) {
   const weekStart = options.weekStartDate ?? getDefaultWeekStart();
   const startHour = options.startHour ?? DEFAULT_HOUR_START;
   const endHour = options.endHour ?? DEFAULT_HOUR_END;
+  const stormBufferMinutes = Math.max(0, Number(options.stormBufferMinutes) || 0);
   const dayStart = startHour * 60;
   const dayEnd = endHour * 60;
 
@@ -93,8 +97,9 @@ export function findAvailableSlots(events, existingPlans = [], options = {}) {
       for (const e of events) {
         const norm = normalizeEventToWeek(e, weekStart);
         if (norm == null || norm.dayIndex !== dayIndex) continue;
-        if (norm.type === 'storm') blocked.push({ start: norm.startMinutes, end: norm.endMinutes });
-        else blocked.push({ start: norm.startMinutes, end: norm.endMinutes });
+        const start = Math.max(dayStart, norm.startMinutes - (norm.type === 'storm' ? stormBufferMinutes : 0));
+        const end = Math.min(dayEnd, norm.endMinutes + (norm.type === 'storm' ? stormBufferMinutes : 0));
+        blocked.push({ start, end });
       }
     }
 
@@ -139,6 +144,43 @@ export function getDefaultWeekStart() {
   monday.setDate(d.getDate() + diff);
   monday.setHours(0, 0, 0, 0);
   return monday;
+}
+
+/**
+ * Storm impact for a single day: capacity reduction and human-readable reason.
+ * @param {Array} events - Weekly events (start/end ISO or dayIndex, start, end; type 'storm'|'leaf'|'sun')
+ * @param {number} dayIndex - 0=Sun..6=Sat
+ * @param {Object} options - { weekStartDate?, stormBufferMinutes?, stormCapacityCostPerEvent?: number }
+ * @returns {{ stormCount: number, capacityReduction: number, bufferMinutesUsed: number, reason: string }}
+ */
+export function getStormImpactForDay(events, dayIndex, options = {}) {
+  const weekStart = options.weekStartDate ?? getDefaultWeekStart();
+  const stormBufferMinutes = Math.max(0, Number(options.stormBufferMinutes) || 0);
+  const costPerEvent = Math.max(0, Number(options.stormCapacityCostPerEvent) ?? 1);
+
+  let stormCount = 0;
+  let totalStormMinutes = 0;
+
+  if (Array.isArray(events)) {
+    for (const e of events) {
+      const norm = normalizeEventToWeek(e, weekStart);
+      if (norm == null || norm.dayIndex !== dayIndex || norm.type !== 'storm') continue;
+      stormCount += 1;
+      const buffer = stormBufferMinutes * 2;
+      totalStormMinutes += (norm.endMinutes - norm.startMinutes) + buffer;
+    }
+  }
+
+  const capacityReduction = Math.min(stormCount * costPerEvent, 6);
+  const bufferUsed = stormCount > 0 ? stormBufferMinutes : 0;
+  const reason =
+    stormCount === 0
+      ? ''
+      : bufferUsed > 0
+        ? `${stormCount} storm event${stormCount !== 1 ? 's' : ''} today; capacity reduced by ${capacityReduction} spoon${capacityReduction !== 1 ? 's' : ''}; ${stormBufferMinutes} min buffer before/after storms.`
+        : `${stormCount} storm event${stormCount !== 1 ? 's' : ''} today; capacity reduced by ${capacityReduction} spoon${capacityReduction !== 1 ? 's' : ''}.`;
+
+  return { stormCount, capacityReduction, bufferMinutesUsed: bufferUsed, reason };
 }
 
 /**
@@ -371,21 +413,21 @@ export function suggestLoadLightening(assignments, goals, maxSlots, energyModifi
   const goalIds = new Set(goalMap.keys());
 
   const filled = SLOT_HOURS.filter((hour) => {
-    const gid = getGoalIdFromAssignment(assignments[hour]);
-    return gid && goalIds.has(gid);
+    const a = assignments[hour];
+    const gid = getGoalIdFromAssignment(a);
+    return (gid && goalIds.has(gid)) || (a && typeof a === 'object' && a.type === 'recovery');
   }).map((hour) => {
     const a = assignments[hour];
     const gid = getGoalIdFromAssignment(a);
     const goal = goalMap.get(gid);
     const title = (a && typeof a === 'object' && a.title) ? a.title : (goal?.title ?? 'Task');
     const energyType = getEnergyType(goal);
-    return { hour, goalId: gid, title, energyType };
+    const spoonCost = a && typeof a === 'object' && (a.type === 'recovery' || a.spoonCost === 0) ? 0 : getSpoonCost(goal ?? a);
+    return { hour, goalId: gid, title, energyType, spoonCost };
   });
 
-  const filledCount = filled.length;
-  if (filledCount <= maxSlots) return null;
-
-  const toRemoveCount = filledCount - maxSlots;
+  const filledSpoonTotal = filled.reduce((sum, f) => sum + (f.spoonCost ?? 1), 0);
+  if (filledSpoonTotal <= maxSlots) return null;
   const modifier = Number(energyModifier) || 0;
 
   const removeOrder = modifier < 0 ? REMOVE_ORDER_LOW_ENERGY : modifier > 0 ? REMOVE_ORDER_HIGH_ENERGY : null;
@@ -401,12 +443,16 @@ export function suggestLoadLightening(assignments, goals, maxSlots, energyModifi
     return b.hour.localeCompare(a.hour);
   });
 
-  const toRemove = sorted.slice(0, toRemoveCount);
+  // Remove items (only cost > 0) until spoon total <= maxSlots (budget)
   const next = { ...assignments };
   const removedItems = [];
-
-  toRemove.forEach(({ hour, title, energyType }) => {
-    delete next[hour];
+  let currentTotal = filledSpoonTotal;
+  const removable = sorted.filter((f) => (f.spoonCost ?? 1) > 0);
+  for (const item of removable) {
+    if (currentTotal <= maxSlots) break;
+    const cost = item.spoonCost ?? 1;
+    delete next[item.hour];
+    currentTotal -= cost;
     let reason;
     if (lowEnergy) {
       reason = energyType === 'high-focus'
@@ -423,8 +469,8 @@ export function suggestLoadLightening(assignments, goals, maxSlots, energyModifi
     } else {
       reason = 'Over capacity: removed late-day task to fit your limit.';
     }
-    removedItems.push({ hour, title, energyType, reason });
-  });
+    removedItems.push({ hour: item.hour, title: item.title, energyType: item.energyType, reason });
+  }
 
   return { assignments: next, removedItems };
 }
@@ -439,21 +485,31 @@ function getScheduleCategory(goal) {
   return 'work';
 }
 
+/** Spoon cost per slot (1–4). Default 1 for backward compat. Exported for capacity UI. */
+export function getSpoonCost(goalOrAssignment) {
+  const n = goalOrAssignment?.spoonCost ?? 1;
+  return Math.max(1, Math.min(4, Number(n) || 1));
+}
+
 const MAX_CONSECUTIVE_WORK_SLOTS = 4;
+const HIGH_SPOON_COST_THRESHOLD = 3; // Insert recovery after tasks with cost >= this
 
 /**
  * Generate a simplified daily plan for today: routine goals only, capped by energy.
- * Balances 'Work' vs 'Nourishment' by energy level.
- * @param {Array} goals - All goals (routine goals are used; optional scheduleCategory: 'work' | 'nourishment')
- * @param {number} maxSlotsOrModifier - Spoon count (1–12) used as maxSlots, or legacy energy modifier (-2, 0, 1) for backward compat.
+ * When calendarEvents is provided, storm events reduce capacity and optional buffer blocks exclude time before/after storms.
+ * @param {Array} goals - All goals (routine goals are used)
+ * @param {number} maxSlotsOrModifier - Spoon count (1–12) or legacy modifier (-2, 0, 1)
+ * @param {Array} [calendarEvents] - Optional weekly events; when provided, storm impact reduces capacity and open windows exclude storms (+ buffer)
+ * @param {Object} [options] - { stormBufferMinutes?: number, stormCapacityCostPerEvent?: number, weekStartDate?: Date }
  * @returns {Object} assignments - { '06:00': { id, parentGoalId, title, type: 'routine', duration: 60 }, ... }
  */
-export function generateDailyPlan(goals, maxSlotsOrModifier = 0) {
+export function generateDailyPlan(goals, maxSlotsOrModifier = 0, calendarEvents = null, options = {}) {
   const routineGoals = Array.isArray(goals) ? goals.filter((g) => g.type === 'routine') : [];
   if (routineGoals.length === 0) return {};
+  if (maxSlotsOrModifier === 0) return {};
 
   const todayDayIndex = new Date().getDay();
-  const maxSlots =
+  let maxSlots =
     typeof maxSlotsOrModifier === 'number' && maxSlotsOrModifier >= 1 && maxSlotsOrModifier <= 12
       ? maxSlotsOrModifier
       : Math.max(1, 6 + (Number(maxSlotsOrModifier) || 0));
@@ -465,9 +521,39 @@ export function generateDailyPlan(goals, maxSlotsOrModifier = 0) {
 
   if (startHour >= 23) return {};
 
+  const opts = { weekStartDate: getDefaultWeekStart(), startHour: DEFAULT_HOUR_START, endHour: DEFAULT_HOUR_END, ...options };
+  const stormBufferMinutes = Math.max(0, Number(opts.stormBufferMinutes) ?? 30);
+
+  let futureHours;
+  if (Array.isArray(calendarEvents) && calendarEvents.length > 0) {
+    const stormImpact = getStormImpactForDay(calendarEvents, todayDayIndex, { ...opts, stormBufferMinutes });
+    maxSlots = Math.max(1, maxSlots - stormImpact.capacityReduction);
+
+    const openSlotsToday = findAvailableSlots(calendarEvents, [], { ...opts, stormBufferMinutes })
+      .filter((s) => s.dayIndex === todayDayIndex);
+    const startMins = timeToMinutes(startStr);
+    const slotHourSet = new Set();
+    for (const slot of openSlotsToday) {
+      let cursor = timeToMinutes(slot.start);
+      const endMins = timeToMinutes(slot.end);
+      while (cursor + 60 <= endMins && cursor >= startMins - 60) {
+        if (cursor >= startMins) slotHourSet.add(minutesToTime(cursor));
+        cursor += 60;
+      }
+    }
+    futureHours = Array.from(slotHourSet).sort();
+  } else {
+    futureHours = Array.from(
+      { length: DEFAULT_HOUR_END - startHour + 1 },
+      (_, i) => `${String(startHour + i).padStart(2, '0')}:00`
+    );
+  }
+
   const availableSlotsToday = [{ dayIndex: todayDayIndex, start: startStr, end: '23:00' }];
 
   const entriesByCategory = { work: [], nourishment: [] };
+
+  const spoonBudget = maxSlots;
 
   for (const goal of routineGoals) {
     const settings = goal.schedulerSettings ?? {};
@@ -475,6 +561,7 @@ export function generateDailyPlan(goals, maxSlotsOrModifier = 0) {
       ? generateSolidSchedule(goal).filter((b) => b.dayIndex === todayDayIndex)
       : generateLiquidSchedule(goal, availableSlotsToday).filter((b) => b.dayIndex === todayDayIndex);
     const category = getScheduleCategory(goal);
+    const cost = getSpoonCost(goal);
 
     for (const block of blocks) {
       let cursor = timeToMinutes(block.start);
@@ -487,12 +574,24 @@ export function generateDailyPlan(goals, maxSlotsOrModifier = 0) {
           title: goal.title,
           type: 'routine',
           duration: 60,
+          spoonCost: cost,
           ...(block.subtaskId && { subtaskId: block.subtaskId, subtaskTitle: block.subtaskTitle }),
         };
-        entriesByCategory[category].push({ hour: hourStr, value });
+        entriesByCategory[category].push({ hour: hourStr, value, spoonCost: cost });
         cursor += 60;
       }
     }
+  }
+
+  function makeRecoveryValue() {
+    return {
+      id: `recovery-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+      parentGoalId: null,
+      title: 'Rest',
+      type: 'recovery',
+      duration: 60,
+      spoonCost: 0,
+    };
   }
 
   const workEntries = entriesByCategory.work.sort((a, b) => a.hour.localeCompare(b.hour));
@@ -502,43 +601,95 @@ export function generateDailyPlan(goals, maxSlotsOrModifier = 0) {
       ? (maxSlotsOrModifier <= 4 ? -2 : maxSlotsOrModifier >= 9 ? 1 : 0)
       : Number(maxSlotsOrModifier) || 0;
 
-  let selected = [];
+  /** Build selected list: stay within spoon budget, insert recovery after high-cost (>= 3) tasks. */
+  function selectWithinSpoonBudget(candidateEntries, futureHours) {
+    const selected = [];
+    let totalSpent = 0;
+    let slotIdx = 0;
+    let needRecoveryNext = false;
+    let entryIdx = 0;
+    while (slotIdx < futureHours.length) {
+      const hour = futureHours[slotIdx];
+      if (needRecoveryNext) {
+        selected.push({ hour, value: makeRecoveryValue() });
+        needRecoveryNext = false;
+        slotIdx++;
+        continue;
+      }
+      if (entryIdx >= candidateEntries.length) break;
+      const entry = candidateEntries[entryIdx];
+      const cost = entry.spoonCost ?? 1;
+      if (totalSpent + cost > spoonBudget) break;
+      selected.push({ hour, value: entry.value });
+      totalSpent += cost;
+      if (cost >= HIGH_SPOON_COST_THRESHOLD) needRecoveryNext = true;
+      entryIdx++;
+      slotIdx++;
+    }
+    return selected;
+  }
+
+  let candidateEntries = [];
 
   if (modifier <= -2) {
-    // Low Energy: ensure at least one Nourishment block (reserve one slot; bump Work if needed)
-    const workTake = Math.max(0, maxSlots - 1);
+    // Low Energy: reserve ~1 spoon for nourishment, fill rest with work
+    const reserveSpoons = 1;
+    let workSpent = 0;
+    const workTake = [];
+    for (const e of workEntries) {
+      const c = e.spoonCost ?? 1;
+      if (workSpent + c > spoonBudget - reserveSpoons) break;
+      workTake.push(e);
+      workSpent += c;
+    }
     const oneNourishment = nourishmentEntries.length > 0 ? [nourishmentEntries[0]] : [];
-    selected = [...workEntries.slice(0, workTake), ...oneNourishment]
-      .sort((a, b) => a.hour.localeCompare(b.hour))
-      .slice(0, maxSlots);
+    candidateEntries = [...workTake, ...oneNourishment].sort((a, b) => a.hour.localeCompare(b.hour));
   } else if (modifier >= 1) {
-    // High Energy: prioritize Work but insert a Nourishment break after every 4 consecutive work slots
+    // High Energy: interleave work with nourishment every 4 work slots; then cap by spoon budget
+    const interleaved = [];
     let workIdx = 0;
     let nourishIdx = 0;
     let workInRow = 0;
-    for (let slotIndex = 0; slotIndex < maxSlots; slotIndex++) {
-      const hour = SLOT_HOURS[slotIndex];
+    let totalSpent = 0;
+    while (totalSpent < spoonBudget && (workIdx < workEntries.length || nourishIdx < nourishmentEntries.length)) {
       if (workInRow >= MAX_CONSECUTIVE_WORK_SLOTS && nourishIdx < nourishmentEntries.length) {
-        selected.push({ hour, value: nourishmentEntries[nourishIdx++].value });
+        interleaved.push(nourishmentEntries[nourishIdx++]);
         workInRow = 0;
       } else if (workIdx < workEntries.length) {
-        selected.push({ hour, value: workEntries[workIdx++].value });
+        const e = workEntries[workIdx++];
+        if (totalSpent + (e.spoonCost ?? 1) > spoonBudget) break;
+        interleaved.push(e);
+        totalSpent += e.spoonCost ?? 1;
         workInRow++;
       } else if (nourishIdx < nourishmentEntries.length) {
-        selected.push({ hour, value: nourishmentEntries[nourishIdx++].value });
+        interleaved.push(nourishmentEntries[nourishIdx++]);
         workInRow = 0;
       } else break;
     }
+    candidateEntries = interleaved;
   } else {
-    // Normal: chronological mix, then cap
+    // Normal: chronological mix, cap by spoon budget
     const merged = [...workEntries, ...nourishmentEntries].sort((a, b) => a.hour.localeCompare(b.hour));
-    selected = merged.slice(0, maxSlots);
+    let total = 0;
+    for (const e of merged) {
+      if (total + (e.spoonCost ?? 1) > spoonBudget) break;
+      candidateEntries.push(e);
+      total += e.spoonCost ?? 1;
+    }
   }
+
+  const selected = selectWithinSpoonBudget(candidateEntries, futureHours);
 
   const assignments = {};
   selected.forEach(({ hour, value }) => {
     assignments[hour] = value;
   });
+
+  // Demo at 14:00: startStr='15:00', futureHours=['15:00'..'23:00']; no assignments in the past.
+  const isDev = (typeof import.meta !== 'undefined' && import.meta.env?.DEV) || (typeof process !== 'undefined' && process.env?.NODE_ENV === 'development');
+  if (isDev && startHour === 15) {
+    console.log('[generateDailyPlan] At 14:00 → from 15:00 onward', { startStr, keys: Object.keys(assignments) });
+  }
   return assignments;
 }
 
@@ -558,6 +709,7 @@ export function autoFillDailyPlan(goals, calendarEvents, energyLevel = 'normal')
     weekStartDate: getDefaultWeekStart(),
     startHour: 9,
     endHour: 18,
+    stormBufferMinutes: 30,
   };
 
   const openSlots = findAvailableSlots(calendarEvents ?? [], [], options)
@@ -669,10 +821,10 @@ export function materializeWeeklyPlan(weekPlan, goals, calendarEvents = []) {
 
     const d = new Date(monday);
     d.setDate(monday.getDate() + i);
-    const dateStr = d.toISOString().slice(0, 10);
+    const dateStr = localISODate(d);
     const dayIndex = d.getDay();
 
-    const options = { weekStartDate: getDefaultWeekStart(), startHour: DEFAULT_HOUR_START, endHour: DEFAULT_HOUR_END };
+    const options = { weekStartDate: getDefaultWeekStart(), startHour: DEFAULT_HOUR_START, endHour: DEFAULT_HOUR_END, stormBufferMinutes: 30 };
     const openSlots = findAvailableSlots(calendarEvents ?? [], [], options)
       .filter((s) => s.dayIndex === dayIndex);
 

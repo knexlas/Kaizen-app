@@ -3,12 +3,13 @@ import { useEnergy } from '../../context/EnergyContext';
 import { useGarden } from '../../context/GardenContext';
 import { fetchWeeklyEvents, pushToCalendar } from '../../services/calendarSyncService';
 import { autoFillWeek } from '../../services/plannerEngine';
+import { localISODate } from '../../services/dateUtils';
 import GardenNavigation from './GardenNavigation';
 import WeatherWidget from './WeatherWidget';
 import GoalCardPlaceholder from './GoalCardPlaceholder';
 
 function toDateStr(d) {
-  return d.toISOString().slice(0, 10);
+  return localISODate(d);
 }
 
 function getTitleFromAssignment(assignment, goals) {

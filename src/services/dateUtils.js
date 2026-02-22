@@ -41,6 +41,21 @@ export function jsDayFromMon0(mon0Index) {
 }
 
 /**
+ * This week's Sunday as YYYY-MM-DD in local timezone.
+ * Stable for the whole week: same value from Sun–Sat so ritual completion keying is consistent.
+ * @param {Date} [date=new Date()]
+ * @returns {string}
+ */
+export function getThisWeekSundayLocal(date = new Date()) {
+  const d = date instanceof Date ? date : new Date(date);
+  const day = d.getDay();
+  const sundayOffset = day === 0 ? 0 : -day;
+  const sunday = new Date(d);
+  sunday.setDate(d.getDate() + sundayOffset);
+  return localISODate(sunday);
+}
+
+/**
  * Number of days from start to end (end - start).
  * @param {string} endDate - YYYY-MM-DD
  * @param {string} startDate - YYYY-MM-DD

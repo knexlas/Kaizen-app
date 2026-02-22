@@ -2,7 +2,6 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useGarden } from '../../context/GardenContext';
 import { useTheme } from '../../context/ThemeContext';
-import { useEnergy } from '../../context/EnergyContext';
 import { useReward } from '../../context/RewardContext';
 import { buildReward } from '../../services/dopamineEngine';
 import { getSettings } from '../../services/userSettings';
@@ -21,9 +20,10 @@ import GoalEditor from '../Goals/GoalEditor';
 import TimeSlicer, { HOURS, MAX_SLOTS_BY_WEATHER } from './TimeSlicer';
 import CompassWidget from './CompassWidget';
 import CommandPalette from './CommandPalette';
-import MochiSpiritWithDialogue, { getSpiritGreeting, getPlanReaction } from './MochiSpirit';
+import MochiSpiritWithDialogue, { DefaultSpiritSvg, getSpiritGreeting, getPlanReaction } from './MochiSpirit';
 import SpiritChat from './SpiritChat';
 import CompostHeap from './CompostHeap';
+import NextTinyStep from './NextTinyStep';
 import { generateSpiritInsight, generateWeeklyPlan, generateMonthlyPlan } from '../../services/geminiService';
 import { importICSFile, downloadICS, CALENDAR_PROVIDERS } from '../../services/calendarSyncService';
 import { fetchOutlookEvents } from '../../services/microsoftCalendarService';
@@ -40,7 +40,7 @@ import SpiritBuilder from '../Onboarding/SpiritBuilder';
 import SpiritGuideTour from '../Onboarding/SpiritGuideTour';
 import SpiritOrigins from '../Onboarding/SpiritOrigins';
 import { fetchGoogleEvents } from '../../services/googleCalendarService';
-import { findAvailableSlots, generateLiquidSchedule, generateSolidSchedule, getDefaultWeekStart, getStormWarnings, timeToMinutes, minutesToTime, generateDailyPlan, materializeWeeklyPlan } from '../../services/schedulerService';
+import { findAvailableSlots, generateLiquidSchedule, generateSolidSchedule, getDefaultWeekStart, getStormWarnings, getStormImpactForDay, timeToMinutes, minutesToTime, generateDailyPlan, materializeWeeklyPlan, getSpoonCost } from '../../services/schedulerService';
 
 // --- Icons ---
 const SunIcon = () => (
@@ -184,37 +184,29 @@ function GardenDashboard() {
   const { darkMode: themeDarkMode, setDarkModeOverride } = useTheme();
   const isDark = themeDarkMode || eveningMode === 'night-owl';
 
-  const getSpiritEmoji = () => {
-    if (!spiritConfig) return '✨';
+  const renderSpiritAvatar = () => {
+    if (!spiritConfig) return <span className="text-4xl">✨</span>;
+    if (spiritConfig.type === 'mochi') return <DefaultSpiritSvg className="w-10 h-10 drop-shadow-sm" />;
     if (spiritConfig.type === 'custom') {
       const HEADS = { bunny: '🐰', cat: '🐱', bear: '🐻', fox: '🦊', bot: '🤖', owl: '🦉' };
-      return HEADS[spiritConfig.head] || '✨';
+      return <span className="text-4xl">{HEADS[spiritConfig.head] || '✨'}</span>;
     }
-    const ARCHETYPES = {
-      mochi: '🐱', cat: '🐱', ember: '🔥', nimbus: '☁️', owl: '🦉',
-    };
-    return ARCHETYPES[spiritConfig.type] || '✨';
+    const ARCHETYPES = { cat: '🐱', ember: '🔥', nimbus: '☁️', owl: '🦉' };
+    return <span className="text-4xl">{ARCHETYPES[spiritConfig.type] || '✨'}</span>;
   };
-  const [today, setToday] = useState(() => new Date().toISOString().slice(0, 10));
+  const [today, setToday] = useState(() => localISODate());
   const needsMorningCheckIn = lastCheckInDate !== today;
 
   const yesterdayForPlan = useMemo(() => {
     const d = new Date();
     d.setDate(d.getDate() - 1);
-    return d.toISOString().slice(0, 10);
+    return localISODate(d);
   }, [today]);
   const yesterdayPlan = lastCheckInDate === yesterdayForPlan ? { modifier: dailyEnergyModifier, spoonCount: dailySpoonCount } : null;
 
-  const { setDailySpoonCount } = useEnergy();
-  useEffect(() => {
-    if (typeof dailySpoonCount === 'number' && dailySpoonCount >= 1 && dailySpoonCount <= 12) {
-      setDailySpoonCount(dailySpoonCount);
-    }
-  }, [dailySpoonCount, setDailySpoonCount]);
-
   useEffect(() => {
     const interval = setInterval(() => {
-      const next = new Date().toISOString().slice(0, 10);
+      const next = localISODate();
       setToday((d) => (d !== next ? next : d));
     }, 60 * 1000);
     return () => clearInterval(interval);
@@ -392,7 +384,7 @@ function GardenDashboard() {
   }, [eveningMode, activeTab]);
   const [spiritInsight, setSpiritInsight] = useState(() => {
     const { lastInsight, lastInsightDate } = getStoredBriefing();
-    const today = new Date().toISOString().slice(0, 10);
+    const today = localISODate();
     return lastInsightDate === today ? lastInsight : null;
   });
   const [spiritThinking, setSpiritThinking] = useState(false);
@@ -406,7 +398,7 @@ function GardenDashboard() {
       let changed = false;
       HOURS.forEach((hour) => {
         const a = next[hour];
-        const gid = a && typeof a === 'object' && 'goalId' in a ? a.goalId : a;
+        const gid = a && typeof a === 'object' ? (a.goalId ?? a.parentGoalId) : a;
         if (gid === goalId) {
           delete next[hour];
           changed = true;
@@ -470,7 +462,7 @@ function GardenDashboard() {
 
         let next = { ...prev };
         let existingPlans = buildExistingPlans(next);
-        const options = { weekStartDate: weekStart, startHour: 6, endHour: 23 };
+        const options = { weekStartDate: weekStart, startHour: 6, endHour: 23, stormBufferMinutes: 30 };
         let availableSlots = findAvailableSlots(eventsForScheduler, existingPlans, options);
 
         const routineGoals = (goals ?? []).filter((g) => g.type === 'routine');
@@ -612,27 +604,37 @@ function GardenDashboard() {
   const selectedDayEvents = events.filter((e) => e.dayIndex === jsDayFromMon0(selectedDate));
   const { weather, forecast } = getWeather(selectedDayEvents);
 
-  const filledCount = useMemo(() => {
-    return HOURS.filter((h) => {
+  const filledSpoonTotal = useMemo(() => {
+    return HOURS.reduce((sum, h) => {
       const a = assignments[h];
-      const gid = a && typeof a === 'object' && 'goalId' in a ? a.goalId : a;
-      return gid && goals.some((g) => g.id === gid);
-    }).length;
+      if (!a) return sum;
+      if (a && typeof a === 'object' && (a.type === 'recovery' || a.spoonCost === 0)) return sum;
+      const gid = typeof a === 'object' && 'goalId' in a ? a.goalId : a;
+      const goal = gid ? goals.find((g) => g.id === gid) : null;
+      return sum + getSpoonCost(goal ?? a);
+    }, 0);
   }, [assignments, goals]);
 
   const stormWarnings = useMemo(() => {
     const options = { weekStartDate: getDefaultWeekStart(), startHour: 6, endHour: 23 };
     return getStormWarnings(goals, events, options);
   }, [goals, events]);
+
+  const stormImpactToday = useMemo(() => {
+    const todayDayIndex = new Date().getDay();
+    const options = { weekStartDate: getDefaultWeekStart(), startHour: 6, endHour: 23, stormBufferMinutes: 30 };
+    return getStormImpactForDay(events, todayDayIndex, options);
+  }, [events]);
   const todaySpoonCount =
-    lastCheckInDate === today && typeof dailySpoonCount === 'number' && dailySpoonCount >= 1 && dailySpoonCount <= 12
+    lastCheckInDate === today && typeof dailySpoonCount === 'number' && dailySpoonCount >= 0 && dailySpoonCount <= 12
       ? dailySpoonCount
       : null;
   const maxSlots =
     todaySpoonCount != null
       ? todaySpoonCount
       : Math.max(1, (MAX_SLOTS_BY_WEATHER[weather] ?? 6) + dailyEnergyModifier);
-  const isOverloaded = filledCount > maxSlots;
+  const isCompostOnlyDay = todaySpoonCount === 0;
+  const isOverloaded = filledSpoonTotal > maxSlots;
 
   const spiritFallbackMessage = useMemo(
     () => getSpiritGreeting({ weather, isOverloaded, justFinishedSession }),
@@ -686,7 +688,7 @@ function GardenDashboard() {
   const requestSpiritWisdom = useCallback(
     (forceFetch = false) => {
       const { lastInsightDate } = getStoredBriefing();
-      const today = new Date().toISOString().slice(0, 10);
+      const today = localISODate();
       const hasToday = lastInsightDate === today;
       if (!forceFetch && hasToday && spiritInsight) {
         setShowSpiritDialogue(true);
@@ -954,6 +956,34 @@ function GardenDashboard() {
     setScheduleExpanded(true);
   }, []);
 
+  const handleTinyStepStartSession = useCallback(
+    (goalId, _hour, _ritualTitle, subtaskId) => {
+      const goal = goals?.find((g) => g.id === goalId);
+      if (goal) handleStartNowStart({ goal, goalId, subtaskId }, 5);
+    },
+    [goals, handleStartNowStart]
+  );
+
+  const handleTinyStepMoveToCompost = useCallback(
+    (suggestion) => {
+      if (!suggestion?.title) return;
+      addToCompost(suggestion.title);
+      if (suggestion.goalId) clearAssignmentsForGoal(suggestion.goalId);
+    },
+    [addToCompost, clearAssignmentsForGoal]
+  );
+
+  const handleCompostStart5Min = useCallback(
+    (compostItem) => {
+      const text = (compostItem?.text ?? '').trim() || 'Tiny step';
+      const id = crypto.randomUUID?.() ?? `goal-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+      const newGoal = { id, type: 'routine', title: text, estimatedMinutes: 5, totalMinutes: 0, createdAt: new Date().toISOString() };
+      addGoal(newGoal);
+      setActiveSession({ ...newGoal, sessionDurationMinutes: 5, subtaskId: null });
+    },
+    [addGoal]
+  );
+
   const handleStartNowCreateSuggestion = useCallback((key) => {
     const STARTER_TITLES = { 'life-admin': 'One tiny life-admin thing', personal: 'One personal goal step', care: 'One care task' };
     const title = STARTER_TITLES[key] ?? 'One tiny step';
@@ -1202,7 +1232,8 @@ function GardenDashboard() {
               const hasAnyAssignment = HOURS.some((h) => assignments[h]);
               let planSummary = null;
               if (!hasAnyAssignment) {
-                const plan = generateDailyPlan(goals, spoonCount);
+                const eventsForPlan = Array.isArray(weeklyEvents) ? weeklyEvents : [];
+                const plan = generateDailyPlan(goals, spoonCount, eventsForPlan, { stormBufferMinutes: 30 });
                 setAssignments(plan);
                 planSummary = { slotCount: Object.keys(plan).length };
               }
@@ -1376,7 +1407,7 @@ function GardenDashboard() {
               className="text-4xl hover:scale-110 transition-transform cursor-pointer drop-shadow-sm filter"
               title="Talk to Mochi"
             >
-              {getSpiritEmoji()}
+              {renderSpiritAvatar()}
             </button>
             <div className="flex items-center gap-1">
               <button
@@ -1587,6 +1618,27 @@ function GardenDashboard() {
               </div>
             ) : (
               <>
+                {isCompostOnlyDay && (
+                  <div className="mb-4 p-3 rounded-xl border border-stone-300 bg-stone-100 text-stone-700 font-sans text-sm flex flex-wrap items-center justify-between gap-2">
+                    <span>Today is capture-only — no plan. Add thoughts to compost.</span>
+                    <button
+                      type="button"
+                      onClick={() => setShowCompost(true)}
+                      className="shrink-0 px-3 py-1.5 rounded-lg font-medium bg-stone-700 text-stone-100 hover:bg-stone-800 focus:outline-none focus:ring-2 focus:ring-stone-500/50"
+                    >
+                      Open compost
+                    </button>
+                  </div>
+                )}
+                <div className="mb-4">
+                  <NextTinyStep
+                    onStartSession={handleTinyStepStartSession}
+                    onMarkPlanItemDone={undefined}
+                    onMovePlanItemToCompost={handleTinyStepMoveToCompost}
+                    onCompostStart5Min={handleCompostStart5Min}
+                    onCompostMarkDone={removeFromCompost}
+                  />
+                </div>
                 {todayTaskEntries.length === 0 && (
                   <div className="mb-4 space-y-4">
                     <GuidedEmptyState
@@ -1671,6 +1723,12 @@ function GardenDashboard() {
                     <li key={w.subtaskId ?? i}>{w.message}</li>
                   ))}
                 </ul>
+              </div>
+            )}
+            {stormImpactToday.stormCount > 0 && stormImpactToday.reason && (
+              <div className="mb-4 p-3 rounded-xl border border-slate-200 bg-slate-50 font-sans text-sm text-stone-700" role="status" aria-live="polite">
+                <p className="font-medium text-stone-800 mb-0.5">Why today&apos;s plan is lighter</p>
+                <p className="text-stone-600">{stormImpactToday.reason}</p>
               </div>
             )}
             <div className="mb-4">

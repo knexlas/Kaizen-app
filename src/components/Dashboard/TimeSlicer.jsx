@@ -4,8 +4,9 @@ import { motion, AnimatePresence } from 'framer-motion';
 import confetti from 'canvas-confetti';
 import { createGoogleEvent } from '../../services/googleCalendarService';
 import { downloadICS } from '../../services/calendarSyncService';
-import { suggestLoadLightening, generateDailyPlan, autoFillDailyPlan, timeToMinutes } from '../../services/schedulerService';
+import { suggestLoadLightening, generateDailyPlan, autoFillDailyPlan, timeToMinutes, getSpoonCost } from '../../services/schedulerService';
 import { useGarden } from '../../context/GardenContext';
+import { localISODate } from '../../services/dateUtils';
 import { getSettings } from '../../services/userSettings';
 import { shouldReduceMotion } from '../../services/motion';
 import WoodenSpoon from '../WoodenSpoon';
@@ -167,10 +168,10 @@ function TimeSlot({
   const slotRitualTitle = getRitualTitleFromAssignment(assignment);
   const subtask = getSubtaskFromAssignment(assignment);
   const routineSession = isRoutineSession(assignment);
+  const isRecovery = assignment && typeof assignment === 'object' && assignment.type === 'recovery';
   const goal = goalId ? goals?.find((g) => g.id === goalId) : null;
-  const isEmpty = !goal && !routineSession;
-  const thisSlotOverLimit = goal && filledCount > maxSlots && filledOrderIndex >= maxSlots;
-  const isSlotBlocked = isEmpty && filledCount >= maxSlots;
+  const isEmpty = !goal && !routineSession && !isRecovery;
+  const thisSlotOverLimit = goal && filledCount > maxSlots;
   const firstUncompleted = goal?.milestones?.find((m) => !m.completed);
   const milestoneTitle = firstUncompleted?.title ?? firstUncompleted?.text;
 
@@ -179,10 +180,10 @@ function TimeSlot({
   const currentMinutePercent = isCurrentHour ? (now.getMinutes() / 60) * 100 : 0;
   const timeLabel = isCurrentHour ? `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}` : '';
 
-  const slotBg = isSlotBlocked
-    ? 'bg-stone-200 border-2 border-dashed border-stone-400'
-    : isEmpty
-      ? 'bg-stone-100 border-2 border-dashed border-stone-300'
+  const slotBg = isEmpty
+    ? 'bg-stone-100 border-2 border-dashed border-stone-300'
+    : isRecovery
+      ? 'bg-stone-100 border border-stone-300 text-stone-600'
       : routineSession
         ? 'bg-slate-200 border border-slate-300 text-stone-800'
         : thisSlotOverLimit
@@ -244,12 +245,12 @@ function TimeSlot({
         onClick={isEmpty && onEmptySlotClick ? () => onEmptySlotClick(hour) : undefined}
         onKeyDown={isEmpty && onEmptySlotClick ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onEmptySlotClick(hour); } } : undefined}
         className={`flex-1 min-h-[52px] rounded-lg flex flex-col justify-center px-3 py-2 transition-colors relative overflow-hidden ${slotBg} ${
-          isOver && isEmpty && !isSlotBlocked ? 'ring-2 ring-moss-500/50 ring-offset-1' : ''
-        } ${isFullyHarvested && !routineSession ? 'border-moss-600/60' : ''} ${isEmpty && onEmptySlotClick && !isSlotBlocked ? 'cursor-pointer hover:bg-stone-200/80 active:bg-stone-300/80' : ''} ${isSlotBlocked ? 'cursor-not-allowed' : ''}`}
+          isOver && isEmpty ? 'ring-2 ring-moss-500/50 ring-offset-1' : ''
+        } ${isFullyHarvested && !routineSession ? 'border-moss-600/60' : ''} ${isEmpty && onEmptySlotClick ? 'cursor-pointer hover:bg-stone-200/80 active:bg-stone-300/80' : ''}`}
       >
         {/* Blocked overlay: striped + stone texture when over capacity or empty at capacity */}
-        {(isSlotBlocked || thisSlotOverLimit) && (
-          <div
+        {thisSlotOverLimit && (
+            <div
             className="absolute inset-0 rounded-lg pointer-events-none overflow-hidden"
             style={{
               backgroundColor: 'rgba(120, 113, 108, 0.75)',
@@ -283,6 +284,8 @@ function TimeSlot({
               <span className="font-sans text-xs text-moss-700 mt-0.5 truncate block" title={subtask.title}>🌱 {subtask.title}</span>
             )}
           </>
+        ) : isRecovery ? (
+          <span className="font-sans text-sm font-medium text-stone-600">{assignment.title ?? 'Rest'}</span>
         ) : goal ? (
           <>
             {durationLabel && !isFullyHarvested && (
@@ -366,8 +369,8 @@ function TimeSlot({
             )}
           </>
         ) : (
-          <span className={`font-sans text-sm relative z-10 ${isSlotBlocked ? 'text-stone-500' : 'text-stone-400'}`}>
-            {isSlotBlocked ? 'No spoons left' : onEmptySlotClick ? (isMobile ? 'Tap to add' : 'Add task') : 'Add task'}
+          <span className="font-sans text-sm relative z-10 text-stone-400">
+            {onEmptySlotClick ? (isMobile ? 'Tap to add' : 'Add task') : 'Add task'}
           </span>
         )}
       </div>
@@ -880,7 +883,7 @@ function getWeekDates() {
   return Array.from({ length: 7 }, (_, i) => {
     const d = new Date(monday);
     d.setDate(monday.getDate() + i);
-    return d.toISOString().slice(0, 10);
+    return localISODate(d);
   });
 }
 
@@ -901,7 +904,7 @@ function summarizeDayAssignments(dayAssign, goals) {
 function getWeekWeather(calendarEvents, dateStr) {
   const dayEvents = (calendarEvents ?? []).filter((e) => {
     const d = e.start ? new Date(e.start) : e.date ? new Date(e.date) : null;
-    return d && d.toISOString().slice(0, 10) === dateStr;
+    return d && localISODate(d) === dateStr;
   });
   const count = dayEvents.length;
   if (count >= 4) return { icon: 'storm', events: dayEvents };
@@ -917,7 +920,7 @@ const WeatherBadge = ({ type }) => {
 
 function WeekView({ weekAssignments, goals, onDayClick, onPlanWeek, planningWeek, weekPreview, onConfirmWeekPlan, onDiscardWeekPlan, calendarEvents }) {
   const dates = useMemo(() => getWeekDates(), []);
-  const todayStr = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const todayStr = useMemo(() => localISODate(), []);
   const displayAssignments = weekPreview ?? weekAssignments;
 
   const weekStats = useMemo(() => {
@@ -1054,7 +1057,7 @@ function MonthPlanView({ weekAssignments, goals, onDayClick, monthlyRoadmap, onP
   const today = useMemo(() => new Date(), []);
   const year = today.getFullYear();
   const month = today.getMonth();
-  const todayStr = today.toISOString().slice(0, 10);
+  const todayStr = localISODate(today);
   const firstDay = new Date(year, month, 1);
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const startDow = (firstDay.getDay() + 6) % 7;
@@ -1202,7 +1205,7 @@ function DayDetailModal({ dateStr, dayAssignments, goals, onClose, onSwitchToDay
   const filledHours = HOURS.filter((h) => dayAssignments[h]);
   const dayCalEvents = (calendarEvents ?? []).filter((e) => {
     const d = e.start ? new Date(e.start) : e.date ? new Date(e.date) : null;
-    return d && d.toISOString().slice(0, 10) === dateStr;
+    return d && localISODate(d) === dateStr;
   });
 
   return (
@@ -1460,17 +1463,21 @@ function TimeSlicer({
 
   const baseCapacity = MAX_SLOTS_BY_WEATHER[weather] ?? 6;
   const maxSlots =
-    typeof dailySpoonCount === 'number' && dailySpoonCount >= 1 && dailySpoonCount <= 12
+    typeof dailySpoonCount === 'number' && dailySpoonCount >= 0 && dailySpoonCount <= 12
       ? dailySpoonCount
       : Math.max(1, baseCapacity + dailyEnergyModifier);
   const isLowEnergy =
     (typeof dailySpoonCount === 'number' && dailySpoonCount <= 4) || dailyEnergyModifier === -2;
-  const filledTimes = HOURS.filter((h) => {
-    const gid = getGoalIdFromAssignment(assignments[h]);
-    return gid && goals.some((g) => g.id === gid);
-  });
-  const filledCount = filledTimes.length;
-  const isOverCapacity = filledCount > maxSlots;
+  const filledTimes = HOURS.filter((h) => assignments[h] != null);
+  const filledSpoonTotal = HOURS.reduce((sum, h) => {
+    const a = assignments[h];
+    if (!a) return sum;
+    if (a && typeof a === 'object' && (a.type === 'recovery' || a.spoonCost === 0)) return sum;
+    const gid = getGoalIdFromAssignment(a);
+    const goal = goals.find((g) => g.id === gid);
+    return sum + getSpoonCost(goal ?? a);
+  }, 0);
+  const isOverCapacity = filledSpoonTotal > maxSlots;
 
   const handleLightenLoad = () => {
     const energyModifier =
@@ -1496,6 +1503,7 @@ function TimeSlicer({
       title: goal.title,
       type: 'routine',
       duration: 60,
+      spoonCost: getSpoonCost(goal),
     };
     const next = { ...assignments, [firstEmpty]: value };
     if (isControlled) onAssignmentsChange(next);
@@ -1507,15 +1515,11 @@ function TimeSlicer({
     if (!over || !active) return;
     const time = String(over.id);
     if (!HOURS.includes(time)) return;
-    const targetWasEmpty = !assignments[time];
-    if (targetWasEmpty && filledCount >= maxSlots) {
-      setSpoonsToast(true);
-      return;
-    }
     const data = active.data?.current;
     const ritualTitle = data?.ritualTitle;
     const goalId = data?.goal?.id ?? active.id;
     const goal = goals.find((g) => g.id === goalId);
+    const targetWasEmpty = !assignments[time];
 
     let value;
     if (goal?.type === 'routine') {
@@ -1525,6 +1529,7 @@ function TimeSlicer({
         title: goal.title,
         type: 'routine',
         duration: 60,
+        spoonCost: getSpoonCost(goal),
       };
       const subtasks = goal.subtasks ?? [];
       if (subtasks.length > 0) {
@@ -1571,12 +1576,6 @@ function TimeSlicer({
   /** Assign a goal/ritual to the given hour (used by Seed Picker modal on mobile). */
   const handleSelectSeedForSlot = (time, goal, ritualTitle = null) => {
     if (!time || !HOURS.includes(time) || !goal?.id) return;
-    const slotWasEmpty = !assignments[time];
-    if (slotWasEmpty && filledCount >= maxSlots) {
-      setSpoonsToast(true);
-      setSeedPickerTargetHour(null);
-      return;
-    }
     let value;
     if (goal.type === 'routine') {
       value = {
@@ -1585,6 +1584,7 @@ function TimeSlicer({
         title: goal.title,
         type: 'routine',
         duration: 60,
+        spoonCost: getSpoonCost(goal),
       };
       const subtasks = goal.subtasks ?? [];
       if (subtasks.length > 0) {
@@ -1601,7 +1601,7 @@ function TimeSlicer({
 
   const [inspectedDate, setInspectedDate] = useState(null);
   const [activeSeedTab, setActiveSeedTab] = useState('all');
-  const todayStr = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const todayStr = useMemo(() => localISODate(), []);
 
   const handleDayClickFromWeek = useCallback((dateStr) => {
     loadDayPlan(dateStr);
@@ -1674,7 +1674,7 @@ function TimeSlicer({
             <button
               type="button"
               onClick={() => {
-                const dateStr = editingDate || new Date().toISOString().slice(0, 10);
+                const dateStr = editingDate || localISODate();
                 const dayEvents = HOURS
                   .filter((h) => assignments[h])
                   .map((h) => {
@@ -1724,7 +1724,7 @@ function TimeSlicer({
 
       {viewMode === 'day' && !hideCapacityOnMobile && (
         <SpoonBattery
-          used={filledCount}
+          used={filledSpoonTotal}
           total={maxSlots}
           isLowEnergy={isLowEnergy}
           onLightenLoad={isOverCapacity ? handleLightenLoad : undefined}
@@ -1749,6 +1749,14 @@ function TimeSlicer({
             </button>
           </div>
         )}
+        {filledSpoonTotal >= maxSlots && (
+          <div className="mb-4 p-3 bg-amber-50/80 border border-amber-200/60 rounded-xl flex items-start gap-3" role="status">
+            <span className="text-xl shrink-0" aria-hidden>🦉</span>
+            <p className="font-sans text-sm text-amber-800 leading-relaxed">
+              &ldquo;Your energy is depleted today. You may still plant these seeds, but please consider resting first. The garden will wait for you.&rdquo;
+            </p>
+          </div>
+        )}
         <div className="flex flex-col gap-6 min-w-0">
           {/* Schedule — Bamboo Timeline (scrollable) */}
           <div className="flex gap-3 max-h-[70vh] md:max-h-[420px] overflow-y-auto overflow-x-hidden rounded-lg">
@@ -1756,10 +1764,10 @@ function TimeSlicer({
             <div className="flex-1 relative min-h-0">
               {/* Calendar events for this day */}
               {(() => {
-                const targetDate = editingDate || new Date().toISOString().slice(0, 10);
+                const targetDate = editingDate || localISODate();
                 const dayEvts = (calendarEvents ?? []).filter((e) => {
                   const d = e.start ? new Date(e.start) : null;
-                  return d && d.toISOString().slice(0, 10) === targetDate;
+                  return d && localISODate(d) === targetDate;
                 });
                 if (dayEvts.length === 0) return null;
                 return (
@@ -1788,14 +1796,14 @@ function TimeSlicer({
                     assignment={assignments[hour] ?? null}
                     goals={goals}
                     filledOrderIndex={assignments[hour] ? filledTimes.indexOf(hour) : -1}
-                    filledCount={filledCount}
+                    filledCount={filledSpoonTotal}
                     maxSlots={maxSlots}
                     onStartFocus={onStartFocus}
                     onMilestoneCheck={onMilestoneCheck}
                     cloudSaved={recentlyExportedSlot === hour}
                     now={now}
                     isMobile={isMobile}
-                    onEmptySlotClick={(h) => { if (filledCount >= maxSlots) { setSpoonsToast(true); return; } setSeedPickerTargetHour(h); }}
+                    onEmptySlotClick={(h) => setSeedPickerTargetHour(h)}
                     disableConfetti={getSettings().lowStim || shouldReduceMotion(getSettings())}
                   />
                 ))}
@@ -2130,11 +2138,11 @@ export default TimeSlicer;
 
 /**
  * Magic Planning: generate today's plan from routine goals and energy, then update assignments.
- * Call from parent when e.g. morning check-in completes with an empty schedule.
+ * Optional calendarEvents + options make the plan storm-aware (capacity reduction + buffer).
  */
-export function triggerAutoPlan(goals, energyModifier, onAssignmentsChange) {
+export function triggerAutoPlan(goals, energyModifier, onAssignmentsChange, calendarEvents = null, options = {}) {
   if (typeof onAssignmentsChange !== 'function') return;
-  const plan = generateDailyPlan(goals, energyModifier);
+  const plan = generateDailyPlan(goals, energyModifier, calendarEvents ?? undefined, options);
   onAssignmentsChange(plan);
 }
 
