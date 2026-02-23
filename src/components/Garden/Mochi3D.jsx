@@ -34,6 +34,24 @@ export default function Mochi3D({ isWalking }) {
       <Cone args={[0.15, 0.3, 16]} position={[0, 0.55, 0]} rotation={[0, 0, 0.3]}>
         <meshStandardMaterial color="#8fa967" />
       </Cone>
+      {/* Watering Can */}
+      <group position={[0.4, -0.05, 0.45]} rotation={[0, -0.4, -0.2]}>
+        {/* Can Body */}
+        <mesh castShadow>
+          <cylinderGeometry args={[0.12, 0.12, 0.2, 16]} />
+          <meshStandardMaterial color="#94a3b8" metalness={0.4} roughness={0.3} />
+        </mesh>
+        {/* Spout */}
+        <mesh position={[0.15, -0.02, 0]} rotation={[0, 0, -1.2]} castShadow>
+          <cylinderGeometry args={[0.02, 0.04, 0.2, 8]} />
+          <meshStandardMaterial color="#94a3b8" metalness={0.4} roughness={0.3} />
+        </mesh>
+        {/* Handle */}
+        <mesh position={[-0.1, 0.05, 0]} castShadow>
+          <torusGeometry args={[0.06, 0.02, 8, 16, Math.PI]} />
+          <meshStandardMaterial color="#94a3b8" metalness={0.4} roughness={0.3} />
+        </mesh>
+      </group>
     </group>
   );
 }

@@ -104,22 +104,17 @@ export default function WanderingCreature({
     });
   });
 
-  if (customComponent) {
-    return (
-      <group
-        position={[currentPos[0], currentPos[1] + zOffset, currentPos[2]]}
-        scale={[scale, scale, scale]}
-      >
-        {customComponent}
-      </group>
-    );
-  }
-
   return (
-    <Billboard position={[currentPos[0], currentPos[1] + zOffset, currentPos[2]]}>
-      <Text fontSize={scale} anchorX="center" anchorY="middle">
-        {emoji}
-      </Text>
-    </Billboard>
+    <group position={[currentPos[0], currentPos[1] + zOffset, currentPos[2]]}>
+      {customComponent ? (
+        <group scale={scale}>
+          {customComponent}
+        </group>
+      ) : (
+        <Billboard>
+          <Text fontSize={scale}>{emoji}</Text>
+        </Billboard>
+      )}
+    </group>
   );
 }
