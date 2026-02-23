@@ -1503,6 +1503,9 @@ function TimeSlicer({
   const [recentlyExportedSlot, setRecentlyExportedSlot] = useState(null);
   const [pendingRoutineDrop, setPendingRoutineDrop] = useState(null); // { time, goal, value }
   const [seedPickerTargetHour, setSeedPickerTargetHour] = useState(null);
+  const [seedBagTapTarget, setSeedBagTapTarget] = useState(null); // { goal, item? } for tap-to-add popover
+  const [inspectedDate, setInspectedDate] = useState(null);
+  const [activeSeedTab, setActiveSeedTab] = useState('all');
   const [spoonsToast, setSpoonsToast] = useState(false);
   const [autoPlanToast, setAutoPlanToast] = useState(false);
   const [energyToast, setEnergyToast] = useState(false);
@@ -1511,19 +1514,28 @@ function TimeSlicer({
   const [priorities, setPriorities] = useState(null);
   const [now, setNow] = useState(() => new Date());
   const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < MOBILE_BREAKPOINT);
-  const { weekAssignments, loadWeekPlans, loadDayPlan, saveDayPlanForDate } = useGarden();
-  const isControlled = onAssignmentsChange != null;
-  const assignments = isControlled ? controlledAssignments ?? {} : internalAssignments;
+  const garden = useGarden();
+  const weekAssignments = garden?.weekAssignments ?? {};
+  const loadWeekPlans = typeof garden?.loadWeekPlans === 'function' ? garden.loadWeekPlans : () => {};
+  const loadDayPlan = typeof garden?.loadDayPlan === 'function' ? garden.loadDayPlan : async () => ({});
+  const saveDayPlanForDate = typeof garden?.saveDayPlanForDate === 'function' ? garden.saveDayPlanForDate : async () => {};
+  const isControlled = typeof onAssignmentsChange === 'function';
+  const assignments = isControlled ? (controlledAssignments ?? {}) : internalAssignments;
+  const safeOnAssignmentsChange = typeof onAssignmentsChange === 'function' ? onAssignmentsChange : () => {};
+  const safeGoals = Array.isArray(goals) ? goals : [];
+  const safeCalendarEvents = Array.isArray(calendarEvents) ? calendarEvents : [];
+  const safeTodayRitualItems = Array.isArray(todayRitualItems) ? todayRitualItems : [];
+  const safeGoalBank = Array.isArray(goalBank) ? goalBank : [];
 
   const viewedDate = editingDate ? new Date(editingDate + 'T12:00:00') : now;
   const currentDay = viewedDate.getDay();
   const dayOfMonth = viewedDate.getDate();
   const isEvenWeek = Math.floor((viewedDate.getTime() - new Date(viewedDate.getFullYear(), 0, 1).getTime()) / (7 * 24 * 60 * 60 * 1000)) % 2 === 0;
-  const routines = goals.filter((g) => g.type === 'routine');
+  const routines = safeGoals.filter((g) => g && g.type === 'routine');
   const todayRitualEntries = useMemo(
     () =>
       routines.flatMap((goal) =>
-        (goal.rituals || [])
+        (goal?.rituals || [])
           .filter((r) => {
             if (r.frequency === 'monthly') return Number(r.monthDay) === dayOfMonth;
             if (r.frequency === 'biweekly' && !isEvenWeek) return false;
@@ -1531,7 +1543,7 @@ function TimeSlicer({
           })
           .map((r) => ({ goal, ritual: r }))
       ),
-    [goals, currentDay, dayOfMonth, isEvenWeek]
+    [safeGoals, currentDay, dayOfMonth, isEvenWeek]
   );
 
   useEffect(() => {
@@ -1548,7 +1560,7 @@ function TimeSlicer({
   }, []);
 
   useEffect(() => {
-    if (viewMode === 'week' || viewMode === 'month') loadWeekPlans();
+    if ((viewMode === 'week' || viewMode === 'month') && typeof loadWeekPlans === 'function') loadWeekPlans();
   }, [viewMode, loadWeekPlans]);
 
   const applyAssignment = (time, value) => {
@@ -1558,14 +1570,14 @@ function TimeSlicer({
     } else {
       next[time] = value;
     }
-    if (isControlled) onAssignmentsChange(next);
+    if (isControlled) safeOnAssignmentsChange(next);
     else setInternalAssignments(next);
   };
 
   const removeFromAnytime = (index) => {
     const list = (assignments.anytime || []).filter((_, i) => i !== index);
     const next = { ...assignments, anytime: list };
-    if (isControlled) onAssignmentsChange(next);
+    if (isControlled) safeOnAssignmentsChange(next);
     else setInternalAssignments(next);
   };
 
@@ -1602,9 +1614,9 @@ function TimeSlicer({
           : dailyEnergyModifier > 0
             ? 'high'
             : 'normal';
-    const plan = autoFillDailyPlan(goals, calendarEvents, energyLevel);
+    const plan = autoFillDailyPlan(safeGoals, safeCalendarEvents, energyLevel);
     const next = { ...assignments, ...plan };
-    if (isControlled) onAssignmentsChange(next);
+    if (isControlled) safeOnAssignmentsChange(next);
     else setInternalAssignments(next);
     setAutoPlanToast(true);
   };
@@ -1623,10 +1635,10 @@ function TimeSlicer({
       if (!a) return sum;
       if (a && typeof a === 'object' && (a.type === 'recovery' || a.spoonCost === 0)) return sum;
       const gid = getGoalIdFromAssignment(a);
-      const goal = goals.find((g) => g.id === gid);
+      const goal = safeGoals.find((g) => g.id === gid);
       return sum + getSpoonCost(goal ?? a);
     }, 0);
-  }, [assignments, goals]);
+  }, [assignments, safeGoals]);
   const isOverCapacity = filledSpoonTotal > maxSlots;
 
   const handleLightenLoad = () => {
@@ -1634,9 +1646,9 @@ function TimeSlicer({
       typeof dailySpoonCount === 'number' && dailySpoonCount <= 12
         ? (dailySpoonCount <= 4 ? -2 : dailySpoonCount >= 9 ? 1 : 0)
         : dailyEnergyModifier;
-    const result = suggestLoadLightening(assignments, goals, maxSlots, energyModifier);
+    const result = suggestLoadLightening(assignments, safeGoals, maxSlots, energyModifier);
     if (result != null) {
-      if (isControlled) onAssignmentsChange(result.assignments);
+      if (isControlled) safeOnAssignmentsChange(result.assignments);
       else setInternalAssignments(result.assignments);
       setLightenedTasksFeedback(result.removedItems ?? []);
       onLoadLightened?.(result.removedItems);
@@ -1644,7 +1656,7 @@ function TimeSlicer({
   };
 
   const handleOpenPrioritize = () => {
-    setPriorities(getGentlePriorities(goals, maxSlots));
+    setPriorities(getGentlePriorities(safeGoals, maxSlots));
     setShowPrioritize(true);
   };
 
@@ -1732,7 +1744,7 @@ function TimeSlicer({
       spoonCost: getSpoonCost(goal),
     };
     const next = { ...assignments, [firstEmpty]: value };
-    if (isControlled) onAssignmentsChange(next);
+    if (isControlled) safeOnAssignmentsChange(next);
     else setInternalAssignments(next);
   };
 
@@ -1752,7 +1764,7 @@ function TimeSlicer({
     const data = active.data?.current;
     const ritualTitle = data?.ritualTitle;
     const goalId = data?.goal?.id ?? active.id;
-    const goal = goals.find((g) => g.id === goalId);
+    const goal = safeGoals.find((g) => g.id === goalId);
 
     if (time === 'anytime-pool') {
       let value;
@@ -1883,9 +1895,6 @@ function TimeSlicer({
     setSeedPickerTargetHour(null);
   };
 
-  const [inspectedDate, setInspectedDate] = useState(null);
-  const [activeSeedTab, setActiveSeedTab] = useState('all');
-  const [seedBagTapTarget, setSeedBagTapTarget] = useState(null); // { goal, item? } for tap-to-add popover
   const todayStr = useMemo(() => localISODate(), []);
 
   const handleDayClickFromWeek = useCallback((dateStr) => {
@@ -1899,7 +1908,7 @@ function TimeSlicer({
     if (dateStr && dateStr !== todayStr) {
       setEditingDate(dateStr);
       const dayData = weekAssignments[dateStr] ?? {};
-      if (isControlled) onAssignmentsChange(dayData);
+      if (isControlled) safeOnAssignmentsChange(dayData);
       else setInternalAssignments(dayData);
     } else {
       setEditingDate(null);
@@ -1912,8 +1921,8 @@ function TimeSlicer({
       saveDayPlanForDate(editingDate, assignments);
     }
     setEditingDate(null);
-    if (isControlled) onAssignmentsChange(weekAssignments[todayStr] ?? {});
-  }, [editingDate, isControlled, assignments, onAssignmentsChange, weekAssignments, todayStr, saveDayPlanForDate]);
+    if (isControlled) safeOnAssignmentsChange(weekAssignments[todayStr] ?? {});
+  }, [editingDate, isControlled, assignments, safeOnAssignmentsChange, weekAssignments, todayStr, saveDayPlanForDate]);
 
   return (
     <div className="bg-stone-50 rounded-xl border border-stone-200 p-6 min-w-0">
@@ -1924,7 +1933,7 @@ function TimeSlicer({
             if (viewMode === 'day' && editingDate && editingDate !== todayStr) {
               saveDayPlanForDate(editingDate, assignments);
               setEditingDate(null);
-              if (isControlled) onAssignmentsChange(weekAssignments[todayStr] ?? {});
+              if (isControlled) safeOnAssignmentsChange(weekAssignments[todayStr] ?? {});
             }
             setViewMode(mode);
           }} />
@@ -1973,7 +1982,7 @@ function TimeSlicer({
                   .filter((h) => assignments[h])
                   .map((h) => {
                     const gid = getGoalIdFromAssignment(assignments[h]);
-                    const goal = goals.find((g) => g.id === gid);
+                    const goal = safeGoals.find((g) => g.id === gid);
                     const hourNum = parseInt(h);
                     const startTime = new Date(dateStr + 'T' + h + ':00');
                     const endTime = new Date(startTime.getTime() + 60 * 60 * 1000);
@@ -1994,7 +2003,7 @@ function TimeSlicer({
       {viewMode === 'week' && (
         <WeekView
           weekAssignments={weekAssignments}
-          goals={goals}
+          goals={safeGoals}
           onDayClick={handleDayClickFromWeek}
           onPlanWeek={onPlanWeek}
           planningWeek={planningWeek}
@@ -2008,7 +2017,7 @@ function TimeSlicer({
       {viewMode === 'month' && (
         <MonthPlanView
           weekAssignments={weekAssignments}
-          goals={goals}
+          goals={safeGoals}
           onDayClick={handleDayClickFromWeek}
           monthlyRoadmap={monthlyRoadmap}
           onPlanMonth={onPlanMonth}
@@ -2059,7 +2068,7 @@ function TimeSlicer({
         )}
         <AnytimePoolSection
           assignments={assignments}
-          goals={goals}
+          goals={safeGoals}
           onStartFocus={onStartFocus}
           onRemove={removeFromAnytime}
           onMilestoneCheck={handleMilestoneCheck}
@@ -2072,7 +2081,7 @@ function TimeSlicer({
               {/* Calendar events for this day */}
               {(() => {
                 const targetDate = editingDate || localISODate();
-                const dayEvts = (calendarEvents ?? []).filter((e) => {
+                const dayEvts = safeCalendarEvents.filter((e) => {
                   const d = e.start ? new Date(e.start) : null;
                   return d && localISODate(d) === targetDate;
                 });
@@ -2126,7 +2135,7 @@ function TimeSlicer({
               Drag or tap a slot to add a task.
             </p>
             <div className="flex flex-col gap-4 min-h-0 max-h-[50vh] overflow-y-auto">
-              {todayRitualEntries.length === 0 && goalBank.length === 0 ? (
+              {todayRitualEntries.length === 0 && safeGoalBank.length === 0 ? (
                 <div className="py-6 text-center">
                   <p className="font-sans text-sm text-stone-500 mb-3">
                     Seed bag empty.
@@ -2171,12 +2180,12 @@ function TimeSlicer({
                   </div>
                   {/* Pill tabs + filtered Seed Bag */}
                   {(() => {
-                    const kaizenSeeds = goalBank.filter((g) => g.type !== 'routine' && g.type !== 'vitality' && !g._projectGoal);
-                    const routineSeeds = goalBank.filter((g) => g.type === 'routine');
-                    const vitalitySeeds = goalBank.filter((g) => g.type === 'vitality');
-                    const projectSeeds = goalBank.filter((g) => g._projectGoal);
+                    const kaizenSeeds = safeGoalBank.filter((g) => g.type !== 'routine' && g.type !== 'vitality' && !g._projectGoal);
+                    const routineSeeds = safeGoalBank.filter((g) => g.type === 'routine');
+                    const vitalitySeeds = safeGoalBank.filter((g) => g.type === 'vitality');
+                    const projectSeeds = safeGoalBank.filter((g) => g._projectGoal);
                     const chipProps = (goal) => ({ key: goal.id, goal, assignments, onSeedClick, onMilestoneCheck: handleMilestoneCheck, onEditGoal, onCompostGoal, onAddRoutineTime, onPlantRoutineBlock: handlePlantRoutineBlock, onAddSubtask, onStartFocus, onTap: (g, it) => setSeedBagTapTarget({ goal: g, item: it }) });
-                    const hasAny = goalBank.length > 0;
+                    const hasAny = safeGoalBank.length > 0;
                     if (!hasAny) return (
                       <div className="py-2">
                         <p className="font-sans text-xs text-stone-400 mb-2">No goals yet.</p>
@@ -2307,8 +2316,8 @@ function TimeSlicer({
         <DayDetailModal
           dateStr={inspectedDate}
           dayAssignments={weekAssignments[inspectedDate] ?? {}}
-          goals={goals}
-          calendarEvents={calendarEvents}
+          goals={safeGoals}
+          calendarEvents={safeCalendarEvents}
           onClose={() => setInspectedDate(null)}
           onSwitchToDay={handleSwitchToInspectedDay}
         />
@@ -2410,10 +2419,10 @@ function TimeSlicer({
                   </div>
                 )}
                 {(() => {
-                  const kz = goalBank.filter((g) => g.type !== 'routine' && g.type !== 'vitality' && !g._projectGoal);
-                  const rt = goalBank.filter((g) => g.type === 'routine');
-                  const pr = goalBank.filter((g) => g._projectGoal);
-                  const vt = goalBank.filter((g) => g.type === 'vitality');
+                  const kz = safeGoalBank.filter((g) => g.type !== 'routine' && g.type !== 'vitality' && !g._projectGoal);
+                  const rt = safeGoalBank.filter((g) => g.type === 'routine');
+                  const pr = safeGoalBank.filter((g) => g._projectGoal);
+                  const vt = safeGoalBank.filter((g) => g.type === 'vitality');
                   const sections = [
                     { id: 'k', label: '🌱 Kaizen', items: kz, border: 'border-moss-200', bg: 'bg-moss-50/60', badge: 'text-moss-600' },
                     { id: 'r', label: '🪨 Routines', items: rt, border: 'border-slate-200', bg: 'bg-slate-50/60', badge: 'text-slate-600' },

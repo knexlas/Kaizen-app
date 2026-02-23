@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef, Component } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useGarden } from '../../context/GardenContext';
 import { useTheme } from '../../context/ThemeContext';
@@ -176,6 +176,43 @@ function getWeather(events) {
 /** dayIndex: JS getDay() convention (0=Sun..6=Sat). Goals store ritual.days in this convention. */
 function getRitualForToday(goal, dayIndex) {
   return goal?.rituals?.find((r) => Array.isArray(r.days) && r.days.includes(dayIndex));
+}
+
+/** Catches errors in the expanded schedule so the app doesn't crash; shows fallback + logs error. */
+class ScheduleErrorBoundary extends Component {
+  state = { error: null };
+
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error('[ScheduleErrorBoundary]', error, errorInfo?.componentStack);
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="mb-4 p-4 rounded-xl border-2 border-amber-200 bg-amber-50">
+          <p className="font-sans text-sm font-medium text-amber-900 mb-1">Schedule couldn&apos;t load</p>
+          <p className="font-mono text-xs text-amber-800 mb-3 break-all" title={this.state.error?.stack}>
+            {this.state.error?.message ?? String(this.state.error)}
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              this.setState({ error: null });
+              this.props.onCollapse?.();
+            }}
+            className="px-3 py-1.5 rounded-lg font-sans text-sm font-medium bg-amber-200 text-amber-900 hover:bg-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-500/50"
+          >
+            Collapse schedule
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
 }
 
 function GardenDashboard() {
@@ -1632,21 +1669,24 @@ function GardenDashboard() {
             {!scheduleExpanded ? (
               <div className="mb-4 space-y-3">
                 <h3 className="font-serif text-stone-800 text-base">Next up</h3>
-                {nextUpItems.length === 0 ? (
+                {(nextUpItems ?? []).length === 0 ? (
                   <p className="font-sans text-sm text-stone-500 py-2">Nothing planned yet.</p>
                 ) : (
                   <ul className="space-y-2" aria-label="Next up tasks">
-                    {nextUpItems.map((item) => (
-                      <li key={`${item.hour}-${item.goalId}`} className="flex flex-wrap items-center gap-2 p-3 rounded-xl border border-stone-200 bg-white/80">
+                    {(nextUpItems ?? []).filter((item) => item != null && (item.goalId != null || item.goal)).map((item) => (
+                      <li key={`${item?.hour ?? ''}-${item?.goalId ?? ''}`} className="flex flex-wrap items-center gap-2 p-3 rounded-xl border border-stone-200 bg-white/80">
                         <div className="min-w-0 flex-1">
-                          <span className="font-sans text-sm font-medium text-stone-900 block truncate">{item.title}</span>
+                          <span className="font-sans text-sm font-medium text-stone-900 block truncate">{item?.title ?? 'Task'}</span>
                           <span className="font-sans text-xs text-stone-500">
-                            {item.estimatedMinutes}m{item.spoonCost != null && item.spoonCost > 0 ? ` · ${item.spoonCost} spoon${item.spoonCost !== 1 ? 's' : ''}` : ''}
+                            {item?.estimatedMinutes ?? 0}m{item?.spoonCost != null && item.spoonCost > 0 ? ` · ${item.spoonCost} spoon${item.spoonCost !== 1 ? 's' : ''}` : ''}
                           </span>
                         </div>
                         <button
                           type="button"
-                          onClick={() => handleStartNowStart({ goal: item.goal, goalId: item.goalId, subtaskId: item.subtaskId }, 5)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleStartNowStart({ goal: item?.goal, goalId: item?.goalId, subtaskId: item?.subtaskId }, 5);
+                          }}
                           className="shrink-0 px-3 py-1.5 rounded-lg font-sans text-xs font-medium bg-moss-600 text-stone-50 hover:bg-moss-700 focus:outline-none focus:ring-2 focus:ring-moss-500/50"
                         >
                           Start 5 min
@@ -1658,14 +1698,21 @@ function GardenDashboard() {
                 <div className="flex flex-wrap items-center gap-2 pt-1">
                   <button
                     type="button"
-                    onClick={() => setScheduleExpanded(true)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setScheduleExpanded((prev) => !prev);
+                    }}
                     className="px-3 py-2 rounded-lg font-sans text-sm font-medium border-2 border-moss-400 bg-moss-50 text-moss-800 hover:bg-moss-100 focus:outline-none focus:ring-2 focus:ring-moss-500/50"
                   >
                     Expand schedule
                   </button>
                   <button
                     type="button"
-                    onClick={() => { setScheduleExpanded(true); setTimeout(() => document.getElementById('tour-timeline')?.scrollIntoView?.({ behavior: 'smooth' }), 100); }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setScheduleExpanded(true);
+                      setTimeout(() => document.getElementById('tour-timeline')?.scrollIntoView?.({ behavior: 'smooth' }), 100);
+                    }}
                     className="font-sans text-sm text-stone-500 hover:text-stone-700 underline underline-offset-2 focus:outline-none focus:ring-2 focus:ring-moss-500/50 rounded"
                   >
                     Plan my day
@@ -1677,22 +1724,26 @@ function GardenDashboard() {
                 <div className="flex justify-end mb-2">
                   <button
                     type="button"
-                    onClick={() => setScheduleExpanded(false)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setScheduleExpanded((prev) => !prev);
+                    }}
                     className="px-3 py-1.5 rounded-lg font-sans text-sm text-stone-500 hover:text-stone-700 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/50"
                   >
                     Collapse schedule
                   </button>
                 </div>
+                <ScheduleErrorBoundary onCollapse={() => setScheduleExpanded(false)}>
                 <TimeSlicer
-              weather={weather}
-              goals={goals}
-              todayRitualItems={todayRitualItems}
-              goalBank={goalBank}
-              dailyEnergyModifier={dailyEnergyModifier}
+              weather={weather ?? 'sun'}
+              goals={Array.isArray(goals) ? goals : []}
+              todayRitualItems={Array.isArray(todayRitualItems) ? todayRitualItems : []}
+              goalBank={Array.isArray(goalBank) ? goalBank : []}
+              dailyEnergyModifier={dailyEnergyModifier ?? 0}
               dailySpoonCount={todaySpoonCount}
-              assignments={assignments}
+              assignments={assignments && typeof assignments === 'object' ? assignments : {}}
               onAssignmentsChange={setAssignments}
-              calendarEvents={events}
+              calendarEvents={Array.isArray(events) ? events : []}
               onStartFocus={handleStartSession}
               hideCapacityOnMobile={isMobileNav}
               onSeedClick={(goal) => setSeedForMilestones(goal)}
@@ -1714,6 +1765,7 @@ function GardenDashboard() {
               onDiscardWeekPlan={handleDiscardWeekPlan}
               monthlyRoadmap={monthlyRoadmap}
             />
+                </ScheduleErrorBoundary>
               </div>
             )}
               </>

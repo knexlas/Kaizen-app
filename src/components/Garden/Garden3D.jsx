@@ -1,12 +1,13 @@
-import { Canvas } from '@react-three/fiber';
-import { OrbitControls, Sky, Environment, Billboard, Float, Text, Sparkles, Html, RoundedBox } from '@react-three/drei';
+import { useMemo, Suspense, useRef } from 'react';
+import { Canvas, useFrame } from '@react-three/fiber';
+import { OrbitControls, Sky, Environment, Billboard, Float, Text, Sparkles, Html, RoundedBox, useGLTF } from '@react-three/drei';
 import { useGarden } from '../../context/GardenContext';
 import { getGoalProgressPercent } from './GardenWalk';
 import WanderingCreature from './WanderingCreature';
 import ProceduralFlora from './ProceduralFlora';
 import Mochi3D from './Mochi3D';
 import Rabbit3D from './Rabbit3D';
-import AutoTiler from './AutoTiler';
+import ShopStand from './ShopStand';
 
 const TERRAIN_COLORS = {
   water: '#4facfe',
@@ -14,24 +15,46 @@ const TERRAIN_COLORS = {
   sand: '#d2b48c',
 };
 
+function WaterTile({ x, z }) {
+  const ref = useRef();
+  useFrame((state) => {
+    if (ref.current) ref.current.position.y = 0.02 + Math.sin(state.clock.elapsedTime * 2 + x + z) * 0.03;
+  });
+  return (
+    <mesh ref={ref} position={[x, 0.02, z]} receiveShadow castShadow>
+      <boxGeometry args={[1, 0.15, 1]} />
+      <meshStandardMaterial color="#3b82f6" roughness={0.1} metalness={0.5} transparent opacity={0.85} />
+    </mesh>
+  );
+}
+
 function TerrainTiles() {
   const { terrainMap } = useGarden();
-  const entries = Object.entries(terrainMap ?? {}).filter(([, m]) => m !== 'water');
+  const entries = Object.entries(terrainMap ?? {});
   return (
     <>
-      <AutoTiler terrainMap={terrainMap} materialType="water" />
       {entries.map(([key, material]) => {
         const [x, z] = key.split(',').map(Number);
         if (Number.isNaN(x) || Number.isNaN(z)) return null;
+        if (material === 'water') return <WaterTile key={key} x={x} z={z} />;
+        if (material === 'sand') {
+          return (
+            <mesh key={key} position={[x, 0.01, z]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+              <planeGeometry args={[1, 1]} />
+              <meshStandardMaterial color="#e6c280" roughness={1} />
+            </mesh>
+          );
+        }
+        if (material === 'stone') {
+          return (
+            <RoundedBox key={key} args={[0.95, 0.15, 0.95]} radius={0.02} position={[x, -0.05, z]} receiveShadow>
+              <meshStandardMaterial color="#78716c" roughness={0.8} />
+            </RoundedBox>
+          );
+        }
         const color = TERRAIN_COLORS[material] ?? TERRAIN_COLORS.stone;
         return (
-          <RoundedBox
-            key={key}
-            args={[0.95, 0.2, 0.95]}
-            radius={0.05}
-            position={[x, -0.1, z]}
-            receiveShadow
-          >
+          <RoundedBox key={key} args={[0.95, 0.2, 0.95]} radius={0.05} position={[x, -0.1, z]} receiveShadow>
             <meshStandardMaterial color={color} />
           </RoundedBox>
         );
@@ -54,7 +77,7 @@ function Ground({ onClick }) {
   );
 }
 
-function Tree({ position, goal }) {
+function Tree({ position, goal, onGoalClick }) {
   const progress = getGoalProgressPercent(goal);
   const plantScale = 0.8 + (progress / 100) * 1.7;
 
@@ -63,7 +86,7 @@ function Tree({ position, goal }) {
       position={position}
       onClick={(e) => {
         e.stopPropagation();
-        fireToast('Viewing goal: ' + (goal?.title ?? 'Goal'));
+        onGoalClick?.(goal);
       }}
       onPointerOver={() => { document.body.style.cursor = 'pointer'; }}
       onPointerOut={() => { document.body.style.cursor = 'auto'; }}
@@ -103,13 +126,13 @@ function SpiritGardener3D({ position = [0, 1.5, 0] }) {
   );
 }
 
-function Scene({ placedGoals, onPlant }) {
+function Scene({ placedGoals, onPlant, onGoalClick }) {
   return (
     <>
       <TerrainTiles />
       <Ground onClick={onPlant} />
       {placedGoals?.map((g) => (
-        <Tree key={g.id} position={g.position3D} goal={g} />
+        <Tree key={g.id} position={g.position3D} goal={g} onGoalClick={onGoalClick} />
       )) ?? null}
       <Ecosystem placedGoals={placedGoals} />
     </>
@@ -149,19 +172,29 @@ function Ecosystem({ placedGoals }) {
   );
 }
 
+function ShopCornerTree() {
+  const { scene } = useGLTF('/models/tree_pineTallA.glb');
+  const cloned = useMemo(() => (scene ? scene.clone() : null), [scene]);
+  if (!cloned) return null;
+  return <primitive object={cloned} position={[10, 0, -8]} scale={1} />;
+}
+
 function fireToast(message) {
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent('kaizen:toast', { detail: { message } }));
   }
 }
 
-export default function Garden3D() {
+useGLTF.preload('/models/tree_pineTallA.glb');
+
+export default function Garden3D({ onOpenShop, onGoalClick }) {
   const { goals, editGoal, activeTool, setActiveTool, paintTerrain, updateDecoration } = useGarden();
   const placedGoals = goals?.filter((g) => Array.isArray(g.position3D) && g.position3D.length >= 3) ?? [];
   const unplacedGoals = goals?.filter((g) => !g.position3D || !Array.isArray(g.position3D)) ?? [];
 
   const handlePlant = (e) => {
     e.stopPropagation();
+    if (!activeTool) return;
     let { x, z } = e.point;
     x = Math.round(x);
     z = Math.round(z);
@@ -212,7 +245,21 @@ export default function Garden3D() {
         <Environment preset="forest" />
         <OrbitControls autoRotate autoRotateSpeed={0.5} enableDamping dampingFactor={0.05} />
         <SpiritGardener3D position={[0, 1.5, 0]} />
-        <Scene placedGoals={placedGoals} onPlant={handlePlant} />
+        <Scene placedGoals={placedGoals} onPlant={handlePlant} onGoalClick={onGoalClick} />
+        {onOpenShop && (
+          <group>
+            <ShopStand
+              position={[8, 0, -8]}
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenShop();
+              }}
+            />
+            <Suspense fallback={null}>
+              <ShopCornerTree />
+            </Suspense>
+          </group>
+        )}
       </Canvas>
     </div>
   );

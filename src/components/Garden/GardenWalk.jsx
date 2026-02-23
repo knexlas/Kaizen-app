@@ -97,6 +97,7 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
 
   const [viewMode, setViewMode] = useState('garden'); // 'garden' | 'greenhouse'
   const [selectedGoal, setSelectedGoal] = useState(null);
+  const [viewingGoal, setViewingGoal] = useState(null);
   const [isShopOpen, setIsShopOpen] = useState(false);
   const [fertilizeMode, setFertilizeMode] = useState(false);
 
@@ -183,8 +184,70 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
           </div>
         )}
         <div className="m-2 sm:m-3 h-[70vh] w-full rounded-3xl overflow-hidden relative">
-          <Garden3D />
+          <Garden3D onOpenShop={() => setIsShopOpen(true)} onGoalClick={setViewingGoal} />
         </div>
+
+        {/* Goal viewer panel — when user clicks a 3D plant */}
+        <AnimatePresence>
+          {viewingGoal && (
+            <motion.div
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 20 }}
+              transition={{ duration: 0.2 }}
+              className="fixed top-20 right-8 z-50 w-96 pointer-events-auto"
+            >
+              <div className="bg-white/90 backdrop-blur-md p-6 rounded-3xl shadow-2xl border border-white">
+                <button
+                  type="button"
+                  onClick={() => setViewingGoal(null)}
+                  aria-label="Close"
+                  className="absolute top-4 right-4 w-8 h-8 flex items-center justify-center rounded-full text-stone-400 hover:text-stone-600 hover:bg-stone-100 transition-colors font-sans text-lg"
+                >
+                  ×
+                </button>
+                <h3 className="font-serif text-xl text-stone-900 pr-10 mb-2">{viewingGoal.title}</h3>
+                <p className="font-sans text-sm text-stone-500 mb-4">
+                  {viewingGoal.deadline || viewingGoal._projectDeadline
+                    ? new Date((viewingGoal.deadline || viewingGoal._projectDeadline) + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
+                    : 'No deadline'}
+                </p>
+                <div className="mb-4">
+                  <p className="font-sans text-xs text-stone-500 mb-1">Progress</p>
+                  <div className="h-2 w-full rounded-full bg-stone-200 overflow-hidden">
+                    <motion.div
+                      className="h-full rounded-full bg-moss-600"
+                      initial={{ width: 0 }}
+                      animate={{ width: `${getGoalProgressPercent(viewingGoal)}%` }}
+                      transition={{ duration: 0.4 }}
+                    />
+                  </div>
+                  <p className="font-sans text-xs text-stone-600 mt-1">{Math.round(getGoalProgressPercent(viewingGoal))}%</p>
+                </div>
+                <div>
+                  <p className="font-sans text-xs font-medium text-stone-500 uppercase tracking-wider mb-2">Vines / Subtasks</p>
+                  <ul className="space-y-1.5">
+                    {(viewingGoal.subtasks || viewingGoal.phases || viewingGoal.milestones || []).map((item, i) => {
+                      const title = typeof item === 'object' ? (item.title ?? item.name) : String(item);
+                      const completed = typeof item === 'object' && (item.completed === true || item.status === 'completed');
+                      return (
+                        <li key={item?.id ?? i} className="flex items-center gap-2 font-sans text-sm">
+                          <span className={`w-4 h-4 rounded border shrink-0 flex items-center justify-center text-[10px] ${completed ? 'bg-moss-500 text-white' : 'border-stone-300'}`}>
+                            {completed ? '✓' : ''}
+                          </span>
+                          <span className={completed ? 'text-stone-400 line-through' : 'text-stone-700'}>{title || '—'}</span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                  {!(viewingGoal.subtasks?.length || viewingGoal.phases?.length || viewingGoal.milestones?.length) && (
+                    <p className="font-sans text-xs text-stone-400">No vines yet.</p>
+                  )}
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Shop overlay — glassmorphic modal over 3D canvas */}
         <div className="absolute inset-0 z-50 pointer-events-none rounded-3xl">
@@ -441,17 +504,6 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
           {fertilizeMode && (
             <span className="font-sans text-xs text-amber-700 font-medium">Click a growing plant to fertilize</span>
           )}
-          <button
-            onClick={() => setIsShopOpen(true)}
-            className="flex items-center gap-2 px-5 py-3 rounded-xl font-sans text-sm font-medium transition-all shadow-md hover:shadow-lg hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-moss-500/50 focus:ring-offset-2"
-            style={{
-              background: 'linear-gradient(135deg, #4a5d23 0%, #3d4e1c 100%)',
-              color: '#FDFCF5',
-            }}
-          >
-            <span className="text-lg" aria-hidden>🛍️</span>
-            Garden Shop
-          </button>
         </div>
       </div>
 
