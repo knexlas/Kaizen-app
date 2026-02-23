@@ -12,10 +12,10 @@ import { redactUserText } from './redaction.js';
 
 const AI_MODEL_CONFIG_KEY = 'kaizen_ai_model_config';
 const DEFAULT_GEMINI_MODELS = [
+  'gemini-2.5-flash',
+  'gemini-2.0-flash',
   'gemini-1.5-flash',
   'gemini-1.5-pro',
-  'gemini-2.0-flash',
-  'gemini-pro',
 ];
 const DEFAULT_GROQ_MODEL = 'llama-3.3-70b-versatile';
 const GROQ_FALLBACK_MODELS = [
@@ -35,6 +35,7 @@ function getModelConfig() {
     const raw = localStorage.getItem(AI_MODEL_CONFIG_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
+    if (parsed.geminiModels && parsed.geminiModels.includes('gemini-pro')) return null;
     return {
       geminiModels: Array.isArray(parsed.geminiModels) && parsed.geminiModels.length > 0
         ? parsed.geminiModels
@@ -227,6 +228,7 @@ async function tryGenerate(genAI, content, opts = {}) {
       const result = await model.generateContent(content);
       return result;
     } catch (err) {
+      console.warn(`Model ${modelName} failed:`, err?.message);
       lastErr = err;
       const msg = String(err?.message ?? '').toLowerCase();
       const isModelErr = msg.includes('404') || msg.includes('not found') || msg.includes('429') || msg.includes('quota') || msg.includes('deprecated');
@@ -924,9 +926,10 @@ Return strict JSON (no markdown). Use "timeRange" for phase and task timing (the
 Guidelines:
 - Break into 3-6 phases.
 - You MUST fit all phases strictly within the ${availableWeeks} weeks available.
+- SCOPE MANAGEMENT RULE: Evaluate the user's goal against the available timeframe. If the goal is unrealistically large for the deadline (e.g., "Master 3 instruments in 1 month"), DO NOT just compress impossible tasks into the timeline. Instead, DOWN-SCOPE the project to what is actually achievable in that time (e.g., "Learn basic chords").
 - TIME SCALE RULE: If the project has 3 weeks or less available, you MUST use "Day 1", "Day 2-3", etc. for your time ranges. If it is longer than 3 weeks, use "Week 1", "Week 2-3".
 - SEQUENTIAL TASKS: Within each phase, tasks are often sequential (the first must be done before the second can start). Give each task its own "timeRange" that falls inside the phase. Example: if the phase is "Week 1-2", the first task might be "Week 1", the second "Week 2". For short projects with days: if the phase is "Day 1-3", use "Day 1", "Day 2", "Day 3" for consecutive tasks. If tasks can run in parallel, give them the same timeRange. Order tasks in the array in the order they should be done.
-- Calculate the total estimated hours vs available weeks. In "mochiFeedback", assess the feasibility. If it's a heavy load, gently warn the user and suggest scheduling rest or self-care afterwards. If manageable, be encouraging.
+- In mochiFeedback, if you had to down-scope the project to make it realistic, gently explain this to the user (e.g., "Mastering all of this in 40 days is a lot, so I've created a plan to build a strong foundation first!"). Then state the estimated total hours.
 - LINKING RULE: ONLY populate suggestedLinks if the task is an EXACT, undeniable match to an existing goal. If it is only vaguely related, leave suggestedLinks empty!
 `;
 
@@ -996,18 +999,22 @@ function normalizeSliceProjectParsed(parsed) {
   });
   if (!Array.isArray(parsed.suggestedLinks)) parsed.suggestedLinks = [];
   parsed.mochiFeedback = parsed.mochiFeedback != null ? String(parsed.mochiFeedback).trim() : '';
+  if (parsed.title != null) parsed.title = String(parsed.title).trim();
   return parsed;
 }
 
 /**
  * Read a document (PDF, text, or plain string) and turn it into a structured project plan.
- * Uses the same JSON shape as sliceProject: summary, totalWeeks, phases, tasks with estimatedHours.
- * @param {string} base64DataOrText - Base64-encoded document content, or plain text when mimeType is 'text/plain'
+ * Uses the same JSON shape as sliceProject: title, summary, totalWeeks, phases, tasks with estimatedHours.
+ * @param {string} base64DataOrText - Base64-encoded document content, or raw text when isRawText is true
  * @param {string} mimeType - MIME type (e.g. application/pdf, text/plain)
  * @param {string} fileName - Display name for the document
- * @returns {Promise<{ summary, totalWeeks, phases, suggestedLinks, mochiFeedback }|null>}
+ * @param {boolean} [isRawText=false] - If true, base64DataOrText is raw text (e.g. from mammoth); otherwise Base64 for inlineData
+ * @param {string|null} [deadline=null] - Optional deadline; timeline and totalWeeks will be adjusted to fit
+ * @param {string} [extraContext=''] - Optional extra instructions from the user
+ * @returns {Promise<{ title, summary, totalWeeks, phases, suggestedLinks, mochiFeedback }|null>}
  */
-export async function planProjectFromDocument(base64DataOrText, mimeType, fileName) {
+export async function planProjectFromDocument(base64DataOrText, mimeType, fileName, isRawText = false, deadline = null, extraContext = '') {
   const apiKey = getApiKey();
   if (!apiKey) {
     console.error('Missing API Key');
@@ -1015,10 +1022,17 @@ export async function planProjectFromDocument(base64DataOrText, mimeType, fileNa
   }
 
   const safeFileName = typeof fileName === 'string' ? fileName.trim() || 'Document' : 'Document';
+  const deadlineStr = deadline ? `The user wants this completed by: ${deadline}. Adjust the timeline and totalWeeks to fit this strictly.` : 'No hard deadline.';
+  const contextStr = extraContext ? `Extra instructions from user: ${extraContext}` : '';
+
   const prompt = `Read the attached document titled "${safeFileName}". Extract the core objective and break it down into a structured project plan.
+
+${deadlineStr}
+${contextStr}
 
 You MUST return the EXACT same strict JSON structure as a project slice:
 {
+  "title": "Short, punchy project name (MAX 5 WORDS)",
   "summary": "1-sentence project overview",
   "totalWeeks": number,
   "phases": [
@@ -1035,10 +1049,12 @@ You MUST return the EXACT same strict JSON structure as a project slice:
   "mochiFeedback": "A 1-2 sentence comforting assessment of the workload."
 }
 
+Guidelines:
+- SCOPE MANAGEMENT RULE: Evaluate the user's goal against the available timeframe. If the goal is unrealistically large for the deadline (e.g., "Master 3 instruments in 1 month"), DO NOT just compress impossible tasks into the timeline. Instead, DOWN-SCOPE the project to what is actually achievable in that time (e.g., "Learn basic chords").
+- In mochiFeedback, if you had to down-scope the project to make it realistic, gently explain this to the user (e.g., "Mastering all of this in 40 days is a lot, so I've created a plan to build a strong foundation first!"). Then state the estimated total hours.
+
 Return ONLY valid JSON (no markdown, no code fence).`;
 
-  const looksLikeBase64 = (s) => typeof s === 'string' && /^[A-Za-z0-9+/]+=*$/.test(s.replace(/\s/g, '')) && s.replace(/\s/g, '').length > 0;
-  const isRawText = mimeType === 'text/plain' && typeof base64DataOrText === 'string' && !looksLikeBase64(base64DataOrText);
   const content = isRawText
     ? [{ text: `Document Content:\n${base64DataOrText}\n\n${prompt}` }]
     : [
@@ -1059,7 +1075,7 @@ Return ONLY valid JSON (no markdown, no code fence).`;
     return normalizeSliceProjectParsed(parsed);
   } catch (err) {
     console.warn('Gemini planProjectFromDocument failed:', err?.message || err);
-    return null;
+    throw err;
   }
 }
 

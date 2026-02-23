@@ -41,6 +41,9 @@ export default function CompostHeap({ open, onClose, onPlant, onPrism }) {
   const [prismLoadingId, setPrismLoadingId] = useState(null);
   const [scanning, setScanning] = useState(false);
   const [documentLoading, setDocumentLoading] = useState(false);
+  const [pendingDoc, setPendingDoc] = useState(null);
+  const [docDeadline, setDocDeadline] = useState('');
+  const [docContext, setDocContext] = useState('');
   const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < MOBILE_BREAKPOINT);
   const inputRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -115,32 +118,52 @@ export default function CompostHeap({ open, onClose, onPlant, onPrism }) {
     });
   };
 
-  const handleFileUpload = async (e) => {
-    const file = e.target?.files?.[0];
-    if (!file || !addGoal) return;
-    e.target.value = '';
+  const readFileAsText = (file) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsText(file);
+    });
+  };
 
+  const handleFileSelectForDoc = (e) => {
+    const file = e.target?.files?.[0];
+    e.target.value = '';
+    if (!file) return;
     if (file.name && file.name.toLowerCase().endsWith('.pptx')) {
       window.dispatchEvent(new CustomEvent('kaizen:toast', { detail: { message: 'Mochi cannot read PowerPoints yet. Please save as a PDF and try again! 📄' } }));
       return;
     }
+    setPendingDoc(file);
+  };
 
+  const processPendingDocument = async () => {
+    const file = pendingDoc;
+    if (!file || !addGoal) return;
     setDocumentLoading(true);
     try {
+      const deadlineParam = docDeadline && String(docDeadline).trim() ? String(docDeadline).trim() : null;
+      const contextParam = docContext && String(docContext).trim() ? String(docContext).trim() : '';
       let plan;
       if (file.name && file.name.toLowerCase().endsWith('.docx')) {
         const arrayBuffer = await readFileAsArrayBuffer(file);
         const { value: extractedText } = await mammoth.extractRawText({ arrayBuffer });
-        plan = await planProjectFromDocument(extractedText || '', 'text/plain', file.name);
+        if (!extractedText || !extractedText.trim()) throw new Error('This document appears to be empty or unreadable.');
+        plan = await planProjectFromDocument(extractedText, 'text/plain', file.name, true, deadlineParam, contextParam);
+      } else if (file.type?.startsWith('text/') || file.name?.toLowerCase().endsWith('.txt') || file.name?.toLowerCase().endsWith('.md')) {
+        const textContent = await readFileAsText(file);
+        if (!textContent || !String(textContent).trim()) throw new Error('This text file appears to be empty.');
+        plan = await planProjectFromDocument(textContent, 'text/plain', file.name, true, deadlineParam, contextParam);
       } else {
         const dataUrl = await readFileAsBase64(file);
-        if (!dataUrl || typeof dataUrl !== 'string') return;
+        if (!dataUrl || typeof dataUrl !== 'string') throw new Error('Could not read file data.');
         const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
         const mimeType = match ? match[1].trim() : (file.type || 'application/octet-stream');
         const base64Data = match ? match[2].replace(/\s/g, '') : dataUrl.replace(/^data:[^;]+;base64,/, '').replace(/\s/g, '');
-        plan = await planProjectFromDocument(base64Data, mimeType, file.name);
+        plan = await planProjectFromDocument(base64Data, mimeType, file.name, false, deadlineParam, contextParam);
       }
-      if (!plan || !Array.isArray(plan.phases) || plan.phases.length === 0) return;
+      if (!plan || !Array.isArray(plan.phases) || plan.phases.length === 0) throw new Error('Mochi could not generate a plan from this document.');
       const uid = () => crypto.randomUUID?.() ?? `id-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
       const totalWeeks = Math.max(1, Number(plan.totalWeeks) || 14);
       const milestones = [];
@@ -167,7 +190,7 @@ export default function CompostHeap({ open, onClose, onPlant, onPrism }) {
           });
         });
       });
-      const projectTitle = (plan.summary || file.name || 'Project').trim().slice(0, 200) || 'Project from document';
+      const projectTitle = (plan.title && String(plan.title).trim()) ? String(plan.title).trim().slice(0, 200) : (plan.summary || file.name || 'Project').trim().slice(0, 200) || 'Project from document';
       const notesParts = [plan.summary || ''].filter(Boolean);
       if (totalWeeks) notesParts.push(`${totalWeeks} weeks`);
       const notes = notesParts.join(' \u00b7 ') || undefined;
@@ -185,17 +208,20 @@ export default function CompostHeap({ open, onClose, onPlant, onPrism }) {
         notes,
         rituals: [],
         _projectName: projectTitle,
-        _projectDeadline: null,
+        _projectDeadline: docDeadline && String(docDeadline).trim() ? String(docDeadline).trim() : null,
         _projectTotalWeeks: totalWeeks,
         _projectGoal: true,
       };
       addGoal(newProject);
-      window.dispatchEvent(new CustomEvent('kaizen:toast', { detail: { message: 'Project planned and planted! 🌱' } }));
+      window.dispatchEvent(new CustomEvent('kaizen:toast', { detail: { message: (plan.mochiFeedback && String(plan.mochiFeedback).trim()) || 'Project planned and planted! 🌱' } }));
     } catch (err) {
       console.warn('Plan from document failed:', err);
-      window.dispatchEvent(new CustomEvent('kaizen:toast', { detail: { message: 'Could not plan from document. Try again or use a different file.' } }));
+      window.dispatchEvent(new CustomEvent('kaizen:toast', { detail: { message: err?.message || 'Could not plan from document. Try again.' } }));
     } finally {
       setDocumentLoading(false);
+      setPendingDoc(null);
+      setDocDeadline('');
+      setDocContext('');
     }
   };
 
@@ -291,7 +317,7 @@ export default function CompostHeap({ open, onClose, onPlant, onPrism }) {
               accept=".txt,.md,.pdf,.docx,image/*"
               className="hidden"
               aria-label="Upload document to plan as project"
-              onChange={handleFileUpload}
+              onChange={handleFileSelectForDoc}
             />
             <div className="flex gap-2">
               <input
@@ -349,6 +375,45 @@ export default function CompostHeap({ open, onClose, onPlant, onPrism }) {
               </button>
               <span className="font-sans text-xs text-stone-500">(PDF, Word, TXT, or Image)</span>
             </div>
+            {pendingDoc && (
+              <div className="mt-3 p-4 rounded-xl border border-moss-200 bg-moss-50/50 shadow-sm">
+                <p className="font-sans text-sm font-medium text-stone-800 mb-3">{pendingDoc.name}</p>
+                <label className="block font-sans text-xs text-stone-600 mb-1">Target deadline</label>
+                <input
+                  type="date"
+                  value={docDeadline}
+                  onChange={(e) => setDocDeadline(e.target.value)}
+                  className="w-full py-2 px-3 rounded-lg border border-stone-300 bg-white font-sans text-stone-900 focus:outline-none focus:ring-2 focus:ring-moss-500/40 focus:border-moss-500 mb-3"
+                  aria-label="Target deadline"
+                />
+                <label className="block font-sans text-xs text-stone-600 mb-1">Any extra instructions for Mochi?</label>
+                <input
+                  type="text"
+                  value={docContext}
+                  onChange={(e) => setDocContext(e.target.value)}
+                  placeholder="e.g. Focus on the research phase first"
+                  className="w-full py-2 px-3 rounded-lg border border-stone-300 bg-white font-sans text-stone-900 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-moss-500/40 focus:border-moss-500 mb-3"
+                  aria-label="Extra instructions for Mochi"
+                />
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => { setPendingDoc(null); setDocDeadline(''); setDocContext(''); }}
+                    className="flex-1 py-2 rounded-lg font-sans text-sm font-medium text-stone-600 hover:bg-stone-200 border border-stone-300 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={processPendingDocument}
+                    disabled={documentLoading}
+                    className="flex-1 py-2 rounded-lg font-sans text-sm font-medium text-stone-50 bg-moss-600 hover:bg-moss-700 focus:outline-none focus:ring-2 focus:ring-moss-500/50 disabled:opacity-60 disabled:pointer-events-none"
+                  >
+                    ✨ Generate Plan
+                  </button>
+                </div>
+              </div>
+            )}
             <p className="font-sans text-xs text-stone-500 mt-2">
               Later: plant as a goal or decompose. Or scan an image to extract tasks.
             </p>

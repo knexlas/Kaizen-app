@@ -200,7 +200,7 @@ export default function HorizonsGantt({
               rows.push(
                 <tr key={`proj-${goal.id}`} className="border-b border-stone-200 bg-stone-50/50">
                   <td className="py-2 px-3 flex items-center gap-2">
-                    <span className="font-medium text-stone-800 font-serif truncate" title={subtaskTotal > 0 ? `${subtaskDone}/${subtaskTotal} tasks` : undefined}>{goal.title}</span>
+                    <span className="font-medium text-stone-800 font-serif truncate block max-w-[150px] sm:max-w-[250px] lg:max-w-[350px]" title={goal.title}>{goal.title}</span>
                   </td>
                   {columnLabels.map((_, i) => {
                     const isCurrent = i === currentColIndex;
