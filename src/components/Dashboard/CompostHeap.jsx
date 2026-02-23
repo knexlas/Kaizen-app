@@ -27,6 +27,7 @@ function CompostEmptyNote() {
     </div>
   );
 }
+import mammoth from 'mammoth';
 import { useReward } from '../../context/RewardContext';
 import { buildReward } from '../../services/dopamineEngine';
 import { breakDownTask, processIncomingCompost, planProjectFromDocument } from '../../services/geminiService';
@@ -105,18 +106,40 @@ export default function CompostHeap({ open, onClose, onPlant, onPrism }) {
     }
   };
 
+  const readFileAsArrayBuffer = (file) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsArrayBuffer(file);
+    });
+  };
+
   const handleFileUpload = async (e) => {
     const file = e.target?.files?.[0];
     if (!file || !addGoal) return;
     e.target.value = '';
+
+    if (file.name && file.name.toLowerCase().endsWith('.pptx')) {
+      window.dispatchEvent(new CustomEvent('kaizen:toast', { detail: { message: 'Mochi cannot read PowerPoints yet. Please save as a PDF and try again! 📄' } }));
+      return;
+    }
+
     setDocumentLoading(true);
     try {
-      const dataUrl = await readFileAsBase64(file);
-      if (!dataUrl || typeof dataUrl !== 'string') return;
-      const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
-      const mimeType = match ? match[1].trim() : (file.type || 'application/octet-stream');
-      const base64Data = match ? match[2].replace(/\s/g, '') : dataUrl.replace(/^data:[^;]+;base64,/, '').replace(/\s/g, '');
-      const plan = await planProjectFromDocument(base64Data, mimeType, file.name);
+      let plan;
+      if (file.name && file.name.toLowerCase().endsWith('.docx')) {
+        const arrayBuffer = await readFileAsArrayBuffer(file);
+        const { value: extractedText } = await mammoth.extractRawText({ arrayBuffer });
+        plan = await planProjectFromDocument(extractedText || '', 'text/plain', file.name);
+      } else {
+        const dataUrl = await readFileAsBase64(file);
+        if (!dataUrl || typeof dataUrl !== 'string') return;
+        const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+        const mimeType = match ? match[1].trim() : (file.type || 'application/octet-stream');
+        const base64Data = match ? match[2].replace(/\s/g, '') : dataUrl.replace(/^data:[^;]+;base64,/, '').replace(/\s/g, '');
+        plan = await planProjectFromDocument(base64Data, mimeType, file.name);
+      }
       if (!plan || !Array.isArray(plan.phases) || plan.phases.length === 0) return;
       const uid = () => crypto.randomUUID?.() ?? `id-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
       const totalWeeks = Math.max(1, Number(plan.totalWeeks) || 14);
@@ -265,7 +288,7 @@ export default function CompostHeap({ open, onClose, onPlant, onPrism }) {
             <input
               ref={documentFileInputRef}
               type="file"
-              accept=".txt,.md,.pdf,image/*"
+              accept=".txt,.md,.pdf,.docx,image/*"
               className="hidden"
               aria-label="Upload document to plan as project"
               onChange={handleFileUpload}
@@ -312,8 +335,8 @@ export default function CompostHeap({ open, onClose, onPlant, onPrism }) {
                 onClick={() => documentFileInputRef.current?.click()}
                 disabled={documentLoading}
                 className="py-2 px-3 rounded-xl border border-stone-300 bg-white font-sans text-sm text-stone-600 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40 disabled:opacity-60 disabled:pointer-events-none shrink-0 flex items-center gap-1.5"
-                aria-label="Plan from document (PDF, text, or image)"
-                title="Upload a PDF, .txt, .md, or image to turn it into a project"
+                aria-label="Plan from document (PDF, Word, TXT, or image)"
+                title="Upload a PDF, Word (.docx), .txt, .md, or image to turn it into a project"
               >
                 {documentLoading ? (
                   <span className="font-sans text-xs font-medium">Mochi is reading your document...</span>
@@ -324,6 +347,7 @@ export default function CompostHeap({ open, onClose, onPlant, onPrism }) {
                   </>
                 )}
               </button>
+              <span className="font-sans text-xs text-stone-500">(PDF, Word, TXT, or Image)</span>
             </div>
             <p className="font-sans text-xs text-stone-500 mt-2">
               Later: plant as a goal or decompose. Or scan an image to extract tasks.

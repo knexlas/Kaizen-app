@@ -17,7 +17,15 @@ const TOUR_STEPS = [
   },
   {
     targetId: 'tour-goal-types',
-    message: () => 'Here’s how things work: Seeds (Kaizen) are goals with steps and optional practice days. Rocks (Routines) are recurring habits with a weekly target. Projects are bigger goals with phases and milestones — use "Plan a Project" to slice them up. Vitality goals are single numbers you track (sleep, weight, etc.) and they show up in your Ponds below.',
+    message: () => 'Here’s how things grow: 🌱 Seeds are new goals you build step-by-step. 🪨 Rocks are recurring habits you want to maintain.',
+  },
+  {
+    targetId: 'tour-goal-types',
+    message: () => "🌻 Projects are massive undertakings. Use the Project Planner, and I will slice them into phases and deadlines for you.",
+  },
+  {
+    targetId: 'tour-goal-types',
+    message: () => "💧 Vitality goals are single numbers you track (like sleep, weight, or water). They pool into your Vitality Ponds below.",
   },
   {
     targetId: 'tour-timeline',

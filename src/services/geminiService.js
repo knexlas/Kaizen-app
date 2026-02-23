@@ -1000,14 +1000,14 @@ function normalizeSliceProjectParsed(parsed) {
 }
 
 /**
- * Read a document (PDF or text) and turn it into a structured project plan.
+ * Read a document (PDF, text, or plain string) and turn it into a structured project plan.
  * Uses the same JSON shape as sliceProject: summary, totalWeeks, phases, tasks with estimatedHours.
- * @param {string} base64Data - Base64-encoded document content
+ * @param {string} base64DataOrText - Base64-encoded document content, or plain text when mimeType is 'text/plain'
  * @param {string} mimeType - MIME type (e.g. application/pdf, text/plain)
  * @param {string} fileName - Display name for the document
  * @returns {Promise<{ summary, totalWeeks, phases, suggestedLinks, mochiFeedback }|null>}
  */
-export async function planProjectFromDocument(base64Data, mimeType, fileName) {
+export async function planProjectFromDocument(base64DataOrText, mimeType, fileName) {
   const apiKey = getApiKey();
   if (!apiKey) {
     console.error('Missing API Key');
@@ -1037,10 +1037,14 @@ You MUST return the EXACT same strict JSON structure as a project slice:
 
 Return ONLY valid JSON (no markdown, no code fence).`;
 
-  const content = [
-    { inlineData: { data: base64Data, mimeType: mimeType || 'application/octet-stream' } },
-    { text: prompt },
-  ];
+  const looksLikeBase64 = (s) => typeof s === 'string' && /^[A-Za-z0-9+/]+=*$/.test(s.replace(/\s/g, '')) && s.replace(/\s/g, '').length > 0;
+  const isRawText = mimeType === 'text/plain' && typeof base64DataOrText === 'string' && !looksLikeBase64(base64DataOrText);
+  const content = isRawText
+    ? [{ text: `Document Content:\n${base64DataOrText}\n\n${prompt}` }]
+    : [
+        { inlineData: { data: base64DataOrText, mimeType: mimeType || 'application/octet-stream' } },
+        { text: prompt },
+      ];
 
   try {
     const { GoogleGenerativeAI } = await import('@google/generative-ai');

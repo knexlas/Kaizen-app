@@ -19,6 +19,7 @@
     "@react-three/fiber": "^9.5.0",
     "canvas-confetti": "^1.9.4",
     "framer-motion": "^12.34.0",
+    "mammoth": "^1.11.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "three": "^0.183.0"

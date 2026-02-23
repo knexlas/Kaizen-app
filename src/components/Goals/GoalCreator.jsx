@@ -109,7 +109,7 @@ function newVine(overrides = {}) {
   };
 }
 
-function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks = [], existingRoutineGoals = [], existingVitalityGoals = [], ritualCategories = [], onAddRitualCategory }) {
+function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks = [], existingRoutineGoals = [], existingVitalityGoals = [], ritualCategories = [], onAddRitualCategory, onOpenProjectPlanner }) {
   const [goalType, setGoalType] = useState(null); // null | 'kaizen' | 'routine' | 'vitality'
   const [title, setTitle] = useState('');
   const [domain, setDomain] = useState('');
@@ -497,10 +497,10 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
                 <p className="font-sans text-stone-500 text-sm mb-4">Choose how you want to grow.</p>
                 <div className="mb-4 p-3 rounded-xl bg-stone-100/80 border border-stone-200">
                   <p className="font-sans text-xs text-stone-600">
-                    <strong className="text-stone-700">Seed</strong> = goal + steps + optional practice days (rituals). &middot; <strong className="text-stone-700">Rock</strong> = recurring habit, weekly target. &middot; <strong className="text-stone-700">Vitality</strong> = one number to track.
+                    <strong className="text-stone-700">Seed</strong> = steps. <strong className="text-stone-700">Rock</strong> = recurring. <strong className="text-stone-700">Vitality</strong> = tracking. <strong className="text-stone-700">Project</strong> = phases &amp; deadlines.
                   </p>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                   <button
                     type="button"
                     onClick={() => setGoalType('kaizen')}
@@ -530,6 +530,16 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
                     <span className="font-serif text-stone-900 text-base">Vitality</span>
                     <span className="font-sans text-stone-600 text-xs mt-0.5">(Health / Metric)</span>
                     <p className="font-sans text-stone-500 text-xs mt-2">Track a number. Weight, sleep, body fat. Lower or higher.</p>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { onOpenProjectPlanner?.(); onClose?.(); }}
+                    className="flex flex-col items-start p-5 rounded-2xl border-2 border-stone-200 bg-white hover:border-amber-400 hover:bg-amber-50/50 transition-all text-left focus:outline-none focus:ring-2 focus:ring-moss-500/50"
+                  >
+                    <span className="text-2xl mb-2" aria-hidden>🌻</span>
+                    <span className="font-serif text-stone-900 text-base">Plan a Project</span>
+                    <span className="font-sans text-stone-600 text-xs mt-0.5">(Massive Goal)</span>
+                    <p className="font-sans text-stone-500 text-xs mt-2">A huge undertaking. Mochi will slice it into phases and timelines.</p>
                   </button>
                 </div>
                 <button

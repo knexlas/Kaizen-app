@@ -2067,6 +2067,7 @@ function GardenDashboard() {
         existingVitalityGoals={(goals ?? []).filter((g) => g.type === 'vitality')}
         ritualCategories={userSettings?.ritualCategories ?? []}
         onAddRitualCategory={addRitualCategory}
+        onOpenProjectPlanner={() => setShowProjectPlanner(true)}
       />
 
       <ProjectPlanner
