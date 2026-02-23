@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Sky, Environment, Billboard, Float, Text, Sparkles, Html, RoundedBox } from '@react-three/drei';
 import { useGarden } from '../../context/GardenContext';
@@ -6,6 +5,8 @@ import { getGoalProgressPercent } from './GardenWalk';
 import WanderingCreature from './WanderingCreature';
 import ProceduralFlora from './ProceduralFlora';
 import Mochi3D from './Mochi3D';
+import Rabbit3D from './Rabbit3D';
+import AutoTiler from './AutoTiler';
 
 const TERRAIN_COLORS = {
   water: '#4facfe',
@@ -15,9 +16,10 @@ const TERRAIN_COLORS = {
 
 function TerrainTiles() {
   const { terrainMap } = useGarden();
-  const entries = Object.entries(terrainMap ?? {});
+  const entries = Object.entries(terrainMap ?? {}).filter(([, m]) => m !== 'water');
   return (
     <>
+      <AutoTiler terrainMap={terrainMap} materialType="water" />
       {entries.map(([key, material]) => {
         const [x, z] = key.split(',').map(Number);
         if (Number.isNaN(x) || Number.isNaN(z)) return null;
@@ -53,18 +55,18 @@ function Ground({ onClick }) {
 }
 
 function Tree({ position, goal }) {
-  const [hovered, setHovered] = useState(false);
   const progress = getGoalProgressPercent(goal);
   const plantScale = 0.8 + (progress / 100) * 1.7;
 
   return (
     <group
       position={position}
-      onPointerOver={(e) => {
+      onClick={(e) => {
         e.stopPropagation();
-        setHovered(true);
+        fireToast('Viewing goal: ' + (goal?.title ?? 'Goal'));
       }}
-      onPointerOut={() => setHovered(false)}
+      onPointerOver={() => { document.body.style.cursor = 'pointer'; }}
+      onPointerOut={() => { document.body.style.cursor = 'auto'; }}
     >
       <ProceduralFlora goal={goal} />
       <Sparkles
@@ -76,13 +78,6 @@ function Tree({ position, goal }) {
         opacity={0.4}
         color="#a8c68a"
       />
-      {hovered && (
-        <Html position={[0, plantScale + 0.5, 0]} center zIndexRange={[100, 0]}>
-          <div className="px-3 py-1.5 bg-white/95 backdrop-blur-sm border border-stone-200 rounded-xl shadow-lg text-sm font-serif text-stone-800 whitespace-nowrap pointer-events-none transition-opacity duration-200">
-            {goal?.title ?? 'Goal'}
-          </div>
-        </Html>
-      )}
     </group>
   );
 }
@@ -133,7 +128,14 @@ function Ecosystem({ placedGoals }) {
         <WanderingCreature emoji="🐟" allowedTerrain="water" speed={0.8} zOffset={0.2} scale={0.7} />
       )}
       {unlockedAnimals?.includes('rabbit') && (
-        <WanderingCreature emoji="🐇" allowedTerrain="grass" speed={2.5} jumpHeight={0.6} zOffset={0.4} scale={0.8} />
+        <WanderingCreature
+          customComponent={<Rabbit3D isWalking={true} />}
+          allowedTerrain="grass"
+          speed={2.5}
+          jumpHeight={0.6}
+          zOffset={0}
+          scale={0.8}
+        />
       )}
       <WanderingCreature
         customComponent={<Mochi3D isWalking={true} />}

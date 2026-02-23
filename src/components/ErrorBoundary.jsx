@@ -13,9 +13,21 @@ export default class ErrorBoundary extends Component {
 
   render() {
     if (this.state.hasError) {
+      let spiritEmoji = '🌸';
+      try {
+        const localData = localStorage.getItem('kaizen_garden_data');
+        if (localData) {
+          const parsed = JSON.parse(localData);
+          if (parsed.spiritConfig && parsed.spiritConfig.emoji) {
+            spiritEmoji = parsed.spiritConfig.emoji;
+          }
+        }
+      } catch (e) {
+        // Silently fallback if localStorage is corrupt
+      }
       return (
         <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-stone-100">
-          <div className="text-6xl mb-4" aria-hidden>🦉</div>
+          <div className="text-6xl mb-4" aria-hidden>{spiritEmoji}</div>
           <h1 className="font-serif text-xl text-stone-800 text-center mb-2">
             Oops! A vine got tangled in the garden.
           </h1>

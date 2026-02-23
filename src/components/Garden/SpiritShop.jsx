@@ -15,7 +15,7 @@ const ANIMAL_ITEMS = [
   { animalKey: 'fish', name: 'Koi Fish', cost: 50, description: 'Swims only in your painted water tiles.', icon: '🐟', tagline: 'Water dweller' },
 ];
 
-export default function SpiritShop({ onClose }) {
+export default function SpiritShop({ onClose, embedded = false }) {
   const { embers, placeDecoration, spendEmbers, unlockedAnimals, addUnlockedAnimal } = useGarden();
   const [justBought, setJustBought] = useState(null);
 
@@ -40,27 +40,21 @@ export default function SpiritShop({ onClose }) {
     }
   };
 
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/50 backdrop-blur-md"
-      onClick={(e) => e.target === e.currentTarget && onClose?.()}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="spirit-shop-title"
-      aria-label="The Ember Exchange"
+  const card = (
+    <>
+    <motion.div
+      initial={embedded ? false : { opacity: 0, scale: 0.96, y: 8 }}
+      animate={{ opacity: 1, scale: 1, y: 0 }}
+      exit={{ opacity: 0, scale: 0.96 }}
+      transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+      className="relative w-full max-w-lg rounded-3xl overflow-hidden"
+      style={{
+        background: 'linear-gradient(180deg, #FDFCF5 0%, #f5f3eb 50%, #eeece2 100%)',
+        boxShadow: '0 32px 64px -12px rgba(0,0,0,0.2), 0 0 0 1px rgba(0,0,0,0.06)',
+      }}
+      onClick={(e) => e.stopPropagation()}
     >
-      <motion.div
-        initial={{ opacity: 0, scale: 0.96, y: 8 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.96 }}
-        transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
-        className="relative w-full max-w-lg rounded-3xl overflow-hidden"
-        style={{
-          background: 'linear-gradient(180deg, #FDFCF5 0%, #f5f3eb 50%, #eeece2 100%)',
-          boxShadow: '0 32px 64px -12px rgba(0,0,0,0.2), 0 0 0 1px rgba(0,0,0,0.06)',
-        }}
-        onClick={(e) => e.stopPropagation()}
-      >
+      {!embedded && (
         <button
           type="button"
           onClick={onClose}
@@ -69,6 +63,7 @@ export default function SpiritShop({ onClose }) {
         >
           ×
         </button>
+      )}
         {/* Header: The Ember Exchange + Embers */}
         <div className="px-6 pt-6 pb-4">
           <div className="flex items-center justify-between gap-4 flex-wrap">
@@ -315,6 +310,18 @@ export default function SpiritShop({ onClose }) {
           </motion.div>
         )}
       </AnimatePresence>
+    </>
+  );
+  return embedded ? card : (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/50 backdrop-blur-md"
+      onClick={(e) => e.target === e.currentTarget && onClose?.()}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="spirit-shop-title"
+      aria-label="The Ember Exchange"
+    >
+      {card}
     </div>
   );
 }

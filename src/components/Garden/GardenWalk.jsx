@@ -97,7 +97,7 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
 
   const [viewMode, setViewMode] = useState('garden'); // 'garden' | 'greenhouse'
   const [selectedGoal, setSelectedGoal] = useState(null);
-  const [showShop, setShowShop] = useState(false);
+  const [isShopOpen, setIsShopOpen] = useState(false);
   const [fertilizeMode, setFertilizeMode] = useState(false);
 
   const goals = useMemo(() => {
@@ -184,6 +184,37 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
         )}
         <div className="m-2 sm:m-3 h-[70vh] w-full rounded-3xl overflow-hidden relative">
           <Garden3D />
+        </div>
+
+        {/* Shop overlay — glassmorphic modal over 3D canvas */}
+        <div className="absolute inset-0 z-50 pointer-events-none rounded-3xl">
+          <AnimatePresence>
+            {isShopOpen && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.2 }}
+                className="absolute inset-0 bg-stone-900/40 backdrop-blur-sm flex items-center justify-center p-4 pointer-events-auto rounded-3xl"
+                onClick={() => setIsShopOpen(false)}
+              >
+                <div
+                  className="relative max-h-[90vh] overflow-y-auto bg-stone-100 rounded-3xl w-full max-w-lg shadow-2xl pt-14 px-4 pb-4"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <button
+                    type="button"
+                    onClick={() => setIsShopOpen(false)}
+                    aria-label="Close"
+                    className="absolute top-4 right-4 z-10 w-9 h-9 flex items-center justify-center rounded-xl text-stone-400 hover:text-stone-700 hover:bg-stone-200/80 focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors"
+                  >
+                    ×
+                  </button>
+                  <SpiritShop onClose={() => setIsShopOpen(false)} embedded />
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
 
         {/* Toolbelt — bottom center overlay */}
@@ -411,7 +442,7 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
             <span className="font-sans text-xs text-amber-700 font-medium">Click a growing plant to fertilize</span>
           )}
           <button
-            onClick={() => setShowShop(true)}
+            onClick={() => setIsShopOpen(true)}
             className="flex items-center gap-2 px-5 py-3 rounded-xl font-sans text-sm font-medium transition-all shadow-md hover:shadow-lg hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-moss-500/50 focus:ring-offset-2"
             style={{
               background: 'linear-gradient(135deg, #4a5d23 0%, #3d4e1c 100%)',
@@ -424,7 +455,6 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
         </div>
       </div>
 
-      {showShop && <SpiritShop onClose={() => setShowShop(false)} />}
     </div>
   );
 }

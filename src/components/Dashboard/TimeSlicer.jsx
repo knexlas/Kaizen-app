@@ -1439,7 +1439,7 @@ function DayDetailModal({ dateStr, dayAssignments, goals, onClose, onSwitchToDay
 
 function ViewToggle({ value, onChange }) {
   return (
-    <div className="inline-flex rounded-lg border border-stone-200 bg-stone-100 p-0.5">
+    <div className="relative z-50 inline-flex rounded-lg border border-stone-200 bg-stone-100 p-0.5">
       {[
         { id: 'day', label: 'Day' },
         { id: 'week', label: 'Week' },
@@ -1448,7 +1448,10 @@ function ViewToggle({ value, onChange }) {
         <button
           key={id}
           type="button"
-          onClick={() => onChange(id)}
+          onClick={(e) => {
+            e.stopPropagation();
+            onChange(id);
+          }}
           className={`px-3 py-1 rounded-md font-sans text-sm transition-colors ${
             value === id ? 'bg-white text-stone-900 shadow-sm font-medium' : 'text-stone-500 hover:text-stone-700'
           }`}
@@ -1914,7 +1917,7 @@ function TimeSlicer({
 
   return (
     <div className="bg-stone-50 rounded-xl border border-stone-200 p-6 min-w-0">
-      <div className="flex items-center justify-between gap-2 mb-4 flex-wrap">
+      <div className="relative z-50 flex items-center justify-between gap-2 mb-4 flex-wrap">
         <div className="flex items-center gap-3">
           <h2 className="font-serif text-stone-900 text-lg">Schedule</h2>
           <ViewToggle value={viewMode} onChange={(mode) => {
@@ -1936,7 +1939,7 @@ function TimeSlicer({
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={handleAutoPlanDay}
+              onClick={(e) => { e.stopPropagation(); handleAutoPlanDay(); }}
               className="shrink-0 px-3 py-1.5 rounded-lg border border-moss-300 bg-moss-50 font-sans text-sm text-moss-800 hover:bg-moss-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors"
               aria-label="Auto-plan day with Smart Plan"
             >
@@ -1945,7 +1948,7 @@ function TimeSlicer({
             {onAutoFillWeek && (
               <button
                 type="button"
-                onClick={onAutoFillWeek}
+                onClick={(e) => { e.stopPropagation(); onAutoFillWeek?.(); }}
                 disabled={autoFillLoading}
                 className="shrink-0 px-3 py-1.5 rounded-lg border border-moss-300 bg-moss-50 font-sans text-sm text-moss-800 hover:bg-moss-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40 disabled:opacity-60 disabled:pointer-events-none transition-colors"
                 aria-label="Auto-fill week with routine blocks"
@@ -1955,7 +1958,7 @@ function TimeSlicer({
             )}
             <button
               type="button"
-              onClick={handleOpenPrioritize}
+              onClick={(e) => { e.stopPropagation(); handleOpenPrioritize(); }}
               className="shrink-0 px-3 py-1.5 rounded-lg border border-amber-200 bg-amber-50 font-sans text-sm text-amber-800 hover:bg-amber-100 focus:outline-none focus:ring-2 focus:ring-amber-400/40 transition-colors"
               aria-label="Help me focus (gentle priorities)"
             >
@@ -1963,7 +1966,8 @@ function TimeSlicer({
             </button>
             <button
               type="button"
-              onClick={() => {
+              onClick={(e) => {
+                e.stopPropagation();
                 const dateStr = editingDate || localISODate();
                 const dayEvents = HOURS
                   .filter((h) => assignments[h])
@@ -2248,20 +2252,23 @@ function TimeSlicer({
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
-                  className="fixed inset-0 z-[80] flex items-end sm:items-center justify-center p-0 sm:p-4"
-                  onClick={() => setSeedBagTapTarget(null)}
+                  className="fixed inset-0 z-[80] flex items-end sm:items-center justify-center p-0 sm:p-4 pointer-events-none"
                   role="dialog"
                   aria-modal="true"
                   aria-labelledby="tap-add-schedule-title"
                 >
-                  <div className="absolute inset-0 bg-stone-900/40" aria-hidden />
+                  <div
+                    className="absolute inset-0 bg-stone-900/40 pointer-events-auto"
+                    aria-hidden
+                    onClick={() => setSeedBagTapTarget(null)}
+                  />
                   <motion.div
                     initial={{ y: 24, opacity: 0 }}
                     animate={{ y: 0, opacity: 1 }}
                     exit={{ y: 24, opacity: 0 }}
                     transition={{ type: 'spring', damping: 28, stiffness: 300 }}
                     onClick={(e) => e.stopPropagation()}
-                    className="relative w-full sm:max-w-sm rounded-t-2xl sm:rounded-2xl bg-stone-50 border border-stone-200 shadow-xl p-4 pb-6 safe-area-pb"
+                    className="relative w-full sm:max-w-sm rounded-t-2xl sm:rounded-2xl bg-stone-50 border border-stone-200 shadow-xl p-4 pb-6 safe-area-pb pointer-events-auto"
                   >
                     <h2 id="tap-add-schedule-title" className="font-serif text-stone-900 text-lg mb-4">Add to schedule</h2>
                     <div className="flex flex-col gap-2">
