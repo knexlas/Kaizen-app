@@ -138,6 +138,26 @@ export default function FocusSession({
   const fadeCancelRef = useRef(null);
   const hasAudioInteractionRef = useRef(false);
   const soundMenuRef = useRef(null);
+  const wakeLockRef = useRef(null);
+
+  const requestWakeLock = useCallback(async () => {
+    try {
+      if (typeof navigator !== 'undefined' && 'wakeLock' in navigator) {
+        wakeLockRef.current = await navigator.wakeLock.request('screen');
+      }
+    } catch (err) {
+      console.warn('WakeLock request failed:', err?.message);
+    }
+  }, []);
+
+  const releaseWakeLock = useCallback(() => {
+    if (wakeLockRef.current) {
+      try {
+        wakeLockRef.current.release();
+      } catch (_) {}
+      wakeLockRef.current = null;
+    }
+  }, []);
 
   const elapsedSeconds = durationSeconds - secondsLeft;
 
@@ -305,19 +325,43 @@ export default function FocusSession({
 
   // Timer tick (only after user has committed)
   useEffect(() => {
-    if (!hasCommitted || isPaused) return;
-    if (sessionMode === 'focus' && isComplete) return;
+    if (!hasCommitted || isPaused) {
+      releaseWakeLock();
+      return;
+    }
+    if (sessionMode === 'focus' && isComplete) {
+      releaseWakeLock();
+      return;
+    }
     if (secondsLeft <= 0) {
       if (sessionMode === 'focus') {
         const mins = Math.max(1, Math.floor(durationSeconds / 60));
         setCompletedTimeSpentMinutes(mins);
         setIsComplete(true);
       }
+      releaseWakeLock();
       return;
     }
+    requestWakeLock();
     const t = setInterval(() => setSecondsLeft((s) => s - 1), 1000);
-    return () => clearInterval(t);
-  }, [hasCommitted, isComplete, isPaused, secondsLeft, durationSeconds, sessionMode]);
+    return () => {
+      clearInterval(t);
+      releaseWakeLock();
+    };
+  }, [hasCommitted, isComplete, isPaused, secondsLeft, durationSeconds, sessionMode, requestWakeLock, releaseWakeLock]);
+
+  // Re-request wake lock when user returns to tab during an active session
+  const timerActiveRef = useRef(false);
+  timerActiveRef.current = hasCommitted && !isPaused && !(sessionMode === 'focus' && isComplete) && secondsLeft > 0;
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible' && timerActiveRef.current) {
+        requestWakeLock();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+  }, [requestWakeLock]);
 
   const progressPercent =
     sessionMode === 'break'

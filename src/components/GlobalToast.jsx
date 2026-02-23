@@ -15,10 +15,12 @@ export default function GlobalToast() {
       const message = e.detail?.message;
       if (message == null || String(message).trim() === '') return;
       const id = uniqueId();
-      setToasts((prev) => [...prev, { id, message: String(message) }]);
+      const msg = String(message);
+      setToasts((prev) => [...prev, { id, message: msg }]);
+      const duration = Math.max(3500, msg.length * 60);
       setTimeout(() => {
         setToasts((prev) => prev.filter((t) => t.id !== id));
-      }, 3500);
+      }, duration);
     };
     window.addEventListener('kaizen:toast', handler);
     return () => window.removeEventListener('kaizen:toast', handler);
@@ -26,7 +28,7 @@ export default function GlobalToast() {
 
   return (
     <div
-      className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[60] flex flex-col-reverse gap-2 items-center max-w-sm w-full mx-4 pointer-events-none"
+      className="fixed top-4 left-1/2 -translate-x-1/2 w-[90vw] max-w-sm z-[100] sm:top-auto sm:bottom-8 sm:left-auto sm:right-8 sm:translate-x-0 sm:w-auto flex flex-col-reverse gap-2 items-center pointer-events-none"
       role="region"
       aria-live="polite"
     >

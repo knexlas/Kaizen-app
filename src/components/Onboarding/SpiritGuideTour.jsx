@@ -58,7 +58,7 @@ const TOUR_STEPS = [
 ];
 
 export default function SpiritGuideTour({ open = true, onComplete }) {
-  const { userSettings } = useGarden();
+  const { userSettings, plantTutorialSeed } = useGarden();
   const [index, setIndex] = useState(0);
   const [rect, setRect] = useState(null);
   const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' ? window.innerWidth < 640 : false);
@@ -110,6 +110,7 @@ export default function SpiritGuideTour({ open = true, onComplete }) {
 
   const handleNext = () => {
     if (isLast) {
+      plantTutorialSeed?.();
       onComplete?.();
     } else {
       setIndex((i) => i + 1);

@@ -117,6 +117,7 @@ export default function ProjectPlanner({ open, onClose, onCreateGoals }) {
     };
 
     onCreateGoals([projectGoal]);
+    window.dispatchEvent(new CustomEvent('kaizen:toast', { detail: { message: 'Project planted! 🌱 Find your timeline in the 🔭 Horizons tab.' } }));
     onClose?.();
     setName('');
     setDescription('');

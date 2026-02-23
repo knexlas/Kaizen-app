@@ -556,7 +556,7 @@ function subtaskStatus(st) {
   return est > 0 && done >= est ? 'bloom' : 'bud';
 }
 
-function SeedChip({ goal, item, isRitual = false, assignments = {}, onSeedClick, onMilestoneCheck, onEditGoal, onCompostGoal, onAddRoutineTime, onPlantRoutineBlock, onAddSubtask, onStartFocus, compact = false }) {
+function SeedChip({ goal, item, isRitual = false, assignments = {}, onSeedClick, onMilestoneCheck, onEditGoal, onCompostGoal, onAddRoutineTime, onPlantRoutineBlock, onAddSubtask, onStartFocus, onTap, compact = false }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuAnchorRef = useRef(null);
   const dragId = isRitual && item?.id ? `ritual-${goal?.id}-${item.id}` : goal?.id;
@@ -590,7 +590,14 @@ function SeedChip({ goal, item, isRitual = false, assignments = {}, onSeedClick,
     return (
       <div ref={setNodeRef} className={chipClass}>
         <div className="flex items-center gap-1 min-w-0">
-          <div {...listeners} {...attributes} className="flex-1 min-w-0 flex flex-col">
+          <div
+            {...listeners}
+            {...attributes}
+            className="flex-1 min-w-0 flex flex-col"
+            onClick={(e) => { if (onTap) { e.stopPropagation(); onTap(goal, item); } }}
+            role={onTap ? 'button' : undefined}
+            aria-label={onTap ? `Add ${displayTitle} to schedule` : undefined}
+          >
             <span className="text-[10px] font-bold uppercase tracking-wider text-moss-600 mb-0.5 truncate">{smallLabel}</span>
             <span className="font-sans text-sm text-stone-900 font-medium truncate flex items-center gap-1">
               {displayTitle}
@@ -625,7 +632,14 @@ function SeedChip({ goal, item, isRitual = false, assignments = {}, onSeedClick,
   return (
     <div ref={setNodeRef} className={fullChipClass}>
       <div className="flex items-center gap-1 min-w-0">
-        <div {...listeners} {...attributes} className="flex-1 min-w-0 flex flex-col">
+        <div
+          {...listeners}
+          {...attributes}
+          className="flex-1 min-w-0 flex flex-col"
+          onClick={(e) => { if (onTap) { e.stopPropagation(); onTap(goal, item); } }}
+          role={onTap ? 'button' : undefined}
+          aria-label={onTap ? `Add ${displayTitle} to schedule` : undefined}
+        >
           <span className="text-[10px] font-bold uppercase tracking-wider text-moss-600 mb-0.5 truncate">
             {smallLabel}
           </span>
@@ -1656,6 +1670,51 @@ function TimeSlicer({
     window.dispatchEvent(new CustomEvent('kaizen:toast', { detail: { message: 'Added to your day 🌱' } }));
   };
 
+  /** Build assignment value for a goal (and optional ritual item) for tap-to-add. */
+  const getTapAssignmentValue = useCallback((goal, item) => {
+    if (!goal?.id) return null;
+    if (goal.type === 'routine') {
+      return {
+        id: crypto.randomUUID?.() ?? `s-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        parentGoalId: goal.id,
+        title: goal.title,
+        type: 'routine',
+        duration: 60,
+        spoonCost: getSpoonCost(goal),
+        ...(item?.title && { ritualTitle: item.title }),
+      };
+    }
+    return goal.id;
+  }, []);
+
+  const handleTapAddToNextHour = useCallback(() => {
+    const { goal, item } = seedBagTapTarget || {};
+    if (!goal?.id) return;
+    const firstEmpty = HOURS.find((h) => !assignments[h]);
+    if (!firstEmpty) {
+      window.dispatchEvent(new CustomEvent('kaizen:toast', { detail: { message: "Your day is full. Lighten your load or pick another day." } }));
+      setSeedBagTapTarget(null);
+      return;
+    }
+    const value = getTapAssignmentValue(goal, item);
+    if (value != null) {
+      applyAssignment(firstEmpty, value);
+      window.dispatchEvent(new CustomEvent('kaizen:toast', { detail: { message: 'Added to your day 🌱' } }));
+    }
+    setSeedBagTapTarget(null);
+  }, [seedBagTapTarget, assignments, getTapAssignmentValue, applyAssignment]);
+
+  const handleTapAddToAnytime = useCallback(() => {
+    const { goal, item } = seedBagTapTarget || {};
+    if (!goal?.id) return;
+    const value = getTapAssignmentValue(goal, item);
+    if (value != null) {
+      applyAssignment('anytime', value);
+      window.dispatchEvent(new CustomEvent('kaizen:toast', { detail: { message: 'Added to Anytime Today 💧' } }));
+    }
+    setSeedBagTapTarget(null);
+  }, [seedBagTapTarget, getTapAssignmentValue, applyAssignment]);
+
   /** Plant one 1h routine block in the first empty slot. Used by [+1h] on routine cards. */
   const handlePlantRoutineBlock = (goal) => {
     if (!goal?.id || goal?.type !== 'routine') return;
@@ -1823,6 +1882,7 @@ function TimeSlicer({
 
   const [inspectedDate, setInspectedDate] = useState(null);
   const [activeSeedTab, setActiveSeedTab] = useState('all');
+  const [seedBagTapTarget, setSeedBagTapTarget] = useState(null); // { goal, item? } for tap-to-add popover
   const todayStr = useMemo(() => localISODate(), []);
 
   const handleDayClickFromWeek = useCallback((dateStr) => {
@@ -2099,6 +2159,7 @@ function TimeSlicer({
                             onAddRoutineTime={onAddRoutineTime}
                             onPlantRoutineBlock={handlePlantRoutineBlock}
                             onStartFocus={onStartFocus}
+                            onTap={(g, it) => setSeedBagTapTarget({ goal: g, item: it })}
                           />
                         ))
                       )}
@@ -2110,7 +2171,7 @@ function TimeSlicer({
                     const routineSeeds = goalBank.filter((g) => g.type === 'routine');
                     const vitalitySeeds = goalBank.filter((g) => g.type === 'vitality');
                     const projectSeeds = goalBank.filter((g) => g._projectGoal);
-                    const chipProps = (goal) => ({ key: goal.id, goal, assignments, onSeedClick, onMilestoneCheck: handleMilestoneCheck, onEditGoal, onCompostGoal, onAddRoutineTime, onPlantRoutineBlock: handlePlantRoutineBlock, onAddSubtask, onStartFocus });
+                    const chipProps = (goal) => ({ key: goal.id, goal, assignments, onSeedClick, onMilestoneCheck: handleMilestoneCheck, onEditGoal, onCompostGoal, onAddRoutineTime, onPlantRoutineBlock: handlePlantRoutineBlock, onAddSubtask, onStartFocus, onTap: (g, it) => setSeedBagTapTarget({ goal: g, item: it }) });
                     const hasAny = goalBank.length > 0;
                     if (!hasAny) return (
                       <div className="py-2">
@@ -2179,6 +2240,57 @@ function TimeSlicer({
                 </>
               )}
             </div>
+
+            {/* Tap-to-add popover / action sheet */}
+            <AnimatePresence>
+              {seedBagTapTarget && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="fixed inset-0 z-[80] flex items-end sm:items-center justify-center p-0 sm:p-4"
+                  onClick={() => setSeedBagTapTarget(null)}
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="tap-add-schedule-title"
+                >
+                  <div className="absolute inset-0 bg-stone-900/40" aria-hidden />
+                  <motion.div
+                    initial={{ y: 24, opacity: 0 }}
+                    animate={{ y: 0, opacity: 1 }}
+                    exit={{ y: 24, opacity: 0 }}
+                    transition={{ type: 'spring', damping: 28, stiffness: 300 }}
+                    onClick={(e) => e.stopPropagation()}
+                    className="relative w-full sm:max-w-sm rounded-t-2xl sm:rounded-2xl bg-stone-50 border border-stone-200 shadow-xl p-4 pb-6 safe-area-pb"
+                  >
+                    <h2 id="tap-add-schedule-title" className="font-serif text-stone-900 text-lg mb-4">Add to schedule</h2>
+                    <div className="flex flex-col gap-2">
+                      <button
+                        type="button"
+                        onClick={handleTapAddToNextHour}
+                        className="w-full py-3 px-4 rounded-xl font-sans text-sm font-medium text-stone-800 bg-moss-100 border border-moss-300 hover:bg-moss-200 focus:outline-none focus:ring-2 focus:ring-moss-500/50 transition-colors"
+                      >
+                        🎯 Add to next available hour
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleTapAddToAnytime}
+                        className="w-full py-3 px-4 rounded-xl font-sans text-sm font-medium text-stone-700 bg-stone-100 border border-stone-200 hover:bg-stone-200 focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors"
+                      >
+                        💧 Add to Anytime Today
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSeedBagTapTarget(null)}
+                        className="w-full py-2.5 rounded-lg font-sans text-sm text-stone-500 hover:text-stone-700 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-stone-400/40 transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </motion.div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         </div>
       </DndContext>}

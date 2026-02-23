@@ -7,16 +7,19 @@ import { GardenProvider } from './context/GardenContext.jsx'
 import { ThemeProvider } from './context/ThemeContext.jsx'
 import { RewardProvider } from './context/RewardContext.jsx'
 import RewardOverlay from './components/Rewards/RewardOverlay.jsx'
+import ErrorBoundary from './components/ErrorBoundary.jsx'
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
-    <ThemeProvider>
-      <GardenProvider>
-        <RewardProvider>
-          <App />
-          <RewardOverlay />
-        </RewardProvider>
-      </GardenProvider>
-    </ThemeProvider>
+    <ErrorBoundary>
+      <ThemeProvider>
+        <GardenProvider>
+          <RewardProvider>
+            <App />
+            <RewardOverlay />
+          </RewardProvider>
+        </GardenProvider>
+      </ThemeProvider>
+    </ErrorBoundary>
   </StrictMode>,
 )

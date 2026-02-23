@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useGarden } from '../../context/GardenContext';
 import { useEnergy } from '../../context/EnergyContext';
 import SpiritShop from './SpiritShop';
+import Garden3D from './Garden3D';
 
 const GRID_COLS = 8;
 const GRID_ROWS = 6;
@@ -158,6 +159,7 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
   const allGoals = goalsProp ?? contextGoals ?? [];
 
   const [viewMode, setViewMode] = useState('garden'); // 'garden' | 'greenhouse'
+  const [is3D, setIs3D] = useState(false);
   const [positions, setPositions] = useState({});
   const [mochiCell, setMochiCell] = useState({ x: 1, y: 1 });
   const [selectedGoal, setSelectedGoal] = useState(null);
@@ -320,7 +322,11 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
             />
           </div>
         )}
-        {/* Tile Grid — garden: dirt/grass; greenhouse: wooden shelves */}
+        {is3D ? (
+          <div className="m-2 sm:m-3 h-[60vh] rounded-3xl overflow-hidden">
+            <Garden3D />
+          </div>
+        ) : (
         <div
           className={`relative rounded-3xl overflow-hidden m-2 sm:m-3 transition-all duration-300 ${
             viewMode === 'greenhouse'
@@ -485,6 +491,8 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
             </div>
           )}
         </div>
+        )}
+
       </div>
 
       {/* Plant Details Modal */}
@@ -645,6 +653,14 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
               className={`font-serif text-xl transition-colors rounded-lg px-2 py-1 ${viewMode === 'greenhouse' ? 'text-stone-800 font-semibold bg-stone-100' : 'text-stone-500 hover:text-stone-700 hover:bg-stone-50'}`}
             >
               The Greenhouse
+            </button>
+            <span className="text-stone-300 font-sans">|</span>
+            <button
+              type="button"
+              onClick={() => setIs3D((prev) => !prev)}
+              className={`font-serif text-xl transition-colors rounded-lg px-2 py-1 ${is3D ? 'text-stone-800 font-semibold bg-stone-100' : 'text-stone-500 hover:text-stone-700 hover:bg-stone-50'}`}
+            >
+              {is3D ? 'Switch to 2D View' : 'Switch to 3D View'}
             </button>
           </div>
           <p className="font-sans text-sm text-stone-500 mt-0.5">

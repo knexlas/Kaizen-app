@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { suggestGoalStructure } from '../../services/geminiService';
+import InfoTooltip from '../InfoTooltip';
 
 // --- Wisdom Engine: RITUAL_PATTERNS + MILESTONE_PATTERNS (keywords -> rituals + milestones) ---
 const RITUAL_PATTERNS = [
@@ -497,7 +498,13 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
                 <p className="font-sans text-stone-500 text-sm mb-4">Choose how you want to grow.</p>
                 <div className="mb-4 p-3 rounded-xl bg-stone-100/80 border border-stone-200">
                   <p className="font-sans text-xs text-stone-600">
-                    <strong className="text-stone-700">Seed</strong> = steps. <strong className="text-stone-700">Rock</strong> = recurring. <strong className="text-stone-700">Vitality</strong> = tracking. <strong className="text-stone-700">Project</strong> = phases &amp; deadlines.
+                    <strong className="text-stone-700">Seed</strong>
+                    <InfoTooltip text="A goal broken into step-by-step vines." />
+                    {' '}= steps. <strong className="text-stone-700">Rock</strong>
+                    <InfoTooltip text="A recurring habit you do on specific days." />
+                    {' '}= recurring. <strong className="text-stone-700">Vitality</strong>
+                    <InfoTooltip text="A single number you track over time." />
+                    {' '}= tracking. <strong className="text-stone-700">Project</strong> = phases &amp; deadlines.
                   </p>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">

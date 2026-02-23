@@ -28,6 +28,7 @@ function CompostEmptyNote() {
   );
 }
 import mammoth from 'mammoth';
+import InfoTooltip from '../InfoTooltip';
 import { useReward } from '../../context/RewardContext';
 import { buildReward } from '../../services/dopamineEngine';
 import { breakDownTask, processIncomingCompost, planProjectFromDocument } from '../../services/geminiService';
@@ -44,6 +45,7 @@ export default function CompostHeap({ open, onClose, onPlant, onPrism }) {
   const [pendingDoc, setPendingDoc] = useState(null);
   const [docDeadline, setDocDeadline] = useState('');
   const [docContext, setDocContext] = useState('');
+  const [plannedResult, setPlannedProjectResult] = useState(null);
   const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < MOBILE_BREAKPOINT);
   const inputRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -213,7 +215,7 @@ export default function CompostHeap({ open, onClose, onPlant, onPrism }) {
         _projectGoal: true,
       };
       addGoal(newProject);
-      window.dispatchEvent(new CustomEvent('kaizen:toast', { detail: { message: (plan.mochiFeedback && String(plan.mochiFeedback).trim()) || 'Project planned and planted! 🌱' } }));
+      setPlannedProjectResult(plan);
     } catch (err) {
       console.warn('Plan from document failed:', err);
       window.dispatchEvent(new CustomEvent('kaizen:toast', { detail: { message: err?.message || 'Could not plan from document. Try again.' } }));
@@ -280,6 +282,30 @@ export default function CompostHeap({ open, onClose, onPlant, onPrism }) {
               : 'w-full max-w-md h-full bg-stone-50 border-l border-stone-200 shadow-xl flex flex-col safe-area-pt safe-area-pb max-h-[100dvh]'
           }
         >
+          {plannedResult ? (
+            <div className="flex flex-col flex-1 min-h-0 bg-moss-50 p-4 pb-6 safe-area-pb overflow-y-auto">
+              <div className="text-5xl text-center mt-6 mb-2" aria-hidden>🌸</div>
+              <h2 className="font-serif text-xl text-stone-900 text-center mb-6">Project Planted! 🌱</h2>
+              <div className="text-stone-700 text-lg leading-relaxed p-4 bg-white rounded-xl shadow-sm mb-6 flex-1">
+                {plannedResult.mochiFeedback && String(plannedResult.mochiFeedback).trim()
+                  ? plannedResult.mochiFeedback
+                  : 'Your project is ready. Take it one step at a time.'}
+              </div>
+              <div className="flex-shrink-0 mb-4 p-3 rounded-xl bg-blue-50 border border-blue-100">
+                <p className="font-sans text-sm text-stone-700">
+                  🔭 Where did this go? Because this is a massive project, Mochi planted it in your Horizons tab. Check there to see your full timeline!
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => { setPlannedProjectResult(null); onClose?.(); }}
+                className="w-full py-3.5 rounded-xl font-sans text-base font-medium text-white bg-moss-600 hover:bg-moss-700 focus:outline-none focus:ring-2 focus:ring-moss-500/50 focus:ring-offset-2 transition-colors"
+              >
+                Got it, let&apos;s go!
+              </button>
+            </div>
+          ) : (
+            <>
           {isMobile && (
             <div className="flex justify-center pt-2 pb-1 shrink-0" aria-hidden>
               <div className="w-10 h-1 rounded-full bg-stone-300" />
@@ -287,7 +313,10 @@ export default function CompostHeap({ open, onClose, onPlant, onPrism }) {
           )}
           {/* Header */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-stone-200 bg-amber-50/50 shrink-0">
-            <h2 className="font-serif text-stone-900 text-lg">Compost Heap</h2>
+            <h2 className="font-serif text-stone-900 text-lg flex items-center gap-1">
+              Compost Heap
+              <InfoTooltip text="A zero-shame inbox. Dump distractions here to process later." />
+            </h2>
             <button
               type="button"
               onClick={onClose}
@@ -515,6 +544,8 @@ export default function CompostHeap({ open, onClose, onPlant, onPrism }) {
               </>
             )}
           </div>
+            </>
+          )}
         </motion.aside>
       </motion.div>
     </AnimatePresence>

@@ -152,6 +152,15 @@ function App() {
 
           <GlobalToast />
         </div>
+
+        {/* Beta feedback — always visible */}
+        <a
+          href="mailto:youremail@example.com?subject=Kaizen%20Beta%20Feedback"
+          className="fixed bottom-6 right-6 z-50 bg-stone-800 text-white px-4 py-2 rounded-full shadow-lg text-sm font-medium flex items-center gap-2 hover:bg-stone-700 transition-transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-moss-500/50 focus:ring-offset-2"
+          aria-label="Send beta feedback by email"
+        >
+          🐞 Beta Feedback
+        </a>
       </div>
     </EnergyProvider>
   );

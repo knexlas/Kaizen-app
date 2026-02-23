@@ -745,6 +745,24 @@ export function GardenProvider({ children }) {
     });
   }, [addGoal]);
 
+  /** If the garden is empty, plant a single tutorial Kaizen goal so new users have something to try. Call after onboarding/tour. */
+  const plantTutorialSeed = useCallback(() => {
+    if (goals.length !== 0) return;
+    const uid = () => crypto.randomUUID?.() ?? `id-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    addGoal({
+      id: uid(),
+      type: 'kaizen',
+      title: "🌱 Learn how to use Mochi's Garden",
+      estimatedMinutes: 15,
+      targetHours: 1,
+      subtasks: [
+        { id: uid(), title: 'Drag this goal into a time slot today', estimatedHours: 0.5, completedHours: 0 },
+        { id: uid(), title: 'Click "Start 5 min" on this task', estimatedHours: 0.5, completedHours: 0 },
+        { id: uid(), title: 'Dump a random thought in the Compost Heap', estimatedHours: 0.5, completedHours: 0 },
+      ],
+    });
+  }, [goals.length, addGoal]);
+
   /** Add a subtask (project) to a goal. Schema: { id, title, estimatedHours, completedHours, deadline, color } */
   const addSubtask = useCallback((goalId, subtask) => {
     const sub = {
@@ -1037,6 +1055,7 @@ export function GardenProvider({ children }) {
     addLog,
     logMetric,
     addGoal,
+    plantTutorialSeed,
     initializeStarterGarden,
     updateGoalProgress,
     updateGoalMilestone,
