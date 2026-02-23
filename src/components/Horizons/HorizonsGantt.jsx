@@ -1,15 +1,90 @@
 import { useMemo, useState } from 'react';
 
-function parseWeekRange(weekRangeStr, totalWeeks = 14) {
-  if (!weekRangeStr || typeof weekRangeStr !== 'string') return { start: 0, end: totalWeeks - 1 };
-  const m = weekRangeStr.trim().match(/Week\s*(\d+)(?:\s*[-–]\s*(\d+))?/i);
-  if (!m) return { start: 0, end: totalWeeks - 1 };
-  const start = Math.max(0, parseInt(m[1], 10) - 1);
-  const end = m[2] ? Math.min(totalWeeks - 1, parseInt(m[2], 10) - 1) : start;
-  return { start: Math.min(start, end), end };
+/**
+ * Parse a range string that may mention 'Week' or 'Day', and return column indices for the current scale.
+ * @param {string} rangeStr - e.g. 'Week 1', 'Week 2-4', 'Day 8-10'
+ * @param {'days'|'weeks'} scale - Current time scale
+ * @param {number} totalCols - Total columns (14 for days, 12 for weeks)
+ * @returns {{ start: number, end: number }}
+ */
+function parseTimeRange(rangeStr, scale, totalCols) {
+  if (!rangeStr || typeof rangeStr !== 'string') return { start: 0, end: totalCols - 1 };
+  const s = rangeStr.trim();
+
+  const weekMatch = s.match(/Week\s*(\d+)(?:\s*[-–]\s*(\d+))?/i);
+  const dayMatch = s.match(/Day\s*(\d+)(?:\s*[-–]\s*(\d+))?/i);
+
+  if (scale === 'days' && weekMatch) {
+    const w1 = Math.max(1, parseInt(weekMatch[1], 10));
+    const w2 = weekMatch[2] ? parseInt(weekMatch[2], 10) : w1;
+    const start = (w1 - 1) * 7;
+    const end = Math.min(totalCols - 1, w2 * 7 - 1);
+    return { start, end: Math.max(start, end) };
+  }
+
+  if (scale === 'days' && dayMatch) {
+    const d1 = Math.max(0, parseInt(dayMatch[1], 10));
+    const d2 = dayMatch[2] ? parseInt(dayMatch[2], 10) : d1;
+    const start = Math.min(d1, totalCols - 1);
+    const end = Math.min(totalCols - 1, Math.max(d1, d2));
+    return { start, end: Math.max(start, end) };
+  }
+
+  if (scale === 'weeks' && weekMatch) {
+    const w1 = Math.max(1, parseInt(weekMatch[1], 10));
+    const w2 = weekMatch[2] ? parseInt(weekMatch[2], 10) : w1;
+    const start = Math.min(totalCols - 1, w1 - 1);
+    const end = Math.min(totalCols - 1, Math.max(w1, w2) - 1);
+    return { start: Math.min(start, end), end };
+  }
+
+  if (scale === 'weeks' && dayMatch) {
+    const d1 = Math.max(0, parseInt(dayMatch[1], 10));
+    const d2 = dayMatch[2] ? parseInt(dayMatch[2], 10) : d1;
+    const startWeek = Math.floor(d1 / 7);
+    const endWeek = Math.floor(d2 / 7);
+    const start = Math.min(totalCols - 1, startWeek);
+    const end = Math.min(totalCols - 1, endWeek);
+    return { start, end: Math.max(start, end) };
+  }
+
+  return { start: 0, end: totalCols - 1 };
 }
 
-const TOTAL_WEEKS = 14;
+const TOTAL_DAYS = 14;
+const WEEKS_COLS = 12;
+
+/** Get project start and end column indices. Uses phases for start, _projectDeadline for end. */
+function getProjectWeekRange(goal, timeScale, totalCols) {
+  const milestones = goal.milestones || [];
+  let startCol = 0;
+  let endCol = totalCols - 1;
+  if (milestones.length > 0) {
+    const starts = milestones.map((m) => parseTimeRange(m.weekRange, timeScale, totalCols).start);
+    startCol = Math.min(...starts, startCol);
+    const ends = milestones.map((m) => parseTimeRange(m.weekRange, timeScale, totalCols).end);
+    endCol = Math.max(...ends, endCol);
+  }
+  if (goal._projectDeadline && typeof goal._projectDeadline === 'string') {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const deadline = new Date(goal._projectDeadline + 'T12:00:00');
+    deadline.setHours(0, 0, 0, 0);
+    if (timeScale === 'days') {
+      const dayIndex = Math.round((deadline.getTime() - today.getTime()) / (24 * 60 * 60 * 1000));
+      endCol = Math.max(0, Math.min(totalCols - 1, dayIndex));
+    } else {
+      const monday = new Date(today);
+      monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
+      const deadlineMonday = new Date(deadline);
+      deadlineMonday.setDate(deadline.getDate() - ((deadline.getDay() + 6) % 7));
+      const oneWeekMs = 7 * 24 * 60 * 60 * 1000;
+      const weekIndex = Math.round((deadlineMonday.getTime() - monday.getTime()) / oneWeekMs);
+      endCol = Math.max(0, Math.min(totalCols - 1, weekIndex));
+    }
+  }
+  return { startWeek: startCol, endWeek: endCol };
+}
 
 export default function HorizonsGantt({
   goals = [],
@@ -18,33 +93,46 @@ export default function HorizonsGantt({
   onToggleMilestone,
   onUpdateSubtask,
 }) {
+  const [timeScale, setTimeScale] = useState('weeks'); // 'days' | 'weeks'
   const [expandedPhases, setExpandedPhases] = useState({});
   const togglePhase = (id) => setExpandedPhases((prev) => ({ ...prev, [id]: !prev[id] }));
 
   const projectGoals = useMemo(() => goals.filter((g) => g._projectGoal), [goals]);
 
-  const { weekLabels, currentWeekIndex } = useMemo(() => {
+  const { columnLabels, currentColIndex, totalCols } = useMemo(() => {
     const today = new Date();
+    if (timeScale === 'days') {
+      const totalCols = TOTAL_DAYS;
+      const columnLabels = Array.from({ length: totalCols }, (_, i) => {
+        const d = new Date(today);
+        d.setDate(today.getDate() + i);
+        const weekday = d.toLocaleDateString(undefined, { weekday: 'short' });
+        const dayNum = d.getDate();
+        return `${weekday} ${dayNum}`;
+      });
+      return { columnLabels, currentColIndex: 0, totalCols };
+    }
+    const totalCols = WEEKS_COLS;
     const monday = new Date(today);
     monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
-    const mondayMs = monday.getTime();
+    monday.setHours(0, 0, 0, 0);
     const todayMs = today.getTime();
     const oneWeekMs = 7 * 24 * 60 * 60 * 1000;
-    let currentWeekIndex = 0;
-    for (let i = 0; i < TOTAL_WEEKS; i++) {
-      const weekStart = mondayMs + i * oneWeekMs;
+    let currentColIndex = 0;
+    for (let i = 0; i < totalCols; i++) {
+      const weekStart = monday.getTime() + i * oneWeekMs;
       if (todayMs >= weekStart && todayMs < weekStart + oneWeekMs) {
-        currentWeekIndex = i;
+        currentColIndex = i;
         break;
       }
     }
-    const weekLabels = Array.from({ length: TOTAL_WEEKS }, (_, i) => {
+    const columnLabels = Array.from({ length: totalCols }, (_, i) => {
       const w = new Date(monday);
       w.setDate(monday.getDate() + i * 7);
       return w.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
     });
-    return { weekLabels, currentWeekIndex };
-  }, []);
+    return { columnLabels, currentColIndex, totalCols };
+  }, [timeScale]);
 
   if (projectGoals.length === 0) {
     return (
@@ -56,27 +144,44 @@ export default function HorizonsGantt({
 
   return (
     <div className="rounded-xl border border-stone-200 bg-white overflow-hidden">
-      <div className="px-4 py-3 bg-stone-100 border-b border-stone-200 font-serif text-stone-900 font-medium text-base">
-        Project timeline
+      <div className="px-4 py-3 bg-stone-100 border-b border-stone-200 flex items-center justify-between gap-3">
+        <span className="font-serif text-stone-900 font-medium text-base">Project timeline</span>
+        <div className="flex rounded-lg border border-stone-300 bg-white p-0.5 font-sans text-xs">
+          <button
+            type="button"
+            onClick={() => setTimeScale('days')}
+            className={`px-2.5 py-1 rounded-md transition-colors ${timeScale === 'days' ? 'bg-moss-100 text-moss-800 font-medium' : 'text-stone-500 hover:text-stone-700'}`}
+          >
+            Days
+          </button>
+          <button
+            type="button"
+            onClick={() => setTimeScale('weeks')}
+            className={`px-2.5 py-1 rounded-md transition-colors ${timeScale === 'weeks' ? 'bg-moss-100 text-moss-800 font-medium' : 'text-stone-500 hover:text-stone-700'}`}
+          >
+            Weeks
+          </button>
+        </div>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full border-collapse font-sans text-sm" style={{ minWidth: 560 }}>
           <thead>
             <tr className="border-b border-stone-200">
               <th className="text-left py-2 px-3 font-medium text-stone-600 w-40 shrink-0">Project / Phase</th>
-              {weekLabels.map((label, i) => {
-                const isCurrentWeek = i === currentWeekIndex;
+              {columnLabels.map((label, i) => {
+                const isCurrent = i === currentColIndex;
                 return (
                   <th
                     key={i}
-                    className={`text-center py-1 px-0.5 font-normal text-[10px] w-10 ${isCurrentWeek ? 'bg-moss-50/50 border-l border-r border-moss-200/60' : 'text-stone-400'}`}
+                    className={`text-center py-1 px-0.5 font-normal text-[10px] w-10 ${isCurrent ? 'bg-moss-50/50 border-l border-r border-moss-200/60' : 'text-stone-400'}`}
                   >
                     {label}
-                    {isCurrentWeek && <span className="block text-[9px] text-moss-600 font-medium mt-0.5">Now</span>}
+                    {isCurrent && <span className="block text-[9px] text-moss-600 font-medium mt-0.5">Now</span>}
                   </th>
                 );
               })}
               <th className="text-left py-2 px-2 font-medium text-stone-500 text-xs w-24">Deadline</th>
+              <th className="w-20 shrink-0" aria-label="Actions" />
             </tr>
           </thead>
           <tbody>
@@ -87,41 +192,34 @@ export default function HorizonsGantt({
               const subtaskTotal = subtasksAll.length;
               const subtaskDone = subtasksAll.filter((st) => (st.completedHours ?? 0) >= (st.estimatedHours || 1)).length;
               const progressPct = subtaskTotal > 0 ? Math.round((subtaskDone / subtaskTotal) * 100) : 0;
+              const { startWeek, endWeek } = getProjectWeekRange(goal, timeScale, totalCols);
+              const spanWeeks = Math.max(1, endWeek - startWeek + 1);
+              const progressEndWeekExact = startWeek + (spanWeeks * progressPct / 100);
 
               // 1. MASTER PROJECT ROW
               rows.push(
                 <tr key={`proj-${goal.id}`} className="border-b border-stone-200 bg-stone-50/50">
-                  <td className="py-2 px-3 flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2 min-w-0 flex-1">
-                      <span className="font-medium text-stone-800 font-serif truncate">{goal.title}</span>
-                      {subtaskTotal > 0 && (
-                        <div className="shrink-0 w-16 h-1.5 rounded-full bg-stone-200 overflow-hidden" title={`${subtaskDone}/${subtaskTotal} tasks`}>
-                          <div className="h-full rounded-full bg-moss-500 transition-all" style={{ width: `${progressPct}%` }} />
-                        </div>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-1 shrink-0">
-                      <button type="button" onClick={(e) => { e.stopPropagation(); onGoalClick?.(goal); }} className="text-xs text-stone-400 hover:text-stone-600 px-2 py-1 rounded bg-stone-100">
-                        ✏️ Edit
-                      </button>
-                      {onDeleteGoal && (
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (window.confirm('Delete this project? This cannot be undone.')) onDeleteGoal(goal.id);
-                          }}
-                          className="text-xs text-stone-400 hover:text-red-600 px-2 py-1 rounded bg-stone-100"
-                        >
-                          🗑️ Delete
-                        </button>
-                      )}
-                    </div>
+                  <td className="py-2 px-3 flex items-center gap-2">
+                    <span className="font-medium text-stone-800 font-serif truncate" title={subtaskTotal > 0 ? `${subtaskDone}/${subtaskTotal} tasks` : undefined}>{goal.title}</span>
                   </td>
-                  {weekLabels.map((_, i) => {
-                    const isCurrentWeek = i === currentWeekIndex;
+                  {columnLabels.map((_, i) => {
+                    const isCurrent = i === currentColIndex;
+                    const inRange = i >= startWeek && i <= endWeek;
+                    const isFilled = inRange && i < Math.floor(progressEndWeekExact);
+                    const isPartial = inRange && i === Math.floor(progressEndWeekExact) && progressEndWeekExact % 1 > 0;
+                    const partialPct = isPartial ? (progressEndWeekExact % 1) * 100 : 100;
                     return (
-                      <td key={i} className={`bg-stone-50/50 border-l border-white/50 ${isCurrentWeek ? 'bg-moss-50/50 border-l border-r border-moss-200/40' : ''}`} />
+                      <td key={i} className={`p-0 align-middle w-10 ${isCurrent ? 'bg-moss-50/50 border-l border-r border-moss-200/40' : 'bg-stone-50/50 border-l border-white/50'}`}>
+                        {inRange ? (
+                          <div className="h-2 w-full mx-0 rounded-none bg-stone-200 overflow-hidden" title={`${subtaskDone}/${subtaskTotal} tasks`}>
+                            {isFilled ? (
+                              <div className="h-full w-full rounded-none bg-moss-500 transition-all" />
+                            ) : isPartial ? (
+                              <div className="h-full rounded-none bg-moss-500 transition-all" style={{ width: `${partialPct}%` }} />
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </td>
                     );
                   })}
                   <td className="py-2 px-2 text-stone-500 text-xs shrink-0">
@@ -143,13 +241,32 @@ export default function HorizonsGantt({
                       '—'
                     )}
                   </td>
+                  <td className="py-2 px-2 w-20 shrink-0">
+                    <div className="flex justify-end gap-1">
+                      <button type="button" onClick={(e) => { e.stopPropagation(); onGoalClick?.(goal); }} className="text-xs text-stone-400 hover:text-stone-600 px-2 py-1 rounded bg-stone-100">
+                        ✏️ Edit
+                      </button>
+                      {onDeleteGoal && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (window.confirm('Delete this project? This cannot be undone.')) onDeleteGoal(goal.id);
+                          }}
+                          className="text-xs text-stone-400 hover:text-red-600 px-2 py-1 rounded bg-stone-100"
+                        >
+                          🗑️ Delete
+                        </button>
+                      )}
+                    </div>
+                  </td>
                 </tr>
               );
 
               // 2. PHASE ROWS
               (goal.milestones || []).forEach((phase) => {
                 const isExpanded = expandedPhases[phase.id];
-                const { start: startWeek, end: endWeek } = parseWeekRange(phase.weekRange, TOTAL_WEEKS);
+                const { start: startWeek, end: endWeek } = parseTimeRange(phase.weekRange, timeScale, totalCols);
                 const isDone = phase.completed;
 
                 rows.push(
@@ -171,10 +288,10 @@ export default function HorizonsGantt({
                       <span className="text-stone-400 text-xs">{isExpanded ? '▼' : '▶'}</span>
                       <span className={`font-sans text-sm ${isDone ? 'text-stone-400 line-through' : 'text-stone-700'}`}>{phase.title}</span>
                     </td>
-                    {weekLabels.map((_, i) => {
-                      const isCurrentWeek = i === currentWeekIndex;
+                    {columnLabels.map((_, i) => {
+                      const isCurrent = i === currentColIndex;
                       return (
-                        <td key={i} className={`py-1 px-0.5 align-middle w-10 ${isCurrentWeek ? 'bg-moss-50/50 border-l border-r border-moss-200/40' : ''}`}>
+                        <td key={i} className={`py-1 px-0.5 align-middle w-10 ${isCurrent ? 'bg-moss-50/50 border-l border-r border-moss-200/40' : ''}`}>
                           {i >= startWeek && i <= endWeek && (
                             <div className={`h-3 rounded-full ${isDone ? 'bg-stone-300' : 'bg-amber-300'}`} />
                           )}
@@ -187,12 +304,11 @@ export default function HorizonsGantt({
 
                 // 3. SUBTASK ROWS (If Expanded) — use subtask's own weekRange when set (sequential tasks)
                 if (isExpanded) {
-                  const totalWeeks = Math.max(1, Number(goal._projectTotalWeeks) || TOTAL_WEEKS);
                   const subtasks = (goal.subtasks || []).filter((st) => st.phaseId === phase.id);
                   subtasks.forEach((st) => {
                     const stDone = (st.completedHours ?? 0) >= (st.estimatedHours ?? 0);
                     const stWeekRange = st.weekRange || phase.weekRange;
-                    const { start: stStartWeek, end: stEndWeek } = parseWeekRange(stWeekRange, totalWeeks);
+                    const { start: stStartWeek, end: stEndWeek } = parseTimeRange(stWeekRange, timeScale, totalCols);
                     rows.push(
                       <tr key={`st-${st.id}`} className="border-b border-stone-50/50 bg-stone-50/30">
                         <td className="py-1.5 px-3 pl-12 flex items-center gap-2">
@@ -211,10 +327,10 @@ export default function HorizonsGantt({
                           )}
                           <span className={`font-sans text-xs ${stDone ? 'text-stone-400 line-through' : 'text-stone-500'}`}>↳ {st.title}</span>
                         </td>
-                        {weekLabels.map((_, i) => {
-                          const isCurrentWeek = i === currentWeekIndex;
+                        {columnLabels.map((_, i) => {
+                          const isCurrent = i === currentColIndex;
                           return (
-                            <td key={i} className={`py-1 px-0.5 align-middle ${isCurrentWeek ? 'bg-moss-50/50 border-l border-r border-moss-200/40' : ''}`}>
+                            <td key={i} className={`py-1 px-0.5 align-middle ${isCurrent ? 'bg-moss-50/50 border-l border-r border-moss-200/40' : ''}`}>
                               {i >= stStartWeek && i <= stEndWeek && (
                                 <div className="h-0.5 w-full bg-stone-200" />
                               )}

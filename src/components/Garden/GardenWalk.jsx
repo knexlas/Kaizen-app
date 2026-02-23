@@ -1,6 +1,7 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useGarden } from '../../context/GardenContext';
+import { useEnergy } from '../../context/EnergyContext';
 import SpiritShop from './SpiritShop';
 
 const GRID_COLS = 8;
@@ -124,16 +125,53 @@ function isProjectDone(goal) {
   return false;
 }
 
-export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCreator, onEditGoal }) {
-  const { goals: contextGoals, decorations = [], updateDecorationPosition } = useGarden();
-  const goals = goalsProp ?? contextGoals ?? [];
+/** Energy tier from spoons: high >= 8, low <= 4, else medium */
+function getEnergyTier(spoons) {
+  const n = typeof spoons === 'number' ? spoons : null;
+  if (n == null) return 'medium';
+  if (n >= 8) return 'high';
+  if (n <= 4) return 'low';
+  return 'medium';
+}
 
+const GARDEN_GRADIENTS = {
+  high: {
+    background: 'linear-gradient(165deg, #fffef5 0%, #fef9e7 25%, #f5e6b8 50%, #e8d88a 75%, #d4c45e 100%)',
+    boxShadow: 'inset 0 1px 0 0 rgba(255,255,255,0.8), 0 20px 40px -12px rgba(212,196,94,0.35), 0 4px 12px -4px rgba(0,0,0,0.06)',
+  },
+  medium: {
+    background: 'linear-gradient(165deg, #f5f7f0 0%, #e8edd8 28%, #d4e4c4 55%, #c5d9b0 85%, #b8cf9e 100%)',
+    boxShadow: 'inset 0 1px 0 0 rgba(255,255,255,0.6), 0 20px 40px -12px rgba(94,114,52,0.25), 0 4px 12px -4px rgba(0,0,0,0.08)',
+  },
+  low: {
+    background: 'linear-gradient(165deg, #475569 0%, #334155 22%, #3d4f3d 50%, #4a5d4a 78%, #556b55 100%)',
+    boxShadow: 'inset 0 1px 0 0 rgba(255,255,255,0.08), 0 20px 40px -12px rgba(15,23,42,0.4), 0 4px 12px -4px rgba(0,0,0,0.12)',
+  },
+};
+
+export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCreator, onEditGoal }) {
+  const { goals: contextGoals, decorations = [], updateDecorationPosition, fertilizerCount = 0, fertilizeGoal, dailySpoonCount } = useGarden();
+  const { dailyEnergy } = useEnergy();
+  const spoons = typeof dailySpoonCount === 'number' ? dailySpoonCount : dailyEnergy;
+  const energyTier = getEnergyTier(spoons);
+  const gradientStyle = GARDEN_GRADIENTS[energyTier];
+  const allGoals = goalsProp ?? contextGoals ?? [];
+
+  const [viewMode, setViewMode] = useState('garden'); // 'garden' | 'greenhouse'
   const [positions, setPositions] = useState({});
   const [mochiCell, setMochiCell] = useState({ x: 1, y: 1 });
   const [selectedGoal, setSelectedGoal] = useState(null);
   const [showShop, setShowShop] = useState(false);
+  const [fertilizeMode, setFertilizeMode] = useState(false);
   const [pendingPlantCell, setPendingPlantCell] = useState(null);
   const gridContainerRef = useRef(null);
+
+  const goals = useMemo(() => {
+    if (viewMode === 'garden') {
+      return allGoals.filter((g) => !isProjectDone(g) && getGoalProgressPercent(g) < 100);
+    }
+    return allGoals.filter((g) => isProjectDone(g) || getGoalProgressPercent(g) >= 100);
+  }, [viewMode, allGoals]);
 
   useEffect(() => {
     const updates = {};
@@ -179,9 +217,19 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
   );
 
   const handlePlantClick = useCallback((goal, x, y) => {
+    if (fertilizeMode && fertilizeGoal && fertilizerCount >= 1) {
+      const progress = getGoalProgressPercent(goal);
+      const done = isProjectDone(goal);
+          if (progress < 100 && !done) {
+        fertilizeGoal(goal.id);
+        setFertilizeMode(false);
+        window.dispatchEvent(new CustomEvent('kaizen:toast', { detail: { message: 'Fertilized! Progress bar moved forward 🍂' } }));
+      }
+      return;
+    }
     moveMochi(x, y);
     setSelectedGoal(goal);
-  }, [moveMochi]);
+  }, [moveMochi, fertilizeMode, fertilizeGoal, fertilizerCount]);
 
   const nudgeGoal = useCallback((goalId, dx, dy) => {
     setPositions((prev) => {
@@ -218,29 +266,72 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
     e.dataTransfer.dropEffect = 'move';
   }, []);
 
-  const growingCount = goals.filter((g) => !isProjectDone(g) && getGoalProgressPercent(g) < 100).length;
-  const harvestedCount = goals.filter((g) => isProjectDone(g) || getGoalProgressPercent(g) >= 100).length;
+  const growingCount = allGoals.filter((g) => !isProjectDone(g) && getGoalProgressPercent(g) < 100).length;
+  const harvestedCount = allGoals.filter((g) => isProjectDone(g) || getGoalProgressPercent(g) >= 100).length;
 
   return (
     <div className="w-full flex flex-col gap-6">
-      {/* Ambient garden background */}
+      {/* Ambient garden background — dynamic by energy (spoons) */}
       <div
-        className="relative rounded-3xl overflow-hidden"
+        className="relative rounded-3xl overflow-hidden transition-[background,box-shadow] duration-700 ease-out"
         style={{
-          background: 'linear-gradient(165deg, #f5f7f0 0%, #e8edd8 28%, #d4e4c4 55%, #c5d9b0 85%, #b8cf9e 100%)',
-          boxShadow: 'inset 0 1px 0 0 rgba(255,255,255,0.6), 0 20px 40px -12px rgba(94,114,52,0.25), 0 4px 12px -4px rgba(0,0,0,0.08)',
+          background: gradientStyle.background,
+          boxShadow: gradientStyle.boxShadow,
         }}
       >
         {/* Subtle grain / paper texture overlay */}
         <div
-          className="absolute inset-0 pointer-events-none opacity-[0.03] rounded-3xl"
+          className="absolute inset-0 pointer-events-none rounded-3xl"
           style={{
+            opacity: energyTier === 'low' ? 0.02 : 0.03,
             backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E")`,
           }}
           aria-hidden
         />
-        {/* Cozy Tile Grid */}
-        <div className="relative rounded-3xl overflow-hidden border border-[#8b9f6e]/30 m-2 sm:m-3">
+        {/* Weather overlay: low energy = gentle rain */}
+        {energyTier === 'low' && (
+          <div
+            className="absolute inset-0 pointer-events-none rounded-3xl overflow-hidden"
+            style={{
+              background: 'repeating-linear-gradient(105deg, transparent 0px, transparent 2px, rgba(255,255,255,0.03) 2px, rgba(255,255,255,0.03) 3px)',
+              animation: 'rain-drift 8s linear infinite',
+            }}
+            aria-hidden
+          />
+        )}
+        {/* Weather overlay: high energy = soft sunbeams */}
+        {energyTier === 'high' && (
+          <div
+            className="absolute inset-0 pointer-events-none rounded-3xl"
+            aria-hidden
+          >
+            <div
+              className="absolute inset-0 opacity-40"
+              style={{
+                background: 'radial-gradient(ellipse 80% 60% at 30% 10%, rgba(255,248,220,0.5) 0%, transparent 50%), radial-gradient(ellipse 60% 50% at 70% 5%, rgba(255,250,205,0.35) 0%, transparent 45%)',
+              }}
+            />
+            <div
+              className="absolute inset-0 opacity-30"
+              style={{
+                background: 'linear-gradient(125deg, transparent 0%, rgba(255,255,255,0.08) 25%, transparent 50%, rgba(255,255,255,0.06) 75%, transparent 100%)',
+                animation: 'sunbeam-shimmer 12s ease-in-out infinite',
+              }}
+            />
+          </div>
+        )}
+        {/* Tile Grid — garden: dirt/grass; greenhouse: wooden shelves */}
+        <div
+          className={`relative rounded-3xl overflow-hidden m-2 sm:m-3 transition-all duration-300 ${
+            viewMode === 'greenhouse'
+              ? 'border-2 border-amber-800/40 shadow-inner'
+              : 'border border-[#8b9f6e]/30'
+          }`}
+          style={viewMode === 'greenhouse' ? {
+            background: 'linear-gradient(180deg, #c4a574 0%, #b8956a 15%, #a67c52 40%, #8b6914 100%)',
+            boxShadow: 'inset 0 2px 4px rgba(255,255,255,0.15), inset 0 -1px 2px rgba(0,0,0,0.2), 0 4px 12px rgba(0,0,0,0.1)',
+          } : undefined}
+        >
           <div
             className="grid gap-3 sm:gap-4 p-4 sm:p-6"
             style={{
@@ -260,16 +351,21 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
                 const stage = goal ? getPlantStage(getGoalProgressPercent(goal)) : null;
                 const isHarvest = stage === 'harvest';
 
+                const isGreenhouse = viewMode === 'greenhouse';
+                const cellClasses = isGreenhouse
+                  ? goal
+                    ? 'bg-gradient-to-br from-amber-100/95 to-amber-800/30 shadow-[0_2px_0_0_rgba(0,0,0,0.15),inset_0_1px_0_rgba(255,255,255,0.2)] hover:shadow-[0_3px_0_0_rgba(0,0,0,0.12),inset_0_1px_0_rgba(255,255,255,0.25)] border border-amber-900/30 cursor-pointer'
+                    : 'bg-amber-900/20 border border-amber-800/40 border-dashed shadow-inner cursor-pointer hover:bg-amber-800/25'
+                  : goal
+                    ? isHarvest
+                      ? 'bg-gradient-to-br from-amber-50 to-moss-100/90 shadow-[0_4px_0_0_#a8c68a,0_8px_16px_-4px_rgba(94,114,52,0.2)] hover:-translate-y-0.5 hover:shadow-[0_6px_0_0_#a8c68a,0_12px_24px_-4px_rgba(94,114,52,0.25)] cursor-pointer ring-1 ring-amber-300/30'
+                      : 'bg-gradient-to-br from-[#e5f0dc] to-[#d4e8c8] shadow-[0_4px_0_0_#b8d4a0,0_8px_16px_-4px_rgba(94,114,52,0.15)] hover:-translate-y-0.5 hover:shadow-[0_6px_0_0_#b8d4a0,0_12px_20px_-4px_rgba(94,114,52,0.2)] cursor-pointer'
+                    : 'bg-white/40 border-2 border-dashed border-stone-300/80 hover:border-moss-400/60 hover:bg-moss-50/70 cursor-pointer shadow-sm backdrop-blur-[1px]';
+
                 return (
                   <div
                     key={key}
-                    className={`group relative aspect-square rounded-2xl transition-all duration-300 ease-out flex flex-col items-center justify-center hover:z-40 ${
-                      goal
-                        ? isHarvest
-                          ? 'bg-gradient-to-br from-amber-50 to-moss-100/90 shadow-[0_4px_0_0_#a8c68a,0_8px_16px_-4px_rgba(94,114,52,0.2)] hover:-translate-y-0.5 hover:shadow-[0_6px_0_0_#a8c68a,0_12px_24px_-4px_rgba(94,114,52,0.25)] cursor-pointer ring-1 ring-amber-300/30'
-                          : 'bg-gradient-to-br from-[#e5f0dc] to-[#d4e8c8] shadow-[0_4px_0_0_#b8d4a0,0_8px_16px_-4px_rgba(94,114,52,0.15)] hover:-translate-y-0.5 hover:shadow-[0_6px_0_0_#b8d4a0,0_12px_20px_-4px_rgba(94,114,52,0.2)] cursor-pointer'
-                        : 'bg-white/40 border-2 border-dashed border-stone-300/80 hover:border-moss-400/60 hover:bg-moss-50/70 cursor-pointer shadow-sm backdrop-blur-[1px]'
-                    } ${goal?._projectGoal ? 'ring-2 ring-amber-400/40' : ''}`}
+                    className={`group relative aspect-square rounded-2xl transition-all duration-300 ease-out flex flex-col items-center justify-center hover:z-40 ${isGreenhouse ? '' : goal ? 'hover:-translate-y-0.5' : ''} ${cellClasses} ${goal?._projectGoal ? 'ring-2 ring-amber-400/40' : ''}`}
                   >
                   {goal && (
                     <div className="absolute bottom-full mb-4 left-1/2 -translate-x-1/2 w-48 p-3 bg-white/95 backdrop-blur-md rounded-xl shadow-xl border border-stone-100 opacity-0 group-hover:opacity-100 transition-all duration-200 pointer-events-none z-50 scale-95 group-hover:scale-100 flex flex-col gap-1">
@@ -534,24 +630,64 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
       {/* Control Bar */}
       <div className="flex flex-wrap justify-between items-center gap-4 px-2">
         <div>
-          <h3 className="font-serif text-2xl text-stone-800">My Garden</h3>
+          <div className="flex items-center gap-2 mb-1">
+            <button
+              type="button"
+              onClick={() => setViewMode('garden')}
+              className={`font-serif text-xl transition-colors rounded-lg px-2 py-1 -ml-1 ${viewMode === 'garden' ? 'text-stone-800 font-semibold bg-stone-100' : 'text-stone-500 hover:text-stone-700 hover:bg-stone-50'}`}
+            >
+              My Garden
+            </button>
+            <span className="text-stone-300 font-sans">|</span>
+            <button
+              type="button"
+              onClick={() => setViewMode('greenhouse')}
+              className={`font-serif text-xl transition-colors rounded-lg px-2 py-1 ${viewMode === 'greenhouse' ? 'text-stone-800 font-semibold bg-stone-100' : 'text-stone-500 hover:text-stone-700 hover:bg-stone-50'}`}
+            >
+              The Greenhouse
+            </button>
+          </div>
           <p className="font-sans text-sm text-stone-500 mt-0.5">
-            {goals.length === 0
-              ? 'Plant your first seed to begin.'
-              : `${growingCount} growing · ${harvestedCount} ${harvestedCount === 1 ? 'harvest' : 'harvests'}`}
+            {viewMode === 'garden'
+              ? (allGoals.length === 0
+                ? 'Plant your first seed to begin.'
+                : `${growingCount} growing · ${harvestedCount} ${harvestedCount === 1 ? 'harvest' : 'harvests'}`)
+              : (goals.length === 0
+                ? 'No harvests yet. Complete goals to see them here.'
+                : `${goals.length} ${goals.length === 1 ? 'harvest' : 'harvests'} on display`)}
           </p>
         </div>
-        <button
-          onClick={() => setShowShop(true)}
-          className="flex items-center gap-2 px-5 py-3 rounded-xl font-sans text-sm font-medium transition-all shadow-md hover:shadow-lg hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-moss-500/50 focus:ring-offset-2"
-          style={{
-            background: 'linear-gradient(135deg, #4a5d23 0%, #3d4e1c 100%)',
-            color: '#FDFCF5',
-          }}
-        >
-          <span className="text-lg" aria-hidden>🛍️</span>
-          Garden Shop
-        </button>
+        <div className="flex items-center gap-3">
+          {fertilizerCount > 0 && (
+            <button
+              type="button"
+              onClick={() => setFertilizeMode((prev) => !prev)}
+              className={`flex items-center gap-2 px-4 py-3 rounded-xl font-sans text-sm font-medium transition-all focus:outline-none focus:ring-2 focus:ring-moss-500/50 focus:ring-offset-2 ${
+                fertilizeMode
+                  ? 'bg-amber-100 border-2 border-amber-400 text-amber-900 shadow-md'
+                  : 'bg-stone-100 border border-stone-200 text-stone-700 hover:bg-stone-200'
+              }`}
+              title={fertilizeMode ? 'Click a growing plant to fertilize it (cancel by clicking again)' : 'Click then click a plant to fertilize'}
+            >
+              <span className="text-lg" aria-hidden>🎒</span>
+              {fertilizerCount} Fertilizer
+            </button>
+          )}
+          {fertilizeMode && (
+            <span className="font-sans text-xs text-amber-700 font-medium">Click a growing plant to fertilize</span>
+          )}
+          <button
+            onClick={() => setShowShop(true)}
+            className="flex items-center gap-2 px-5 py-3 rounded-xl font-sans text-sm font-medium transition-all shadow-md hover:shadow-lg hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-moss-500/50 focus:ring-offset-2"
+            style={{
+              background: 'linear-gradient(135deg, #4a5d23 0%, #3d4e1c 100%)',
+              color: '#FDFCF5',
+            }}
+          >
+            <span className="text-lg" aria-hidden>🛍️</span>
+            Garden Shop
+          </button>
+        </div>
       </div>
 
       {showShop && <SpiritShop onClose={() => setShowShop(false)} />}

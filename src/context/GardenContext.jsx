@@ -36,6 +36,7 @@ const defaultData = {
   embers: 100, // currency for decorations; new users start with 100 (enough for a bench)
   decorations: [], // { id, type, x, y, variant? }
   metrics: [], // { id, name } — available metrics for vitality tracking
+  fertilizerCount: 0, // +1 when adding to compost or deleting from compost (visual recycling)
 };
 
 const GardenContext = createContext(null);
@@ -61,6 +62,7 @@ export function GardenProvider({ children }) {
   const [embers, setEmbers] = useState(defaultData.embers ?? 100);
   const [decorations, setDecorations] = useState(defaultData.decorations);
   const [metrics, setMetrics] = useState(defaultData.metrics);
+  const [fertilizerCount, setFertilizerCount] = useState(defaultData.fertilizerCount ?? 0);
   const [smallJoys, setSmallJoys] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem('smallJoys') || '[]');
@@ -141,6 +143,7 @@ export function GardenProvider({ children }) {
         if (typeof data.embers === 'number') setEmbers(data.embers);
         if (Array.isArray(data.decorations)) setDecorations(data.decorations);
         if (Array.isArray(data.metrics)) setMetrics(data.metrics);
+        if (typeof data.fertilizerCount === 'number' && data.fertilizerCount >= 0) setFertilizerCount(data.fertilizerCount);
       }
     } catch (e) {
       console.warn('GardenContext: failed to load gardenData', e);
@@ -174,6 +177,7 @@ export function GardenProvider({ children }) {
           if (typeof data.embers === 'number') setEmbers(data.embers);
           if (Array.isArray(data.decorations)) setDecorations(data.decorations);
           if (Array.isArray(data.metrics)) setMetrics(data.metrics);
+          if (typeof data.fertilizerCount === 'number' && data.fertilizerCount >= 0) setFertilizerCount(data.fertilizerCount);
           skipCloudSaveUntilRef.current = Date.now() + 3000;
         }
       } catch (e) {
@@ -294,10 +298,15 @@ export function GardenProvider({ children }) {
       if (!trimmed) return;
       const uid = googleUser?.uid;
       const incrementNutrients = () => setSoilNutrients((prev) => Math.min(20, prev + 1));
+      const addFertilizerBag = () => {
+        setFertilizerCount((prev) => prev + 1);
+        window.dispatchEvent(new CustomEvent('kaizen:toast', { detail: { message: 'Turned into 1 bag of fertilizer! 🍂' } }));
+      };
       if (uid) {
         try {
           await addCompostItem(uid, trimmed);
           incrementNutrients();
+          addFertilizerBag();
         } catch (e) {
           console.warn('addCompostItem failed, using local state', e);
           const item = {
@@ -307,6 +316,7 @@ export function GardenProvider({ children }) {
           };
           setCompost((prev) => [item, ...prev]);
           incrementNutrients();
+          addFertilizerBag();
         }
       } else {
         const item = {
@@ -316,6 +326,7 @@ export function GardenProvider({ children }) {
         };
         setCompost((prev) => [item, ...prev]);
         incrementNutrients();
+        addFertilizerBag();
       }
     },
     [googleUser?.uid]
@@ -323,6 +334,8 @@ export function GardenProvider({ children }) {
 
   const removeFromCompost = useCallback(
     (id) => {
+      setFertilizerCount((prev) => prev + 1);
+      window.dispatchEvent(new CustomEvent('kaizen:toast', { detail: { message: 'Turned into 1 bag of fertilizer! 🍂' } }));
       const uid = googleUser?.uid;
       if (uid) {
         deleteCompostItem(uid, id).catch((e) => {
@@ -354,12 +367,12 @@ export function GardenProvider({ children }) {
   useEffect(() => {
     if (!hydrated) return;
     try {
-      const data = { goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, logs, spiritConfig, compost, soilNutrients, spiritPoints, embers, decorations, metrics };
+      const data = { goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, logs, spiritConfig, compost, soilNutrients, spiritPoints, embers, decorations, metrics, fertilizerCount };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     } catch (e) {
       console.warn('GardenContext: failed to save gardenData', e);
     }
-  }, [hydrated, goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, logs, spiritConfig, compost, soilNutrients, spiritPoints, embers, decorations, metrics]);
+  }, [hydrated, goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, logs, spiritConfig, compost, soilNutrients, spiritPoints, embers, decorations, metrics, fertilizerCount]);
 
   // Debounced save to Firestore when goals, logs, weeklyEvents change (and user is logged in)
   useEffect(() => {
@@ -390,6 +403,7 @@ export function GardenProvider({ children }) {
           embers: embers ?? 100,
           decorations: decorations ?? [],
           metrics: metrics ?? [],
+          fertilizerCount: fertilizerCount ?? 0,
           updatedAt: new Date().toISOString(),
         }, { merge: true });
         setCloudSaveStatus('saved');
@@ -411,7 +425,7 @@ export function GardenProvider({ children }) {
         savedIdleTimeoutRef.current = null;
       }
     };
-  }, [hydrated, googleUser?.uid, goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, logs, spiritConfig, compost, soilNutrients, spiritPoints, embers, decorations, metrics]);
+  }, [hydrated, googleUser?.uid, goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, logs, spiritConfig, compost, soilNutrients, spiritPoints, embers, decorations, metrics, fertilizerCount]);
 
   const addLog = useCallback((log) => {
     const mins = Number(log?.minutes) || 0;
@@ -869,6 +883,24 @@ export function GardenProvider({ children }) {
     );
   }, []);
 
+  /** Spend one fertilizer bag on a goal: reduce its target by 10% so progress bar jumps forward. Returns true if applied. */
+  const fertilizeGoal = useCallback((goalId) => {
+    if (fertilizerCount < 1) return false;
+    const goal = goals.find((g) => g.id === goalId);
+    if (!goal) return false;
+    setFertilizerCount((prev) => Math.max(0, prev - 1));
+    const targetH = Number(goal.targetHours);
+    const estM = Number(goal.estimatedMinutes);
+    if (targetH > 0) {
+      const next = Math.max(0.1, targetH * 0.9);
+      editGoal(goalId, { targetHours: Math.round(next * 10) / 10 });
+    } else if (estM > 0) {
+      const next = Math.max(1, Math.round(estM * 0.9));
+      editGoal(goalId, { estimatedMinutes: next });
+    }
+    return true;
+  }, [goals, fertilizerCount, editGoal]);
+
   const deleteGoal = useCallback((goalId) => {
     setGoals((prev) => prev.filter((g) => g.id !== goalId));
   }, []);
@@ -950,6 +982,7 @@ export function GardenProvider({ children }) {
     if (typeof data.embers === 'number') setEmbers(data.embers);
     if (Array.isArray(data.decorations)) setDecorations(data.decorations);
     if (Array.isArray(data.metrics)) setMetrics(data.metrics);
+    if (typeof data.fertilizerCount === 'number' && data.fertilizerCount >= 0) setFertilizerCount(data.fertilizerCount);
   }, []);
 
   /** Clear all garden data (localStorage + in-memory; if logged in, overwrite Firestore with default). */
@@ -970,6 +1003,7 @@ export function GardenProvider({ children }) {
     setEmbers(defaultData.embers ?? 100);
     setDecorations(defaultData.decorations);
     setMetrics(defaultData.metrics);
+    setFertilizerCount(defaultData.fertilizerCount ?? 0);
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(defaultData));
     } catch (e) {
@@ -1010,6 +1044,8 @@ export function GardenProvider({ children }) {
     updateWeeklyEvents,
     editGoal,
     deleteGoal,
+    fertilizeGoal,
+    fertilizerCount,
     addSubtask,
     updateSubtask,
     deleteSubtask,

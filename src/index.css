@@ -59,6 +59,16 @@
   animation: plant-sway 4s ease-in-out infinite;
 }
 
+/* Garden: dynamic weather (energy-based) */
+@keyframes rain-drift {
+  0% { transform: translateY(-10%); }
+  100% { transform: translateY(10%); }
+}
+@keyframes sunbeam-shimmer {
+  0%, 100% { opacity: 0.2; }
+  50% { opacity: 0.35; }
+}
+
 /* Safe area for notches/home indicator on mobile */
 .safe-area-pb {
   padding-bottom: max(0.5rem, env(safe-area-inset-bottom, 0px));

@@ -882,7 +882,10 @@ export async function sliceProject(projectName, deadline, feedback = '', descrip
     const end = new Date(deadline);
     availableWeeks = Math.max(1, Math.round((end - today) / (1000 * 60 * 60 * 24 * 7)));
   }
+  const isShortTerm = availableWeeks <= 3;
   const deadlineStr = deadline ? `Deadline: ${deadline} (Exactly ${availableWeeks} weeks from today).` : 'No hard deadline — suggest a reasonable timeline (default 12 weeks).';
+  const timeRangeExample = isShortTerm ? '"Day 1-2"' : '"Week 1-2"';
+  const taskTimeRangeExample = isShortTerm ? '"Day 1"' : '"Week 1"';
   const goalList = existingGoals.slice(0, 15).map((g) => `${g.id}: "${g.title}" (${g.type})`).join('\n');
 
   const prompt = `
@@ -891,22 +894,23 @@ Act as a Kaizen project planner. Break this project into manageable phases.
 Project: "${projectName}"
 ${description ? `Description: ${description}` : ''}
 ${deadlineStr}
+${isShortTerm ? 'This is a SHORT-TERM project (3 weeks or less). Use "Day 1", "Day 2-3", etc. for all time ranges.' : ''}
 
 ${feedback ? `CRITICAL USER FEEDBACK FOR REVISION: The user reviewed your previous plan and said: "${feedback}". You MUST adjust the phases and tasks to accommodate this feedback.` : ''}
 
 Existing goals the user already has:
 ${goalList || 'None yet.'}
 
-Return strict JSON (no markdown):
+Return strict JSON (no markdown). Use "timeRange" for phase and task timing (the value can be "Week 1-2" or "Day 1-3" depending on project length):
 {
   "summary": "1-sentence project overview",
   "totalWeeks": number,
   "phases": [
     {
       "title": "Phase name",
-      "weekRange": "Week 1-2",
+      "timeRange": ${timeRangeExample},
       "tasks": [
-        { "title": "Task name", "estimatedHours": 5, "type": "kaizen", "weekRange": "Week 1" }
+        { "title": "Task name", "estimatedHours": 5, "type": "kaizen", "timeRange": ${taskTimeRangeExample} }
       ],
       "milestone": "What success looks like at the end of this phase"
     }
@@ -920,7 +924,8 @@ Return strict JSON (no markdown):
 Guidelines:
 - Break into 3-6 phases.
 - You MUST fit all phases strictly within the ${availableWeeks} weeks available.
-- SEQUENTIAL TASKS: Within each phase, tasks are often sequential (the first must be done before the second can start). Give each task its own "weekRange" that falls inside the phase. Example: if the phase is "Week 1-2", the first task might be "Week 1", the second "Week 2". If a phase is "Week 3-4", use "Week 3", "Week 4" for consecutive tasks. If tasks can run in parallel, give them the same weekRange. Order tasks in the array in the order they should be done.
+- TIME SCALE RULE: If the project has 3 weeks or less available, you MUST use "Day 1", "Day 2-3", etc. for your time ranges. If it is longer than 3 weeks, use "Week 1", "Week 2-3".
+- SEQUENTIAL TASKS: Within each phase, tasks are often sequential (the first must be done before the second can start). Give each task its own "timeRange" that falls inside the phase. Example: if the phase is "Week 1-2", the first task might be "Week 1", the second "Week 2". For short projects with days: if the phase is "Day 1-3", use "Day 1", "Day 2", "Day 3" for consecutive tasks. If tasks can run in parallel, give them the same timeRange. Order tasks in the array in the order they should be done.
 - Calculate the total estimated hours vs available weeks. In "mochiFeedback", assess the feasibility. If it's a heavy load, gently warn the user and suggest scheduling rest or self-care afterwards. If manageable, be encouraging.
 - LINKING RULE: ONLY populate suggestedLinks if the task is an EXACT, undeniable match to an existing goal. If it is only vaguely related, leave suggestedLinks empty!
 `;
@@ -935,28 +940,7 @@ Guidelines:
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
     if (jsonMatch) raw = jsonMatch[0];
     const parsed = JSON.parse(raw);
-    // Normalize so consumers get a stable shape (accept tasks from tasks, subtasks, items, or steps)
-    if (!Array.isArray(parsed.phases)) parsed.phases = [];
-    const getPhaseTasks = (p) =>
-      Array.isArray(p.tasks) ? p.tasks
-        : Array.isArray(p.subtasks) ? p.subtasks
-          : Array.isArray(p.items) ? p.items
-            : Array.isArray(p.steps) ? p.steps
-              : [];
-    parsed.phases = parsed.phases.map((p) => {
-      const rawTasks = getPhaseTasks(p);
-      const tasks = rawTasks.map((t) => ({
-        ...t,
-        title: String(t?.title ?? t?.name ?? '').trim() || 'Task',
-        estimatedHours: Math.max(0, Number(t?.estimatedHours ?? t?.hours) || 2),
-        type: t?.type === 'routine' ? 'routine' : 'kaizen',
-        weekRange: t?.weekRange != null && String(t.weekRange).trim() ? String(t.weekRange).trim() : null,
-      }));
-      return { ...p, tasks };
-    });
-    if (!Array.isArray(parsed.suggestedLinks)) parsed.suggestedLinks = [];
-    parsed.mochiFeedback = parsed.mochiFeedback != null ? String(parsed.mochiFeedback).trim() : '';
-    return parsed;
+    return normalizeSliceProjectParsed(parsed);
   } catch (err) {
     console.warn('Gemini sliceProject failed, trying Groq:', err?.message || err);
     try {
@@ -965,31 +949,113 @@ Guidelines:
       const jsonMatch = raw.match(/\{[\s\S]*\}/);
       if (jsonMatch) raw = jsonMatch[0];
       const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed.phases)) parsed.phases = [];
-      const getPhaseTasksGroq = (p) =>
-        Array.isArray(p.tasks) ? p.tasks
-          : Array.isArray(p.subtasks) ? p.subtasks
-            : Array.isArray(p.items) ? p.items
-              : Array.isArray(p.steps) ? p.steps
-                : [];
-      parsed.phases = parsed.phases.map((p) => {
-        const rawTasks = getPhaseTasksGroq(p);
-        const tasks = rawTasks.map((t) => ({
-          ...t,
-          title: String(t?.title ?? t?.name ?? '').trim() || 'Task',
-          estimatedHours: Math.max(0, Number(t?.estimatedHours ?? t?.hours) || 2),
-          type: t?.type === 'routine' ? 'routine' : 'kaizen',
-          weekRange: t?.weekRange != null && String(t.weekRange).trim() ? String(t.weekRange).trim() : null,
-        }));
-        return { ...p, tasks };
-      });
-      if (!Array.isArray(parsed.suggestedLinks)) parsed.suggestedLinks = [];
-      parsed.mochiFeedback = parsed.mochiFeedback != null ? String(parsed.mochiFeedback).trim() : '';
-      return parsed;
+      return normalizeSliceProjectParsed(parsed);
     } catch (groqErr) {
       console.error('Groq sliceProject fallback failed:', groqErr?.message || groqErr);
       return null;
     }
+  }
+}
+
+/**
+ * Normalize parsed slice-project JSON so consumers get a stable shape (phases, tasks with estimatedHours, etc.).
+ * Shared by sliceProject and planProjectFromDocument.
+ * @param {object} parsed - Raw parsed JSON from Gemini
+ * @returns {object} Normalized { summary, totalWeeks, phases, suggestedLinks, mochiFeedback }
+ */
+/** Normalize time string from AI (timeRange, weekRange, days) into standard weekRange for Gantt. */
+function toWeekRange(val) {
+  if (val == null) return null;
+  const s = String(val).trim();
+  return s || null;
+}
+
+function normalizeSliceProjectParsed(parsed) {
+  if (!parsed || typeof parsed !== 'object') return parsed;
+  if (!Array.isArray(parsed.phases)) parsed.phases = [];
+  const getPhaseTasks = (p) =>
+    Array.isArray(p.tasks) ? p.tasks
+      : Array.isArray(p.subtasks) ? p.subtasks
+        : Array.isArray(p.items) ? p.items
+          : Array.isArray(p.steps) ? p.steps
+            : [];
+  parsed.phases = parsed.phases.map((p) => {
+    const phaseWeekRange = toWeekRange(p?.timeRange ?? p?.weekRange ?? p?.days);
+    const rawTasks = getPhaseTasks(p);
+    const tasks = rawTasks.map((t) => {
+      const taskWeekRange = toWeekRange(t?.timeRange ?? t?.weekRange ?? t?.days);
+      return {
+        ...t,
+        title: String(t?.title ?? t?.name ?? '').trim() || 'Task',
+        estimatedHours: Math.max(0, Number(t?.estimatedHours ?? t?.hours) || 2),
+        type: t?.type === 'routine' ? 'routine' : 'kaizen',
+        weekRange: taskWeekRange,
+      };
+    });
+    return { ...p, weekRange: phaseWeekRange, tasks };
+  });
+  if (!Array.isArray(parsed.suggestedLinks)) parsed.suggestedLinks = [];
+  parsed.mochiFeedback = parsed.mochiFeedback != null ? String(parsed.mochiFeedback).trim() : '';
+  return parsed;
+}
+
+/**
+ * Read a document (PDF or text) and turn it into a structured project plan.
+ * Uses the same JSON shape as sliceProject: summary, totalWeeks, phases, tasks with estimatedHours.
+ * @param {string} base64Data - Base64-encoded document content
+ * @param {string} mimeType - MIME type (e.g. application/pdf, text/plain)
+ * @param {string} fileName - Display name for the document
+ * @returns {Promise<{ summary, totalWeeks, phases, suggestedLinks, mochiFeedback }|null>}
+ */
+export async function planProjectFromDocument(base64Data, mimeType, fileName) {
+  const apiKey = getApiKey();
+  if (!apiKey) {
+    console.error('Missing API Key');
+    return null;
+  }
+
+  const safeFileName = typeof fileName === 'string' ? fileName.trim() || 'Document' : 'Document';
+  const prompt = `Read the attached document titled "${safeFileName}". Extract the core objective and break it down into a structured project plan.
+
+You MUST return the EXACT same strict JSON structure as a project slice:
+{
+  "summary": "1-sentence project overview",
+  "totalWeeks": number,
+  "phases": [
+    {
+      "title": "Phase name",
+      "weekRange": "Week 1-2",
+      "tasks": [
+        { "title": "Task name", "estimatedHours": 5, "type": "kaizen", "weekRange": "Week 1" }
+      ],
+      "milestone": "What success looks like at the end of this phase"
+    }
+  ],
+  "suggestedLinks": [],
+  "mochiFeedback": "A 1-2 sentence comforting assessment of the workload."
+}
+
+Return ONLY valid JSON (no markdown, no code fence).`;
+
+  const content = [
+    { inlineData: { data: base64Data, mimeType: mimeType || 'application/octet-stream' } },
+    { text: prompt },
+  ];
+
+  try {
+    const { GoogleGenerativeAI } = await import('@google/generative-ai');
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const result = await tryGenerate(genAI, content);
+    const text = typeof result?.response?.text === 'function' ? result.response.text() : result?.response?.text;
+    if (!text) throw new Error('Empty response');
+    let raw = sanitizeJsonResponse(text);
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    if (jsonMatch) raw = jsonMatch[0];
+    const parsed = JSON.parse(raw);
+    return normalizeSliceProjectParsed(parsed);
+  } catch (err) {
+    console.warn('Gemini planProjectFromDocument failed:', err?.message || err);
+    return null;
   }
 }
 

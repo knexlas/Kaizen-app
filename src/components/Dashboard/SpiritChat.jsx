@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { DefaultSpiritSvg, ThinkingDots } from './MochiSpirit';
-import { chatWithSpirit } from '../../services/geminiService';
+import { chatWithSpirit, suggestGoalStructure } from '../../services/geminiService';
 import { useGarden } from '../../context/GardenContext';
 import { extractActionCandidate, splitIntoSteps } from '../../services/aiActionExtractor';
 import { HOURS } from './TimeSlicer';
@@ -14,7 +14,7 @@ function isErrorLikeMessage(text) {
   return ERROR_PHRASES.some((p) => lower.includes(p));
 }
 
-function AiActionChipsRow({ assistantText, onAction }) {
+function AiActionChipsRow({ assistantText, onAction, chipLoading = false }) {
   if (typeof assistantText !== 'string' || !assistantText.trim() || isErrorLikeMessage(assistantText)) return null;
   const { title } = extractActionCandidate(assistantText);
   const chips = [
@@ -23,19 +23,24 @@ function AiActionChipsRow({ assistantText, onAction }) {
     { id: 'START_FOCUS_5', label: 'Start 5-min focus' },
     { id: 'BREAK_3_STEPS', label: 'Break into 3 steps' },
     { id: 'SEND_TO_COMPOST', label: 'Send to compost' },
+    { id: 'AUTO_PLAN_GOAL', label: '✨ Auto-plan this goal' },
   ];
   return (
     <div className="flex flex-wrap gap-2 mt-2" role="group" aria-label="Quick actions">
-      {chips.map((c) => (
-        <button
-          key={c.id}
-          type="button"
-          onClick={() => onAction(c.id, { title })}
-          className="px-3 py-1.5 rounded-full font-sans text-xs border border-stone-200 bg-white/90 text-stone-700 hover:bg-moss-50 hover:border-moss-300 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
-        >
-          {c.label}
-        </button>
-      ))}
+      {chips.map((c) => {
+        const disabled = c.id === 'AUTO_PLAN_GOAL' && chipLoading;
+        return (
+          <button
+            key={c.id}
+            type="button"
+            disabled={disabled}
+            onClick={() => onAction(c.id, { title })}
+            className="px-3 py-1.5 rounded-full font-sans text-xs border border-stone-200 bg-white/90 text-stone-700 hover:bg-moss-50 hover:border-moss-300 focus:outline-none focus:ring-2 focus:ring-moss-500/40 disabled:opacity-60 disabled:pointer-events-none"
+          >
+            {c.label}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -62,6 +67,7 @@ export default function SpiritChat({ open, onClose, context = {} }) {
   };
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isAutoPlanLoading, setIsAutoPlanLoading] = useState(false);
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
 
@@ -124,6 +130,39 @@ export default function SpiritChat({ open, onClose, context = {} }) {
       case 'SEND_TO_COMPOST': {
         addToCompost(title);
         fireToast('Moved to compost 🌿');
+        break;
+      }
+      case 'AUTO_PLAN_GOAL': {
+        (async () => {
+          setIsAutoPlanLoading(true);
+          try {
+            const structure = await suggestGoalStructure(title, 'kaizen');
+            const uid = () => crypto.randomUUID?.() ?? `id-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+            const newGoal = {
+              id: uid(),
+              type: 'kaizen',
+              title,
+              estimatedMinutes: structure?.estimatedMinutes ?? 30,
+              targetHours: structure?.targetHours ?? 3,
+              totalMinutes: 0,
+              createdAt: new Date().toISOString(),
+              subtasks: (structure?.vines?.length
+                ? structure.vines.map((v) => ({ id: uid(), title: typeof v === 'string' ? v : v?.title ?? 'Step', estimatedHours: 0.1, completedHours: 0 }))
+                : [{ id: uid(), title: 'First step', estimatedHours: 0.1, completedHours: 0 }]),
+              rituals: (structure?.rituals?.length ? structure.rituals.map((r) => ({ ...r, id: uid() })) : []),
+              milestones: (structure?.milestones?.length
+                ? structure.milestones.map((m) => ({ id: uid(), title: typeof m === 'string' ? m : m?.title ?? '', completed: false }))
+                : []),
+            };
+            addGoal(newGoal);
+            fireToast('Magically planned and planted in your garden! 🌱');
+          } catch (e) {
+            console.warn('Auto-plan goal failed', e);
+            fireToast('Something rustled. Try again or open Goal Creator.');
+          } finally {
+            setIsAutoPlanLoading(false);
+          }
+        })();
         break;
       }
       default:
@@ -242,7 +281,7 @@ export default function SpiritChat({ open, onClose, context = {} }) {
                 </div>
                 {msg.role === 'model' && (
                   <div className="max-w-[85%] w-full mt-1">
-                    <AiActionChipsRow assistantText={msg.text} onAction={handleChipAction} />
+                    <AiActionChipsRow assistantText={msg.text} onAction={handleChipAction} chipLoading={isAutoPlanLoading} />
                   </div>
                 )}
               </div>

@@ -29,19 +29,21 @@ function CompostEmptyNote() {
 }
 import { useReward } from '../../context/RewardContext';
 import { buildReward } from '../../services/dopamineEngine';
-import { breakDownTask, processIncomingCompost } from '../../services/geminiService';
+import { breakDownTask, processIncomingCompost, planProjectFromDocument } from '../../services/geminiService';
 
 const MOBILE_BREAKPOINT = 640;
 
 export default function CompostHeap({ open, onClose, onPlant, onPrism }) {
-  const { compost = [], addToCompost, removeFromCompost, goals = [], addSubtask } = useGarden();
+  const { compost = [], addToCompost, removeFromCompost, goals = [], addSubtask, addGoal } = useGarden();
   const { pushReward } = useReward();
   const [quickCapture, setQuickCapture] = useState('');
   const [prismLoadingId, setPrismLoadingId] = useState(null);
   const [scanning, setScanning] = useState(false);
+  const [documentLoading, setDocumentLoading] = useState(false);
   const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < MOBILE_BREAKPOINT);
   const inputRef = useRef(null);
   const fileInputRef = useRef(null);
+  const documentFileInputRef = useRef(null);
 
   useEffect(() => {
     if (open) {
@@ -100,6 +102,77 @@ export default function CompostHeap({ open, onClose, onPlant, onPrism }) {
       }
     } finally {
       setScanning(false);
+    }
+  };
+
+  const handleFileUpload = async (e) => {
+    const file = e.target?.files?.[0];
+    if (!file || !addGoal) return;
+    e.target.value = '';
+    setDocumentLoading(true);
+    try {
+      const dataUrl = await readFileAsBase64(file);
+      if (!dataUrl || typeof dataUrl !== 'string') return;
+      const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+      const mimeType = match ? match[1].trim() : (file.type || 'application/octet-stream');
+      const base64Data = match ? match[2].replace(/\s/g, '') : dataUrl.replace(/^data:[^;]+;base64,/, '').replace(/\s/g, '');
+      const plan = await planProjectFromDocument(base64Data, mimeType, file.name);
+      if (!plan || !Array.isArray(plan.phases) || plan.phases.length === 0) return;
+      const uid = () => crypto.randomUUID?.() ?? `id-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+      const totalWeeks = Math.max(1, Number(plan.totalWeeks) || 14);
+      const milestones = [];
+      const subtasks = [];
+      (plan.phases || []).forEach((phase) => {
+        const phaseId = uid();
+        milestones.push({
+          id: phaseId,
+          title: phase.title || phase.milestone || 'Phase milestone',
+          weekRange: phase.weekRange || null,
+          completed: false,
+        });
+        (phase.tasks || []).forEach((task) => {
+          const estimatedHours = Math.max(0, Number(task?.estimatedHours) ?? 2);
+          subtasks.push({
+            id: uid(),
+            phaseId,
+            title: String(task?.title ?? task?.name ?? '').trim() || 'Task',
+            estimatedHours,
+            completedHours: 0,
+            deadline: null,
+            color: null,
+            weekRange: task?.weekRange != null && String(task.weekRange).trim() ? String(task.weekRange).trim() : null,
+          });
+        });
+      });
+      const projectTitle = (plan.summary || file.name || 'Project').trim().slice(0, 200) || 'Project from document';
+      const notesParts = [plan.summary || ''].filter(Boolean);
+      if (totalWeeks) notesParts.push(`${totalWeeks} weeks`);
+      const notes = notesParts.join(' \u00b7 ') || undefined;
+      const newProject = {
+        id: uid(),
+        type: 'kaizen',
+        title: projectTitle,
+        domain: 'mind',
+        estimatedMinutes: 60,
+        targetHours: subtasks.reduce((sum, st) => sum + (st.estimatedHours || 0), 0) || 5,
+        totalMinutes: 0,
+        createdAt: new Date().toISOString(),
+        milestones,
+        subtasks,
+        notes,
+        rituals: [],
+        _projectName: projectTitle,
+        _projectDeadline: null,
+        _projectTotalWeeks: totalWeeks,
+        _projectGoal: true,
+      };
+      addGoal(newProject);
+      window.dispatchEvent(new CustomEvent('kaizen:toast', { detail: { message: 'Project planned and planted! 🌱' } }));
+    } catch (err) {
+      console.warn('Plan from document failed:', err);
+      window.dispatchEvent(new CustomEvent('kaizen:toast', { detail: { message: 'Could not plan from document. Try again or use a different file.' } }));
+    } finally {
+      setDocumentLoading(false);
     }
   };
 
@@ -189,6 +262,14 @@ export default function CompostHeap({ open, onClose, onPlant, onPrism }) {
               aria-label="Upload or capture image"
               onChange={handleFileSelect}
             />
+            <input
+              ref={documentFileInputRef}
+              type="file"
+              accept=".txt,.md,.pdf,image/*"
+              className="hidden"
+              aria-label="Upload document to plan as project"
+              onChange={handleFileUpload}
+            />
             <div className="flex gap-2">
               <input
                 ref={inputRef}
@@ -223,6 +304,25 @@ export default function CompostHeap({ open, onClose, onPlant, onPrism }) {
                 className="py-2.5 px-4 rounded-xl bg-amber-600 text-stone-50 font-sans text-sm font-medium hover:bg-amber-700 focus:outline-none focus:ring-2 focus:ring-amber-500/50 disabled:opacity-50 disabled:pointer-events-none"
               >
                 Add
+              </button>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 mt-2">
+              <button
+                type="button"
+                onClick={() => documentFileInputRef.current?.click()}
+                disabled={documentLoading}
+                className="py-2 px-3 rounded-xl border border-stone-300 bg-white font-sans text-sm text-stone-600 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40 disabled:opacity-60 disabled:pointer-events-none shrink-0 flex items-center gap-1.5"
+                aria-label="Plan from document (PDF, text, or image)"
+                title="Upload a PDF, .txt, .md, or image to turn it into a project"
+              >
+                {documentLoading ? (
+                  <span className="font-sans text-xs font-medium">Mochi is reading your document...</span>
+                ) : (
+                  <>
+                    <span aria-hidden>📄</span>
+                    Plan from Document
+                  </>
+                )}
               </button>
             </div>
             <p className="font-sans text-xs text-stone-500 mt-2">

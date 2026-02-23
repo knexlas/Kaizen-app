@@ -13,6 +13,7 @@ import MissedDayModal from './components/Onboarding/MissedDayModal';
 import WelcomeGarden from './components/Onboarding/WelcomeGarden';
 import WelcomeOnboarding from './components/Onboarding/WelcomeOnboarding';
 import SeasonParticles from './components/SeasonParticles';
+import GlobalToast from './components/GlobalToast';
 
 const ONBOARDING_COMPLETE_KEY = 'kaizen_onboarding_complete';
 
@@ -148,6 +149,8 @@ function App() {
           {hydrated && needsWelcome && onboardingComplete && (
             <WelcomeGarden />
           )}
+
+          <GlobalToast />
         </div>
       </div>
     </EnergyProvider>

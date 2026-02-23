@@ -405,6 +405,94 @@ function getActivationEnergy(goal) {
 }
 
 /**
+ * Neurodivergent-friendly prioritization: return exactly 3 suggested tasks (goals) — North Star, Quick Win, Care.
+ * Filters to incomplete goals/subtasks only.
+ * @param {Array} goals - All goals (with type, energyType?, activationEnergy?, estimatedMinutes?, _projectDeadline?, _projectGoal?, milestones?, subtasks?)
+ * @param {number} availableSpoons - Current spoons (1–12); when <= 3, North Star may be skipped or softened
+ * @returns {{ northStar: object|null, quickWin: object|null, care: object|null }}
+ */
+export function getGentlePriorities(goals, availableSpoons) {
+  const spoons = Number(availableSpoons) || 0;
+  const lowSpoons = spoons <= 3;
+
+  function isIncomplete(goal) {
+    if (!goal?.id) return false;
+    if (goal._projectGoal) {
+      const milestones = goal.milestones ?? [];
+      const hasIncompleteMilestone = milestones.some((m) => !m.completed);
+      const subtasks = goal.subtasks ?? [];
+      const hasIncompleteSubtask = subtasks.some(
+        (st) => (Number(st.completedHours) || 0) < (Number(st.estimatedHours) || 0)
+      );
+      return hasIncompleteMilestone || hasIncompleteSubtask;
+    }
+    return true;
+  }
+
+  const incomplete = (Array.isArray(goals) ? goals : []).filter(isIncomplete);
+  if (incomplete.length === 0) {
+    return { northStar: null, quickWin: null, care: null };
+  }
+
+  let northStar = null;
+  let quickWin = null;
+  let care = null;
+
+  const now = new Date();
+  const impendingDays = 14;
+  const isImpendingDeadline = (g) => {
+    const dl = g._projectDeadline;
+    if (!dl || typeof dl !== 'string') return false;
+    const end = new Date(dl + 'T23:59:59');
+    return end >= now && (end - now) / (24 * 60 * 60 * 1000) <= impendingDays;
+  };
+
+  const northStarCandidates = incomplete.filter((g) => {
+    if (isImpendingDeadline(g)) return true;
+    if (getEnergyType(g) === 'high-focus') return true;
+    if (g._projectGoal && Array.isArray(g.subtasks) && g.subtasks.length > 0) return true;
+    return false;
+  });
+
+  if (lowSpoons && northStarCandidates.length > 0) {
+    const soft = northStarCandidates.filter((g) => {
+      const ae = getActivationEnergy(g);
+      return ae === 1 || ae === 2;
+    });
+    northStar = (soft.length > 0 ? soft[0] : null);
+  } else if (!lowSpoons && northStarCandidates.length > 0) {
+    northStar = northStarCandidates[0];
+  }
+
+  const usedIds = new Set(northStar ? [northStar.id] : []);
+  const quickWinCandidates = incomplete.filter((g) => {
+    if (usedIds.has(g.id)) return false;
+    const type = g.type;
+    if (type !== 'kaizen' && type !== 'routine') return false;
+    const ae = getActivationEnergy(g);
+    if (ae !== 1 && ae !== 2) return false;
+    const mins = Number(g.estimatedMinutes) || 60;
+    return mins <= 15;
+  });
+  if (quickWinCandidates.length > 0) {
+    quickWin = quickWinCandidates[0];
+    usedIds.add(quickWin.id);
+  }
+
+  const careCandidates = incomplete.filter((g) => {
+    if (usedIds.has(g.id)) return false;
+    if (g.type === 'vitality') return true;
+    if (getEnergyType(g) === 'restorative') return true;
+    return false;
+  });
+  if (careCandidates.length > 0) {
+    care = careCandidates[0];
+  }
+
+  return { northStar, quickWin, care };
+}
+
+/**
  * Suggest a lighter schedule based on energy level and goal energyType.
  * Goals may have energyType: 'high-focus' | 'maintenance' | 'restorative'.
  * @param {Object} assignments - { '06:00': value, ... }

@@ -4,13 +4,14 @@ import { motion, AnimatePresence } from 'framer-motion';
 import confetti from 'canvas-confetti';
 import { createGoogleEvent } from '../../services/googleCalendarService';
 import { downloadICS } from '../../services/calendarSyncService';
-import { suggestLoadLightening, generateDailyPlan, autoFillDailyPlan, timeToMinutes, getSpoonCost } from '../../services/schedulerService';
+import { suggestLoadLightening, generateDailyPlan, autoFillDailyPlan, timeToMinutes, getSpoonCost, getGentlePriorities } from '../../services/schedulerService';
 import { useGarden } from '../../context/GardenContext';
 import { localISODate } from '../../services/dateUtils';
 import { getSettings } from '../../services/userSettings';
 import { shouldReduceMotion } from '../../services/motion';
 import { DefaultSpiritSvg } from './MochiSpirit';
 import WoodenSpoon from '../WoodenSpoon';
+import PrioritizeModal from './PrioritizeModal';
 
 const HOUR_START = 6;
 const HOUR_END = 23;
@@ -1489,6 +1490,8 @@ function TimeSlicer({
   const [autoPlanToast, setAutoPlanToast] = useState(false);
   const [energyToast, setEnergyToast] = useState(false);
   const [lightenedTasksFeedback, setLightenedTasksFeedback] = useState([]);
+  const [showPrioritize, setShowPrioritize] = useState(false);
+  const [priorities, setPriorities] = useState(null);
   const [now, setNow] = useState(() => new Date());
   const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < MOBILE_BREAKPOINT);
   const { weekAssignments, loadWeekPlans, loadDayPlan, saveDayPlanForDate } = useGarden();
@@ -1621,6 +1624,36 @@ function TimeSlicer({
       setLightenedTasksFeedback(result.removedItems ?? []);
       onLoadLightened?.(result.removedItems);
     }
+  };
+
+  const handleOpenPrioritize = () => {
+    setPriorities(getGentlePriorities(goals, maxSlots));
+    setShowPrioritize(true);
+  };
+
+  const handlePrioritizeSelectTask = (goal) => {
+    if (!goal?.id) return;
+    const firstEmpty = HOURS.find((h) => !assignments[h]);
+    if (!firstEmpty) {
+      window.dispatchEvent(new CustomEvent('kaizen:toast', { detail: { message: "Your day is full. Lighten your load or pick another day." } }));
+      return;
+    }
+    let value;
+    if (goal.type === 'routine') {
+      value = {
+        id: crypto.randomUUID?.() ?? `s-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        parentGoalId: goal.id,
+        title: goal.title,
+        type: 'routine',
+        duration: 60,
+        spoonCost: getSpoonCost(goal),
+      };
+    } else {
+      value = goal.id;
+    }
+    applyAssignment(firstEmpty, value);
+    setShowPrioritize(false);
+    window.dispatchEvent(new CustomEvent('kaizen:toast', { detail: { message: 'Added to your day 🌱' } }));
   };
 
   /** Plant one 1h routine block in the first empty slot. Used by [+1h] on routine cards. */
@@ -1860,6 +1893,14 @@ function TimeSlicer({
                 {autoFillLoading ? '…' : '✨ Auto-Fill Week'}
               </button>
             )}
+            <button
+              type="button"
+              onClick={handleOpenPrioritize}
+              className="shrink-0 px-3 py-1.5 rounded-lg border border-amber-200 bg-amber-50 font-sans text-sm text-amber-800 hover:bg-amber-100 focus:outline-none focus:ring-2 focus:ring-amber-400/40 transition-colors"
+              aria-label="Help me focus (gentle priorities)"
+            >
+              🎯 Help me focus
+            </button>
             <button
               type="button"
               onClick={() => {
@@ -2377,6 +2418,12 @@ function TimeSlicer({
           </motion.div>
         )}
       </AnimatePresence>
+      <PrioritizeModal
+        open={showPrioritize}
+        onClose={() => setShowPrioritize(false)}
+        priorities={priorities ?? {}}
+        onSelectTask={handlePrioritizeSelectTask}
+      />
     </div>
   );
 }
