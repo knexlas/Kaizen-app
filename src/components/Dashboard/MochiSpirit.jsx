@@ -10,6 +10,15 @@ const AURA_CLASSES = {
   gold: 'bg-amber-200/80 ring-amber-300 shadow-amber-200/40',
 };
 
+/** Unified color classes for spirit (archetypes + custom). Used with spiritConfig?.color. */
+const SPIRIT_COLOR_CLASSES = {
+  ...AURA_CLASSES,
+  amber: 'bg-amber-200/80 ring-amber-300 shadow-amber-200/40',
+  orange: 'bg-orange-200/80 ring-orange-300 shadow-orange-200/40',
+  sky: 'bg-sky-200/80 ring-sky-300 shadow-sky-200/40',
+  stone: 'bg-stone-200/80 ring-stone-300 shadow-stone-200/40',
+};
+
 /**
  * Returns a short spirit message based on current context.
  * Priority: justFinishedSession > isOverloaded > weather storm.
@@ -140,19 +149,22 @@ export function DefaultSpiritSvg({ className }) {
   );
 }
 
-/** Archetype spirit from Spirit Builder: emoji container for cat/ember/nimbus. Mochi uses DefaultSpiritSvg in MochiSpirit. */
+/** Archetype spirit from Spirit Builder: emoji container for cat/ember/nimbus/owl. Mochi uses DefaultSpiritSvg when type is mochi. */
 const ARCHETYPE_DISPLAY = {
   mochi: { emoji: '🐱', class: 'bg-amber-200/80 ring-amber-300 shadow-amber-200/40' },
   cat: { emoji: '🐱', class: 'bg-amber-200/80 ring-amber-300 shadow-amber-200/40' },
   ember: { emoji: '🔥', class: 'bg-orange-200/80 ring-orange-300 shadow-orange-200/40' },
   nimbus: { emoji: '☁️', class: 'bg-sky-200/80 ring-sky-300 shadow-sky-200/40' },
+  owl: { emoji: '🦉', class: 'bg-stone-200/80 ring-stone-300 shadow-stone-200/40' },
 };
 
 function ArchetypeSpirit({ config }) {
-  const display = ARCHETYPE_DISPLAY[config.type] ?? ARCHETYPE_DISPLAY.mochi;
+  const display = ARCHETYPE_DISPLAY[config?.type] ?? ARCHETYPE_DISPLAY.mochi;
+  const emoji = config?.emoji ?? display.emoji ?? '🌸';
+  const colorClass = (config?.color && SPIRIT_COLOR_CLASSES[config.color]) ? SPIRIT_COLOR_CLASSES[config.color] : display.class;
   return (
-    <div className={`flex items-center justify-center w-14 h-14 rounded-2xl border-2 ring-2 ${display.class} shadow-lg`}>
-      <span className="text-3xl leading-none">{display.emoji}</span>
+    <div className={`flex items-center justify-center w-14 h-14 rounded-2xl border-2 ring-2 ${colorClass} shadow-lg`}>
+      <span className="text-3xl leading-none">{emoji}</span>
     </div>
   );
 }
@@ -177,8 +189,8 @@ export function MochiSpirit({ isWalking = false, isThinking = false }) {
   const breathingY = isWalking || isThinking ? [0, -8, 0] : 0;
   const useFloat = !isWalking && !isThinking;
   const isMochi = spiritConfig?.type === 'mochi';
-  const isOtherArchetype = spiritConfig?.type === 'cat' || spiritConfig?.type === 'ember' || spiritConfig?.type === 'nimbus';
-  const isCustom = spiritConfig?.type === 'custom' && spiritConfig?.head && spiritConfig?.body;
+  const isOtherArchetype = spiritConfig?.type === 'cat' || spiritConfig?.type === 'ember' || spiritConfig?.type === 'nimbus' || spiritConfig?.type === 'owl';
+  const isCustom = spiritConfig?.type === 'custom';
 
   return (
     <motion.div

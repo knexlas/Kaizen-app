@@ -35,6 +35,8 @@ const defaultData = {
   spiritPoints: 0, // 1 per minute of focus
   embers: 100, // currency for decorations; new users start with 100 (enough for a bench)
   decorations: [], // { id, type, x, y, variant? }
+  terrainMap: {}, // grid coords as keys, e.g. { "2,-3": "water" }
+  unlockedAnimals: [], // e.g. ['rabbit', 'fish'] — animals bought from shop
   metrics: [], // { id, name } — available metrics for vitality tracking
   fertilizerCount: 0, // +1 when adding to compost or deleting from compost (visual recycling)
 };
@@ -61,6 +63,9 @@ export function GardenProvider({ children }) {
   const [spiritPoints, setSpiritPoints] = useState(defaultData.spiritPoints);
   const [embers, setEmbers] = useState(defaultData.embers ?? 100);
   const [decorations, setDecorations] = useState(defaultData.decorations);
+  const [terrainMap, setTerrainMap] = useState(defaultData.terrainMap);
+  const [unlockedAnimals, setUnlockedAnimals] = useState(defaultData.unlockedAnimals ?? []);
+  const [activeTool, setActiveTool] = useState(null); // UI only: { type: 'paint', material } | { type: 'plant', goalId } | { type: 'place', decorationId } | null
   const [metrics, setMetrics] = useState(defaultData.metrics);
   const [fertilizerCount, setFertilizerCount] = useState(defaultData.fertilizerCount ?? 0);
   const [smallJoys, setSmallJoys] = useState(() => {
@@ -142,6 +147,8 @@ export function GardenProvider({ children }) {
         if (typeof data.spiritPoints === 'number') setSpiritPoints(data.spiritPoints);
         if (typeof data.embers === 'number') setEmbers(data.embers);
         if (Array.isArray(data.decorations)) setDecorations(data.decorations);
+        if (data.terrainMap && typeof data.terrainMap === 'object') setTerrainMap(data.terrainMap);
+        if (Array.isArray(data.unlockedAnimals)) setUnlockedAnimals(data.unlockedAnimals);
         if (Array.isArray(data.metrics)) setMetrics(data.metrics);
         if (typeof data.fertilizerCount === 'number' && data.fertilizerCount >= 0) setFertilizerCount(data.fertilizerCount);
       }
@@ -176,6 +183,8 @@ export function GardenProvider({ children }) {
           if (typeof data.spiritPoints === 'number') setSpiritPoints(data.spiritPoints);
           if (typeof data.embers === 'number') setEmbers(data.embers);
           if (Array.isArray(data.decorations)) setDecorations(data.decorations);
+          if (data.terrainMap && typeof data.terrainMap === 'object') setTerrainMap(data.terrainMap);
+          if (Array.isArray(data.unlockedAnimals)) setUnlockedAnimals(data.unlockedAnimals);
           if (Array.isArray(data.metrics)) setMetrics(data.metrics);
           if (typeof data.fertilizerCount === 'number' && data.fertilizerCount >= 0) setFertilizerCount(data.fertilizerCount);
           skipCloudSaveUntilRef.current = Date.now() + 3000;
@@ -367,12 +376,12 @@ export function GardenProvider({ children }) {
   useEffect(() => {
     if (!hydrated) return;
     try {
-      const data = { goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, logs, spiritConfig, compost, soilNutrients, spiritPoints, embers, decorations, metrics, fertilizerCount };
+      const data = { goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, logs, spiritConfig, compost, soilNutrients, spiritPoints, embers, decorations, terrainMap, unlockedAnimals, metrics, fertilizerCount };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     } catch (e) {
       console.warn('GardenContext: failed to save gardenData', e);
     }
-  }, [hydrated, goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, logs, spiritConfig, compost, soilNutrients, spiritPoints, embers, decorations, metrics, fertilizerCount]);
+  }, [hydrated, goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, logs, spiritConfig, compost, soilNutrients, spiritPoints, embers, decorations, terrainMap, unlockedAnimals, metrics, fertilizerCount]);
 
   // Debounced save to Firestore when goals, logs, weeklyEvents change (and user is logged in)
   useEffect(() => {
@@ -402,6 +411,8 @@ export function GardenProvider({ children }) {
           spiritPoints: spiritPoints ?? 0,
           embers: embers ?? 100,
           decorations: decorations ?? [],
+          terrainMap: terrainMap && typeof terrainMap === 'object' ? terrainMap : {},
+          unlockedAnimals: Array.isArray(unlockedAnimals) ? unlockedAnimals : [],
           metrics: metrics ?? [],
           fertilizerCount: fertilizerCount ?? 0,
           updatedAt: new Date().toISOString(),
@@ -425,7 +436,7 @@ export function GardenProvider({ children }) {
         savedIdleTimeoutRef.current = null;
       }
     };
-  }, [hydrated, googleUser?.uid, goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, logs, spiritConfig, compost, soilNutrients, spiritPoints, embers, decorations, metrics, fertilizerCount]);
+  }, [hydrated, googleUser?.uid, goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, logs, spiritConfig, compost, soilNutrients, spiritPoints, embers, decorations, terrainMap, unlockedAnimals, metrics, fertilizerCount]);
 
   const addLog = useCallback((log) => {
     const mins = Number(log?.minutes) || 0;
@@ -455,6 +466,21 @@ export function GardenProvider({ children }) {
     return true;
   }, [embers]);
 
+  /** Paint a 1x1 tile at grid (x, z). If material is 'grass' (default), remove the key to save space; else set terrainMap[key] = material. */
+  const paintTerrain = useCallback((x, z, material = 'grass') => {
+    const key = `${x},${z}`;
+    if (material === 'grass') {
+      setTerrainMap((prev) => {
+        if (!(key in prev)) return prev;
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+    } else {
+      setTerrainMap((prev) => ({ ...prev, [key]: material }));
+    }
+  }, []);
+
   /** Deduct embers only if balance is sufficient. Returns true if deduction was made, false otherwise. */
   const spendEmbers = useCallback((amount) => {
     const n = Number(amount) || 0;
@@ -468,6 +494,12 @@ export function GardenProvider({ children }) {
   const earnEmbers = useCallback((amount) => {
     const n = Number(amount) || 0;
     if (n > 0) setEmbers((p) => p + n);
+  }, []);
+
+  /** Unlock an animal (e.g. after buying from shop). */
+  const addUnlockedAnimal = useCallback((animal) => {
+    if (!animal || typeof animal !== 'string') return;
+    setUnlockedAnimals((prev) => (prev.includes(animal) ? prev : [...prev, animal]));
   }, []);
 
   const buyDecoration = useCallback((type) => {
@@ -999,6 +1031,8 @@ export function GardenProvider({ children }) {
     if (typeof data.spiritPoints === 'number') setSpiritPoints(data.spiritPoints);
     if (typeof data.embers === 'number') setEmbers(data.embers);
     if (Array.isArray(data.decorations)) setDecorations(data.decorations);
+    if (data.terrainMap && typeof data.terrainMap === 'object') setTerrainMap(data.terrainMap);
+    if (Array.isArray(data.unlockedAnimals)) setUnlockedAnimals(data.unlockedAnimals);
     if (Array.isArray(data.metrics)) setMetrics(data.metrics);
     if (typeof data.fertilizerCount === 'number' && data.fertilizerCount >= 0) setFertilizerCount(data.fertilizerCount);
   }, []);
@@ -1020,6 +1054,8 @@ export function GardenProvider({ children }) {
     setSpiritPoints(defaultData.spiritPoints);
     setEmbers(defaultData.embers ?? 100);
     setDecorations(defaultData.decorations);
+    setTerrainMap(defaultData.terrainMap ?? {});
+    setUnlockedAnimals(defaultData.unlockedAnimals ?? []);
     setMetrics(defaultData.metrics);
     setFertilizerCount(defaultData.fertilizerCount ?? 0);
     try {
@@ -1109,6 +1145,12 @@ export function GardenProvider({ children }) {
     updateDecoration,
     updateDecorationPosition,
     removeDecoration,
+    terrainMap,
+    paintTerrain,
+    activeTool,
+    setActiveTool,
+    unlockedAnimals,
+    addUnlockedAnimal,
     spendEmbers,
     earnEmbers,
     buyItem,

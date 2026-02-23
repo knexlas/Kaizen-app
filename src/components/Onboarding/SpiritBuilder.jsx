@@ -90,8 +90,13 @@ export default function SpiritBuilder({ onComplete, mode = 'create', initialConf
   const handleFinish = () => {
     const config =
       type === 'custom'
-        ? { name: nameTrimmed || 'Mochi', type: 'custom', head: customHead, body: customBody, color: customColor }
-        : { name: nameTrimmed || selectedArchetype.name, type };
+        ? { name: nameTrimmed || 'Mochi', type: 'custom', head: customHead, body: customBody, color: customColor, emoji: HEADS[customHead] ?? '🎨' }
+        : {
+            name: nameTrimmed || selectedArchetype.name,
+            type,
+            emoji: selectedArchetype.emoji,
+            color: type === 'ember' ? 'orange' : type === 'nimbus' ? 'sky' : type === 'owl' ? 'stone' : 'amber',
+          };
     setPoofing(true);
     setTimeout(() => {
       setSpiritConfig(config);

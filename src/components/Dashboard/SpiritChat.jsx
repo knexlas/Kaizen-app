@@ -6,6 +6,8 @@ import { useGarden } from '../../context/GardenContext';
 import { extractActionCandidate, splitIntoSteps } from '../../services/aiActionExtractor';
 import { HOURS } from './TimeSlicer';
 
+const SPIRIT_EMOJI_BY_TYPE = { mochi: '🐱', cat: '🐱', ember: '🔥', nimbus: '☁️', owl: '🦉' };
+
 const ERROR_PHRASES = ['try again', 'something rustled', 'tea is still steeping', 'wind is calm'];
 
 function isErrorLikeMessage(text) {
@@ -55,15 +57,13 @@ export default function SpiritChat({ open, onClose, context = {} }) {
   const { addGoal, addToCompost, setAssignments, assignments, spiritConfig } = useGarden();
   const [history, setHistory] = useState([]);
 
+  const spiritName = spiritConfig?.name || 'Mochi';
+  const spiritEmoji = spiritConfig?.emoji ?? (spiritConfig?.type === 'custom' ? { bunny: '🐰', cat: '🐱', bear: '🐻', fox: '🦊', bot: '🤖', owl: '🦉' }[spiritConfig?.head] : SPIRIT_EMOJI_BY_TYPE[spiritConfig?.type]) ?? '🌸';
+
   const renderSpiritAvatar = () => {
-    if (!spiritConfig) return <span className="text-4xl">✨</span>;
-    if (spiritConfig.type === 'mochi') return <DefaultSpiritSvg className="w-10 h-10 drop-shadow-sm" />;
-    if (spiritConfig.type === 'custom') {
-      const HEADS = { bunny: '🐰', cat: '🐱', bear: '🐻', fox: '🦊', bot: '🤖', owl: '🦉' };
-      return <span className="text-4xl">{HEADS[spiritConfig.head] || '✨'}</span>;
-    }
-    const ARCHETYPES = { cat: '🐱', ember: '🔥', nimbus: '☁️', owl: '🦉' };
-    return <span className="text-4xl">{ARCHETYPES[spiritConfig.type] || '✨'}</span>;
+    if (!spiritConfig) return <span className="text-4xl">{spiritEmoji}</span>;
+    if (spiritConfig.type === 'mochi' && !spiritConfig.emoji) return <DefaultSpiritSvg className="w-10 h-10 drop-shadow-sm" />;
+    return <span className="text-4xl">{spiritEmoji}</span>;
   };
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -238,7 +238,7 @@ export default function SpiritChat({ open, onClose, context = {} }) {
               <div className="flex-shrink-0 flex items-center justify-center w-10 h-10">
                 {renderSpiritAvatar()}
               </div>
-              <h2 className="font-serif text-stone-900 text-lg truncate">Chat with Mochi</h2>
+              <h2 className="font-serif text-stone-900 text-lg truncate">Chat with {spiritName}</h2>
             </div>
             <button
               type="button"
@@ -270,7 +270,7 @@ export default function SpiritChat({ open, onClose, context = {} }) {
                   }`}
                 >
                   {msg.role === 'model' && (
-                    <span className="text-stone-400 text-xs block mb-1" aria-hidden>Mochi</span>
+                    <span className="text-stone-400 text-xs block mb-1" aria-hidden>{spiritName}</span>
                   )}
                   <p className="leading-relaxed whitespace-pre-wrap">{msg.text}</p>
                   {msg.role === 'model' && msg.meta?.redactionCount > 0 && (
@@ -289,7 +289,7 @@ export default function SpiritChat({ open, onClose, context = {} }) {
             {isLoading && (
               <div className="flex justify-start">
                 <div className="max-w-[85%] px-4 py-2.5 rounded-2xl rounded-bl-md bg-white border border-stone-200 shadow-sm">
-                  <span className="text-stone-400 text-xs block mb-1" aria-hidden>Mochi</span>
+                  <span className="text-stone-400 text-xs block mb-1" aria-hidden>{spiritName}</span>
                   <div className="flex justify-center py-0.5">
                     <ThinkingDots />
                   </div>
@@ -307,10 +307,10 @@ export default function SpiritChat({ open, onClose, context = {} }) {
                 type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder="Type to Mochi…"
+                placeholder={`Type to ${spiritName}…`}
                 disabled={isLoading}
                 className="flex-1 py-2.5 px-4 rounded-xl border border-stone-200 bg-stone-50 font-sans text-stone-900 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-moss-500/40 focus:border-moss-500 disabled:opacity-60"
-                aria-label="Message to Mochi"
+                aria-label={`Message to ${spiritName}`}
               />
               <button
                 type="submit"

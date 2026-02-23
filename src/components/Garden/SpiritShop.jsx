@@ -10,8 +10,13 @@ const SHOP_ITEMS = [
   { type: 'cherry', name: 'Cherry Tree', cost: 100, description: 'Blossoms in the spring.', icon: '🌸', tagline: 'Beauty & renewal' },
 ];
 
+const ANIMAL_ITEMS = [
+  { animalKey: 'rabbit', name: 'Rabbit', cost: 50, description: 'Hops around the grass and twitches its nose.', icon: '🐇', tagline: 'Grass wanderer' },
+  { animalKey: 'fish', name: 'Koi Fish', cost: 50, description: 'Swims only in your painted water tiles.', icon: '🐟', tagline: 'Water dweller' },
+];
+
 export default function SpiritShop({ onClose }) {
-  const { embers, placeDecoration, spendEmbers } = useGarden();
+  const { embers, placeDecoration, spendEmbers, unlockedAnimals, addUnlockedAnimal } = useGarden();
   const [justBought, setJustBought] = useState(null);
 
   const handleBuy = (item) => {
@@ -19,6 +24,17 @@ export default function SpiritShop({ onClose }) {
     const ok = spendEmbers(item.cost);
     if (ok) {
       placeDecoration(item.type, '50%', '50%');
+      setJustBought(item.name);
+      setTimeout(() => setJustBought(null), 3000);
+    }
+  };
+
+  const handleBuyAnimal = (item) => {
+    if ((unlockedAnimals ?? []).includes(item.animalKey)) return;
+    if (embers < item.cost) return;
+    const ok = spendEmbers(item.cost);
+    if (ok) {
+      addUnlockedAnimal(item.animalKey);
       setJustBought(item.name);
       setTimeout(() => setJustBought(null), 3000);
     }
@@ -89,8 +105,89 @@ export default function SpiritShop({ onClose }) {
           </div>
         </div>
 
+        {/* Animals */}
+        <div className="px-4 sm:px-5">
+          <h3 className="font-serif text-lg text-stone-800 mb-3">Animals</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
+            {ANIMAL_ITEMS.map((item, i) => {
+              const owned = unlockedAnimals?.includes(item.animalKey);
+              const canAfford = embers >= item.cost && !owned;
+              return (
+                <motion.div
+                  key={item.animalKey}
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: i * 0.05, duration: 0.35 }}
+                  whileHover={!owned ? { y: -6, transition: { duration: 0.2 } } : {}}
+                  className="rounded-2xl p-4 flex flex-col gap-3 border overflow-hidden"
+                  style={{
+                    background: owned
+                      ? 'linear-gradient(145deg, #e8edd8 0%, #d4e4c4 100%)'
+                      : canAfford
+                        ? 'linear-gradient(145deg, #ffffff 0%, #f8f7f2 100%)'
+                        : 'linear-gradient(145deg, #f5f5f4 0%, #e7e5e4 100%)',
+                    borderColor: owned ? 'rgba(94, 114, 52, 0.5)' : canAfford ? 'rgba(180, 200, 140, 0.5)' : 'rgba(214, 211, 209, 0.8)',
+                    boxShadow: canAfford ? '0 4px 14px -4px rgba(94, 114, 52, 0.2), 0 0 0 1px rgba(0,0,0,0.04)' : '0 2px 8px -2px rgba(0,0,0,0.06)',
+                  }}
+                >
+                  <div className="flex items-start gap-4">
+                    <div
+                      className="w-14 h-14 rounded-xl flex items-center justify-center text-4xl shrink-0"
+                      style={{
+                        background: 'linear-gradient(145deg, #e8edd8 0%, #d4e4c4 100%)',
+                        boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.7), 0 2px 8px -2px rgba(94,114,52,0.2)',
+                      }}
+                    >
+                      {item.icon}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <h3 className="font-serif text-stone-900 text-lg">{item.name}</h3>
+                      {item.tagline && (
+                        <p className="font-sans text-xs font-medium text-moss-600 uppercase tracking-wider mt-0.5">{item.tagline}</p>
+                      )}
+                      <p className="font-sans text-sm text-stone-500 mt-1.5 leading-snug">{item.description}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 mt-auto pt-3 border-t border-stone-200/80">
+                    {owned ? (
+                      <span className="font-sans text-sm font-medium text-moss-700">Owned</span>
+                    ) : (
+                      <>
+                        <span
+                          className="font-sans text-sm font-bold flex items-center gap-2 tabular-nums px-3 py-1.5 rounded-xl"
+                          style={{
+                            background: 'linear-gradient(135deg, #fef3c7 0%, #fde68a 100%)',
+                            color: '#92400e',
+                            border: '1px solid rgba(245, 158, 11, 0.35)',
+                          }}
+                        >
+                          <span aria-hidden>🔥</span>
+                          <span>{item.cost}</span>
+                        </span>
+                        <button
+                          type="button"
+                          disabled={!canAfford}
+                          onClick={() => handleBuyAnimal(item)}
+                          className={`font-sans text-sm font-semibold px-5 py-2.5 rounded-xl transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-moss-500/50 ${
+                            canAfford
+                              ? 'text-[#FDFCF5] hover:shadow-lg active:scale-[0.98]'
+                              : 'bg-stone-200 text-stone-400 cursor-not-allowed'
+                          }`}
+                          style={canAfford ? { background: 'linear-gradient(135deg, #4a5d23 0%, #3d4e1c 100%)', boxShadow: '0 4px 14px -2px rgba(74, 93, 35, 0.45)' } : {}}
+                        >
+                          Buy
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </motion.div>
+              );
+            })}
+          </div>
+        </div>
+
         {/* Grid of items */}
-        <div className="px-4 sm:px-5 pb-2 grid grid-cols-1 sm:grid-cols-2 gap-4 max-h-[55vh] overflow-y-auto">
+        <div className="px-4 sm:px-5 pb-2 grid grid-cols-1 sm:grid-cols-2 gap-4 max-h-[40vh] overflow-y-auto">
           {SHOP_ITEMS.map((item, i) => {
             const canAfford = embers >= item.cost;
             return (
