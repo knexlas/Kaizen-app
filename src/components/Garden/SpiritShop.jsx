@@ -35,6 +35,29 @@ const DECORATION_ITEMS = [
   { id: 'dec_stump', name: 'Ancient Stump', cost: 20, model: 'stump_oldTall.glb', icon: '🪹', type: 'decoration', category: 'decorations', description: 'An old tall tree stump.', tagline: 'Natural' },
 ];
 
+// Pets & Animals — 3D model decorations (type: 'decoration')
+const PETS_AND_ANIMALS_ITEMS = [
+  { id: 'anim_pug', name: 'Pug Dog', cost: 250, model: 'Pug.glb', icon: '🐶', type: 'decoration', description: 'A friendly pug for your garden.', tagline: 'Pets' },
+  { id: 'anim_shiba', name: 'Shiba Inu', cost: 250, model: 'ShibaInu-v10.glb', icon: '🐕', type: 'decoration', description: 'Loyal Shiba companion.', tagline: 'Pets' },
+  { id: 'anim_husky', name: 'Husky', cost: 300, model: 'Husky-v9.glb', icon: '🐺', type: 'decoration', description: 'Adventurous husky.', tagline: 'Pets' },
+  { id: 'anim_cat_fox', name: 'Forest Fox', cost: 200, model: 'Fox-v6.glb', icon: '🦊', type: 'decoration', description: 'Cunning forest fox.', tagline: 'Pets' },
+  { id: 'anim_wolf', name: 'Dire Wolf', cost: 350, model: 'Wolf-v12.glb', icon: '🐺', type: 'decoration', description: 'Majestic dire wolf.', tagline: 'Pets' },
+  { id: 'anim_horse', name: 'Brown Horse', cost: 400, model: 'Horse-v7.glb', icon: '🐎', type: 'decoration', description: 'Brown horse for the meadow.', tagline: 'Farm' },
+  { id: 'anim_horse_white', name: 'White Horse', cost: 450, model: 'Horse_White-v8.glb', icon: '🎠', type: 'decoration', description: 'Elegant white horse.', tagline: 'Farm' },
+  { id: 'anim_alpaca', name: 'Alpaca', cost: 300, model: 'Alpaca-v1.glb', icon: '🦙', type: 'decoration', description: 'Fluffy alpaca.', tagline: 'Farm' },
+  { id: 'anim_llama', name: 'Llama', cost: 300, model: 'Llama.glb', icon: '🦙', type: 'decoration', description: 'Curious llama.', tagline: 'Farm' },
+  { id: 'anim_deer', name: 'Fawn', cost: 250, model: 'Deer-v4.glb', icon: '🦌', type: 'decoration', description: 'Gentle fawn.', tagline: 'Forest' },
+  { id: 'anim_stag', name: 'Majestic Stag', cost: 350, model: 'Stag-v11.glb', icon: '🦌', type: 'decoration', description: 'Noble stag.', tagline: 'Forest' },
+  { id: 'anim_cow', name: 'Dairy Cow', cost: 300, model: 'Cow-v3.glb', icon: '🐄', type: 'decoration', description: 'Peaceful dairy cow.', tagline: 'Farm' },
+  { id: 'anim_bull', name: 'Bull', cost: 320, model: 'Bull-v2.glb', icon: '🐂', type: 'decoration', description: 'Strong bull.', tagline: 'Farm' },
+  { id: 'anim_pig', name: 'Piglet', cost: 150, model: 'Pig.glb', icon: '🐷', type: 'decoration', description: 'Cute piglet.', tagline: 'Farm' },
+  { id: 'anim_sheep', name: 'Fluffy Sheep', cost: 200, model: 'Sheep.glb', icon: '🐑', type: 'decoration', description: 'Fluffy sheep.', tagline: 'Farm' },
+  { id: 'anim_donkey', name: 'Donkey', cost: 200, model: 'Donkey-v5.glb', icon: '🐴', type: 'decoration', description: 'Hardworking donkey.', tagline: 'Farm' },
+  { id: 'anim_koi', name: 'Koi Fish', cost: 100, model: 'Fish1.glb', icon: '🎏', type: 'decoration', description: 'Graceful koi.', tagline: 'Aquatic' },
+  { id: 'anim_manta', name: 'Manta Ray', cost: 200, model: 'Manta ray.glb', icon: '🌊', type: 'decoration', description: 'Gliding manta ray.', tagline: 'Aquatic' },
+  { id: 'anim_dolphin', name: 'Dolphin', cost: 300, model: 'Dolphin.glb', icon: '🐬', type: 'decoration', description: 'Playful dolphin.', tagline: 'Aquatic' },
+];
+
 export default function SpiritShop({ onClose, embedded = false }) {
   const { embers, placeDecoration, spendEmbers, addDecoration, unlockedAnimals, addUnlockedAnimal } = useGarden();
   const [justBought, setJustBought] = useState(null);
@@ -54,7 +77,7 @@ export default function SpiritShop({ onClose, embedded = false }) {
     if (!item.model || !item.name) return;
     const ok = spendEmbers(item.cost);
     if (ok) {
-      addDecoration({ name: item.name, model: item.model });
+      addDecoration({ id: item.id, name: item.name, model: item.model });
       setJustBought(item.name);
       setTimeout(() => setJustBought(null), 3000);
     }
@@ -224,6 +247,78 @@ export default function SpiritShop({ onClose, embedded = false }) {
                   initial={{ opacity: 0, y: 12 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: i * 0.05, duration: 0.35 }}
+                  whileHover={{ y: -6, transition: { duration: 0.2 } }}
+                  className="rounded-2xl p-4 flex flex-col gap-3 border overflow-hidden"
+                  style={{
+                    background: canAfford
+                      ? 'linear-gradient(145deg, #ffffff 0%, #f8f7f2 100%)'
+                      : 'linear-gradient(145deg, #f5f5f4 0%, #e7e5e4 100%)',
+                    borderColor: canAfford ? 'rgba(180, 200, 140, 0.5)' : 'rgba(214, 211, 209, 0.8)',
+                    boxShadow: canAfford ? '0 4px 14px -4px rgba(94, 114, 52, 0.2), 0 0 0 1px rgba(0,0,0,0.04)' : '0 2px 8px -2px rgba(0,0,0,0.06)',
+                  }}
+                >
+                  <div className="flex items-start gap-4">
+                    <div
+                      className="w-14 h-14 rounded-xl flex items-center justify-center text-4xl shrink-0"
+                      style={{
+                        background: 'linear-gradient(145deg, #e8edd8 0%, #d4e4c4 100%)',
+                        boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.7), 0 2px 8px -2px rgba(94,114,52,0.2)',
+                      }}
+                    >
+                      {item.icon}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <h3 className="font-serif text-stone-900 text-lg">{item.name}</h3>
+                      {item.tagline && (
+                        <p className="font-sans text-xs font-medium text-moss-600 uppercase tracking-wider mt-0.5">{item.tagline}</p>
+                      )}
+                      <p className="font-sans text-sm text-stone-500 mt-1.5 leading-snug">{item.description}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 mt-auto pt-3 border-t border-stone-200/80">
+                    <span
+                      className="font-sans text-sm font-bold flex items-center gap-2 tabular-nums px-3 py-1.5 rounded-xl"
+                      style={{
+                        background: 'linear-gradient(135deg, #fef3c7 0%, #fde68a 100%)',
+                        color: '#92400e',
+                        border: '1px solid rgba(245, 158, 11, 0.35)',
+                      }}
+                    >
+                      <span aria-hidden>🔥</span>
+                      <span>{item.cost}</span>
+                    </span>
+                    <button
+                      type="button"
+                      disabled={!canAfford}
+                      onClick={() => handleBuyDecoration(item)}
+                      className={`font-sans text-sm font-semibold px-5 py-2.5 rounded-xl transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-moss-500/50 ${
+                        canAfford
+                          ? 'text-[#FDFCF5] hover:shadow-lg active:scale-[0.98]'
+                          : 'bg-stone-200 text-stone-400 cursor-not-allowed'
+                      }`}
+                      style={canAfford ? { background: 'linear-gradient(135deg, #4a5d23 0%, #3d4e1c 100%)', boxShadow: '0 4px 14px -2px rgba(74, 93, 35, 0.45)' } : {}}
+                    >
+                      Buy
+                    </button>
+                  </div>
+                </motion.div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Pets & Animals (3D models) */}
+        <div className="px-4 sm:px-5">
+          <h3 className="font-serif text-lg text-stone-800 mb-3">Pets &amp; Animals</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6 max-h-[50vh] overflow-y-auto">
+            {PETS_AND_ANIMALS_ITEMS.map((item, i) => {
+              const canAfford = embers >= item.cost;
+              return (
+                <motion.div
+                  key={item.id}
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: Math.min(i * 0.03, 0.5), duration: 0.35 }}
                   whileHover={{ y: -6, transition: { duration: 0.2 } }}
                   className="rounded-2xl p-4 flex flex-col gap-3 border overflow-hidden"
                   style={{

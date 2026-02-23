@@ -6,7 +6,7 @@ import { useGarden } from '../../context/GardenContext';
 import { getGoalProgressPercent } from './GardenWalk';
 import WanderingCreature from './WanderingCreature';
 import ProceduralFlora from './ProceduralFlora';
-import { KenneyModel } from './ProceduralFlora';
+import AnimatedModel from './AnimatedModel';
 import Mochi3D from './Mochi3D';
 import Rabbit3D from './Rabbit3D';
 import Frog3D from './Frog3D';
@@ -195,9 +195,15 @@ function GoalNode({ goal, onGoalClick, activeTool, waterGoal, fireToast, setActi
 
 function DecorationNode({ decoration }) {
   if (!decoration?.position3D || !Array.isArray(decoration.position3D) || !decoration.model) return null;
+  const isOrganic = decoration.id?.startsWith('anim_') || decoration.id?.startsWith('dec_pot') || decoration.id?.startsWith('dec_lily');
+  const yRotation = useMemo(() => (isOrganic ? Math.random() * Math.PI * 2 : 0), [isOrganic]);
   return (
     <group position={decoration.position3D}>
-      <KenneyModel path={`/models/${decoration.model}`} />
+      <AnimatedModel
+        path={`/models/${decoration.model}`}
+        rotation={[0, yRotation, 0]}
+        scale={decoration.id?.startsWith('anim_') ? 0.6 : 1}
+      />
     </group>
   );
 }

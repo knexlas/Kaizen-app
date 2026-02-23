@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, cloneElement } from 'react';
-import { useFrame, useThree } from '@react-three/fiber';
+import { useFrame } from '@react-three/fiber';
 import { Billboard, Text } from '@react-three/drei';
 import * as THREE from 'three';
 import { useGarden } from '../../context/GardenContext';
@@ -35,11 +35,11 @@ export default function WanderingCreature({
   zOffset = 0.5,
   goalPositions = null,
 }) {
-  const { camera } = useThree();
   const { terrainMap } = useGarden();
   const groupRef = useRef();
   const [target, setTarget] = useState(() => new THREE.Vector3(0, 0, 0));
   const [isWalking, setIsWalking] = useState(false);
+  const idleRotationRef = useRef(null);
   const timeoutRef = useRef(null);
   const goalPositionsRef = useRef(goalPositions);
 
@@ -56,25 +56,45 @@ export default function WanderingCreature({
         const pos = goals[Math.floor(Math.random() * goals.length)];
         if (Array.isArray(pos) && pos.length >= 3) {
           setTarget(new THREE.Vector3(pos[0], pos[1] ?? 0, pos[2]));
+          idleRotationRef.current = null;
           const delay = 3000 + Math.random() * 5000;
           timeoutRef.current = setTimeout(pickTarget, delay);
           return;
         }
       }
 
+      // 40% chance: idle look-around instead of walking to a new target
+      if (Math.random() < 0.4) {
+        idleRotationRef.current = Math.random() * Math.PI * 2;
+        const delay = 2000 + Math.random() * 4000;
+        timeoutRef.current = setTimeout(pickTarget, delay);
+        return;
+      }
+
       const cx = groupRef.current?.position?.x ?? 0;
       const cz = groupRef.current?.position?.z ?? 0;
-      let attempts = 0;
-      const maxAttempts = 25;
-      while (attempts < maxAttempts) {
-        const newX = Math.round(cx + (Math.floor(Math.random() * 7) - 3));
-        const newZ = Math.round(cz + (Math.floor(Math.random() * 7) - 3));
-        if (isTerrainAllowed(terrainMap, newX, newZ, allowedTerrain)) {
-          setTarget(new THREE.Vector3(newX, 0, newZ));
-          break;
+
+      // Short wander: only tiles within radius 2–4 units of current position
+      const minRadius = 2;
+      const maxRadius = 4;
+      const validTiles = [];
+      const cxInt = Math.round(cx);
+      const czInt = Math.round(cz);
+      for (let x = cxInt - maxRadius; x <= cxInt + maxRadius; x++) {
+        for (let z = czInt - maxRadius; z <= czInt + maxRadius; z++) {
+          const dist = Math.sqrt((x - cx) ** 2 + (z - cz) ** 2);
+          if (dist >= minRadius && dist <= maxRadius && isTerrainAllowed(terrainMap, x, z, allowedTerrain)) {
+            validTiles.push({ x, z });
+          }
         }
-        attempts++;
       }
+
+      if (validTiles.length > 0) {
+        const tile = validTiles[Math.floor(Math.random() * validTiles.length)];
+        setTarget(new THREE.Vector3(tile.x, 0, tile.z));
+        idleRotationRef.current = null;
+      }
+
       const delay = 3000 + Math.random() * 5000;
       timeoutRef.current = setTimeout(pickTarget, delay);
     };
@@ -85,28 +105,36 @@ export default function WanderingCreature({
     };
   }, [terrainMap, allowedTerrain]);
 
+  const walkSpeed = speed * 0.65; // Slightly reduced for a more relaxed pace
+
   useFrame((state, delta) => {
     if (!groupRef.current) return;
 
-    groupRef.current.position.lerp(target, delta * speed);
-    groupRef.current.position.y = zOffset;
-
     const distance = groupRef.current.position.distanceTo(target);
-    setIsWalking(distance > 0.1);
 
     if (distance > 0.1) {
+      groupRef.current.position.lerp(target, delta * walkSpeed);
+      groupRef.current.position.y = zOffset;
+      setIsWalking(true);
+      idleRotationRef.current = null;
+
       const angle = Math.atan2(
         target.x - groupRef.current.position.x,
         target.z - groupRef.current.position.z
       );
-      groupRef.current.rotation.y = THREE.MathUtils.lerp(groupRef.current.rotation.y, angle, delta * speed * 3);
+      groupRef.current.rotation.y = THREE.MathUtils.lerp(groupRef.current.rotation.y, angle, delta * walkSpeed * 3);
     } else {
-      // When standing still, slowly rotate to look at the camera
-      const angleToCamera = Math.atan2(
-        groupRef.current.position.x - camera.position.x,
-        groupRef.current.position.z - camera.position.z
-      );
-      groupRef.current.rotation.y = THREE.MathUtils.lerp(groupRef.current.rotation.y, angleToCamera, delta * 2);
+      setIsWalking(false);
+      groupRef.current.position.y = zOffset;
+
+      const idleRot = idleRotationRef.current;
+      if (idleRot != null) {
+        groupRef.current.rotation.y = THREE.MathUtils.lerp(
+          groupRef.current.rotation.y,
+          idleRot,
+          delta * 1.5
+        );
+      }
     }
   });
 

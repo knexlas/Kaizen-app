@@ -517,8 +517,8 @@ export function GardenProvider({ children }) {
   const addDecoration = useCallback((typeOrPayload, x, y) => {
     // New 3D decorations from shop: addDecoration({ name, model }) — no position yet (inventory). Shop calls spendEmbers separately.
     if (typeOrPayload && typeof typeOrPayload === 'object' && typeOrPayload.name != null && typeOrPayload.model != null) {
-      const { name, model } = typeOrPayload;
-      const id = crypto.randomUUID?.() ?? `dec-${Date.now()}`;
+      const { name, model, id: payloadId } = typeOrPayload;
+      const id = payloadId ?? crypto.randomUUID?.() ?? `dec-${Date.now()}`;
       setDecorations((prev) => [...prev, { id, name, model, type: 'decoration' }]);
       return;
     }
