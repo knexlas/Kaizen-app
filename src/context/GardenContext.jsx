@@ -39,6 +39,7 @@ const defaultData = {
   unlockedAnimals: [], // e.g. ['rabbit', 'fish'] — animals bought from shop
   metrics: [], // { id, name } — available metrics for vitality tracking
   fertilizerCount: 0, // +1 when adding to compost or deleting from compost (visual recycling)
+  waterDrops: 5, // earned by completing tasks; spent to water goals
 };
 
 const GardenContext = createContext(null);
@@ -68,6 +69,7 @@ export function GardenProvider({ children }) {
   const [activeTool, setActiveTool] = useState(null); // UI only: { type: 'paint', material } | { type: 'plant', goalId } | { type: 'place', decorationId } | null
   const [metrics, setMetrics] = useState(defaultData.metrics);
   const [fertilizerCount, setFertilizerCount] = useState(defaultData.fertilizerCount ?? 0);
+  const [waterDrops, setWaterDrops] = useState(defaultData.waterDrops ?? 5);
   const [smallJoys, setSmallJoys] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem('smallJoys') || '[]');
@@ -151,6 +153,7 @@ export function GardenProvider({ children }) {
         if (Array.isArray(data.unlockedAnimals)) setUnlockedAnimals(data.unlockedAnimals);
         if (Array.isArray(data.metrics)) setMetrics(data.metrics);
         if (typeof data.fertilizerCount === 'number' && data.fertilizerCount >= 0) setFertilizerCount(data.fertilizerCount);
+        if (typeof data.waterDrops === 'number' && data.waterDrops >= 0) setWaterDrops(data.waterDrops);
       }
     } catch (e) {
       console.warn('GardenContext: failed to load gardenData', e);
@@ -187,6 +190,7 @@ export function GardenProvider({ children }) {
           if (Array.isArray(data.unlockedAnimals)) setUnlockedAnimals(data.unlockedAnimals);
           if (Array.isArray(data.metrics)) setMetrics(data.metrics);
           if (typeof data.fertilizerCount === 'number' && data.fertilizerCount >= 0) setFertilizerCount(data.fertilizerCount);
+          if (typeof data.waterDrops === 'number' && data.waterDrops >= 0) setWaterDrops(data.waterDrops);
           skipCloudSaveUntilRef.current = Date.now() + 3000;
         }
       } catch (e) {
@@ -376,12 +380,12 @@ export function GardenProvider({ children }) {
   useEffect(() => {
     if (!hydrated) return;
     try {
-      const data = { goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, logs, spiritConfig, compost, soilNutrients, spiritPoints, embers, decorations, terrainMap, unlockedAnimals, metrics, fertilizerCount };
+      const data = { goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, logs, spiritConfig, compost, soilNutrients, spiritPoints, embers, decorations, terrainMap, unlockedAnimals, metrics, fertilizerCount, waterDrops };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     } catch (e) {
       console.warn('GardenContext: failed to save gardenData', e);
     }
-  }, [hydrated, goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, logs, spiritConfig, compost, soilNutrients, spiritPoints, embers, decorations, terrainMap, unlockedAnimals, metrics, fertilizerCount]);
+  }, [hydrated, goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, logs, spiritConfig, compost, soilNutrients, spiritPoints, embers, decorations, terrainMap, unlockedAnimals, metrics, fertilizerCount, waterDrops]);
 
   // Debounced save to Firestore when goals, logs, weeklyEvents change (and user is logged in)
   useEffect(() => {
@@ -415,6 +419,7 @@ export function GardenProvider({ children }) {
           unlockedAnimals: Array.isArray(unlockedAnimals) ? unlockedAnimals : [],
           metrics: metrics ?? [],
           fertilizerCount: fertilizerCount ?? 0,
+          waterDrops: waterDrops ?? 5,
           updatedAt: new Date().toISOString(),
         }, { merge: true });
         setCloudSaveStatus('saved');
@@ -436,7 +441,7 @@ export function GardenProvider({ children }) {
         savedIdleTimeoutRef.current = null;
       }
     };
-  }, [hydrated, googleUser?.uid, goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, logs, spiritConfig, compost, soilNutrients, spiritPoints, embers, decorations, terrainMap, unlockedAnimals, metrics, fertilizerCount]);
+  }, [hydrated, googleUser?.uid, goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, logs, spiritConfig, compost, soilNutrients, spiritPoints, embers, decorations, terrainMap, unlockedAnimals, metrics, fertilizerCount, waterDrops]);
 
   const addLog = useCallback((log) => {
     const mins = Number(log?.minutes) || 0;
@@ -509,7 +514,15 @@ export function GardenProvider({ children }) {
     placeDecoration(type, '50%', '50%');
   }, [embers, placeDecoration]);
 
-  const addDecoration = useCallback((type, x, y) => {
+  const addDecoration = useCallback((typeOrPayload, x, y) => {
+    // New 3D decorations from shop: addDecoration({ name, model }) — no position yet (inventory). Shop calls spendEmbers separately.
+    if (typeOrPayload && typeof typeOrPayload === 'object' && typeOrPayload.name != null && typeOrPayload.model != null) {
+      const { name, model } = typeOrPayload;
+      const id = crypto.randomUUID?.() ?? `dec-${Date.now()}`;
+      setDecorations((prev) => [...prev, { id, name, model, type: 'decoration' }]);
+      return;
+    }
+    const type = typeOrPayload;
     const cost = DECORATION_COSTS[type] ?? 0;
     if (embers < cost) return;
     setEmbers((p) => p - cost);
@@ -955,6 +968,19 @@ export function GardenProvider({ children }) {
     setGoals((prev) => prev.filter((g) => g.id !== goalId));
   }, []);
 
+  /** Add water drops (e.g. when a task is completed in TimeSlicer). */
+  const addWater = useCallback((amount) => {
+    setWaterDrops((prev) => prev + amount);
+  }, []);
+
+  /** Water a goal: requires 1 water drop, sets lastWatered and rewards +5 Embers. */
+  const waterGoal = useCallback((goalId) => {
+    if (waterDrops <= 0) throw new Error('No water left');
+    setWaterDrops((prev) => Math.max(0, prev - 1));
+    editGoal(goalId, { lastWatered: new Date().toISOString() });
+    earnEmbers(5);
+  }, [waterDrops, editGoal, earnEmbers]);
+
   /** Append a metric log to a goal's metrics array and history (for vitality graphing). date defaults to today. */
   const logMetric = useCallback((goalId, value, date) => {
     const dateObj = date instanceof Date ? date : date != null ? new Date(date) : new Date();
@@ -1035,6 +1061,7 @@ export function GardenProvider({ children }) {
     if (Array.isArray(data.unlockedAnimals)) setUnlockedAnimals(data.unlockedAnimals);
     if (Array.isArray(data.metrics)) setMetrics(data.metrics);
     if (typeof data.fertilizerCount === 'number' && data.fertilizerCount >= 0) setFertilizerCount(data.fertilizerCount);
+    if (typeof data.waterDrops === 'number' && data.waterDrops >= 0) setWaterDrops(data.waterDrops);
   }, []);
 
   /** Clear all garden data (localStorage + in-memory; if logged in, overwrite Firestore with default). */
@@ -1058,6 +1085,7 @@ export function GardenProvider({ children }) {
     setUnlockedAnimals(defaultData.unlockedAnimals ?? []);
     setMetrics(defaultData.metrics);
     setFertilizerCount(defaultData.fertilizerCount ?? 0);
+    setWaterDrops(defaultData.waterDrops ?? 5);
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(defaultData));
     } catch (e) {
@@ -1100,7 +1128,11 @@ export function GardenProvider({ children }) {
     editGoal,
     deleteGoal,
     fertilizeGoal,
+    waterGoal,
     fertilizerCount,
+    waterDrops,
+    setWaterDrops,
+    addWater,
     addSubtask,
     updateSubtask,
     deleteSubtask,

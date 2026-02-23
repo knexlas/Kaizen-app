@@ -15,8 +15,28 @@ const ANIMAL_ITEMS = [
   { animalKey: 'fish', name: 'Koi Fish', cost: 50, description: 'Swims only in your painted water tiles.', icon: '🐟', tagline: 'Water dweller' },
 ];
 
+// 3D Kenney model decorations — all have category: 'decorations' and type: 'decoration'
+const DECORATION_ITEMS = [
+  // 🏕️ Campsite & Wilderness
+  { id: 'dec_tent', name: 'Cozy Tent', cost: 100, model: 'tent_smallOpen.glb', icon: '⛺', type: 'decoration', category: 'decorations', description: 'A small open tent for your garden camp.', tagline: 'Campsite' },
+  { id: 'dec_campfire', name: 'Log Campfire', cost: 50, model: 'campfire_logs.glb', icon: '🔥', type: 'decoration', category: 'decorations', description: 'Warmth and light for your garden.', tagline: 'Cozy' },
+  { id: 'dec_logstack', name: 'Stack of Logs', cost: 30, model: 'log_stackLarge.glb', icon: '🪵', type: 'decoration', category: 'decorations', description: 'A large stack of logs.', tagline: 'Woodland' },
+  { id: 'dec_canoe', name: 'Wooden Canoe', cost: 150, model: 'canoe.glb', icon: '🛶', type: 'decoration', category: 'decorations', description: 'A wooden canoe by the shore.', tagline: 'Wilderness' },
+  // 🌉 Structures & Paths
+  { id: 'dec_bridge', name: 'Wood Bridge', cost: 75, model: 'bridge_wood.glb', icon: '🌉', type: 'decoration', category: 'decorations', description: 'A wooden bridge over water or paths.', tagline: 'Structures' },
+  { id: 'dec_fence', name: 'Wood Fence', cost: 15, model: 'fence_planks.glb', icon: '🚧', type: 'decoration', category: 'decorations', description: 'A classic wooden fence section.', tagline: 'Rustic' },
+  { id: 'dec_gate', name: 'Fence Gate', cost: 20, model: 'fence_gate.glb', icon: '⛩️', type: 'decoration', category: 'decorations', description: 'A gate in the fence.', tagline: 'Structures' },
+  { id: 'dec_sign', name: 'Wooden Sign', cost: 25, model: 'sign.glb', icon: '🪧', type: 'decoration', category: 'decorations', description: 'A wooden signpost.', tagline: 'Paths' },
+  // 🏛️ Ruins & Mystical
+  { id: 'dec_obelisk', name: 'Stone Obelisk', cost: 200, model: 'statue_obelisk.glb', icon: '🪨', type: 'decoration', category: 'decorations', description: 'An ancient stone obelisk.', tagline: 'Mystical' },
+  { id: 'dec_column', name: 'Ruined Column', cost: 120, model: 'statue_columnDamaged.glb', icon: '🏛️', type: 'decoration', category: 'decorations', description: 'A weathered ruined column.', tagline: 'Ruins' },
+  { id: 'dec_pot', name: 'Large Clay Pot', cost: 40, model: 'pot_large.glb', icon: '🏺', type: 'decoration', category: 'decorations', description: 'A large clay pot.', tagline: 'Garden' },
+  { id: 'dec_lily', name: 'Giant Lily Pad', cost: 35, model: 'lily_large.glb', icon: '🪷', type: 'decoration', category: 'decorations', description: 'A giant lily pad for the pond.', tagline: 'Water' },
+  { id: 'dec_stump', name: 'Ancient Stump', cost: 20, model: 'stump_oldTall.glb', icon: '🪹', type: 'decoration', category: 'decorations', description: 'An old tall tree stump.', tagline: 'Natural' },
+];
+
 export default function SpiritShop({ onClose, embedded = false }) {
-  const { embers, placeDecoration, spendEmbers, unlockedAnimals, addUnlockedAnimal } = useGarden();
+  const { embers, placeDecoration, spendEmbers, addDecoration, unlockedAnimals, addUnlockedAnimal } = useGarden();
   const [justBought, setJustBought] = useState(null);
 
   const handleBuy = (item) => {
@@ -24,6 +44,17 @@ export default function SpiritShop({ onClose, embedded = false }) {
     const ok = spendEmbers(item.cost);
     if (ok) {
       placeDecoration(item.type, '50%', '50%');
+      setJustBought(item.name);
+      setTimeout(() => setJustBought(null), 3000);
+    }
+  };
+
+  const handleBuyDecoration = (item) => {
+    if (!item || typeof item.cost !== 'number' || embers < item.cost) return;
+    if (!item.model || !item.name) return;
+    const ok = spendEmbers(item.cost);
+    if (ok) {
+      addDecoration({ name: item.name, model: item.model });
       setJustBought(item.name);
       setTimeout(() => setJustBought(null), 3000);
     }
@@ -174,6 +205,78 @@ export default function SpiritShop({ onClose, embedded = false }) {
                         </button>
                       </>
                     )}
+                  </div>
+                </motion.div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Decorations (3D models) */}
+        <div className="px-4 sm:px-5">
+          <h3 className="font-serif text-lg text-stone-800 mb-3">Decorations</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
+            {DECORATION_ITEMS.map((item, i) => {
+              const canAfford = embers >= item.cost;
+              return (
+                <motion.div
+                  key={item.id ?? item.model}
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: i * 0.05, duration: 0.35 }}
+                  whileHover={{ y: -6, transition: { duration: 0.2 } }}
+                  className="rounded-2xl p-4 flex flex-col gap-3 border overflow-hidden"
+                  style={{
+                    background: canAfford
+                      ? 'linear-gradient(145deg, #ffffff 0%, #f8f7f2 100%)'
+                      : 'linear-gradient(145deg, #f5f5f4 0%, #e7e5e4 100%)',
+                    borderColor: canAfford ? 'rgba(180, 200, 140, 0.5)' : 'rgba(214, 211, 209, 0.8)',
+                    boxShadow: canAfford ? '0 4px 14px -4px rgba(94, 114, 52, 0.2), 0 0 0 1px rgba(0,0,0,0.04)' : '0 2px 8px -2px rgba(0,0,0,0.06)',
+                  }}
+                >
+                  <div className="flex items-start gap-4">
+                    <div
+                      className="w-14 h-14 rounded-xl flex items-center justify-center text-4xl shrink-0"
+                      style={{
+                        background: 'linear-gradient(145deg, #e8edd8 0%, #d4e4c4 100%)',
+                        boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.7), 0 2px 8px -2px rgba(94,114,52,0.2)',
+                      }}
+                    >
+                      {item.icon}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <h3 className="font-serif text-stone-900 text-lg">{item.name}</h3>
+                      {item.tagline && (
+                        <p className="font-sans text-xs font-medium text-moss-600 uppercase tracking-wider mt-0.5">{item.tagline}</p>
+                      )}
+                      <p className="font-sans text-sm text-stone-500 mt-1.5 leading-snug">{item.description}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 mt-auto pt-3 border-t border-stone-200/80">
+                    <span
+                      className="font-sans text-sm font-bold flex items-center gap-2 tabular-nums px-3 py-1.5 rounded-xl"
+                      style={{
+                        background: 'linear-gradient(135deg, #fef3c7 0%, #fde68a 100%)',
+                        color: '#92400e',
+                        border: '1px solid rgba(245, 158, 11, 0.35)',
+                      }}
+                    >
+                      <span aria-hidden>🔥</span>
+                      <span>{item.cost}</span>
+                    </span>
+                    <button
+                      type="button"
+                      disabled={!canAfford}
+                      onClick={() => handleBuyDecoration(item)}
+                      className={`font-sans text-sm font-semibold px-5 py-2.5 rounded-xl transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-moss-500/50 ${
+                        canAfford
+                          ? 'text-[#FDFCF5] hover:shadow-lg active:scale-[0.98]'
+                          : 'bg-stone-200 text-stone-400 cursor-not-allowed'
+                      }`}
+                      style={canAfford ? { background: 'linear-gradient(135deg, #4a5d23 0%, #3d4e1c 100%)', boxShadow: '0 4px 14px -2px rgba(74, 93, 35, 0.45)' } : {}}
+                    >
+                      Buy
+                    </button>
                   </div>
                 </motion.div>
               );

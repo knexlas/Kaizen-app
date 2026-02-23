@@ -5,14 +5,20 @@ import { Component } from 'react';
  * Use once at the app root (e.g. in main.jsx) to protect the whole tree during beta.
  */
 export default class ErrorBoundary extends Component {
-  state = { hasError: false, error: null };
+  state = { hasError: false, error: null, errorInfo: null };
 
   static getDerivedStateFromError(error) {
     return { hasError: true, error };
   }
 
+  componentDidCatch(error, errorInfo) {
+    this.setState({ errorInfo });
+    console.error('[ErrorBoundary] Caught error:', error, errorInfo);
+  }
+
   render() {
     if (this.state.hasError) {
+      const { error, errorInfo } = this.state;
       let spiritEmoji = '🌸';
       try {
         const localData = localStorage.getItem('kaizen_garden_data');
@@ -31,9 +37,29 @@ export default class ErrorBoundary extends Component {
           <h1 className="font-serif text-xl text-stone-800 text-center mb-2">
             Oops! A vine got tangled in the garden.
           </h1>
-          <p className="font-sans text-sm text-stone-500 text-center mb-6 max-w-sm">
+          <p className="font-sans text-sm text-stone-500 text-center mb-4 max-w-sm">
             Something went wrong. Refreshing usually fixes it.
           </p>
+          {error && (
+            <div className="w-full max-w-lg mb-6 rounded-xl bg-stone-800 text-left overflow-hidden border border-stone-600">
+              <p className="font-sans text-xs font-medium text-amber-300 px-4 py-2 bg-stone-900/80">
+                Error (for debugging):
+              </p>
+              <pre className="font-mono text-xs text-stone-300 p-4 overflow-auto max-h-40 whitespace-pre-wrap break-words">
+                {error.message ?? String(error)}
+              </pre>
+              {errorInfo?.componentStack && (
+                <details className="border-t border-stone-600">
+                  <summary className="font-sans text-xs text-stone-400 px-4 py-2 cursor-pointer hover:bg-stone-800">
+                    Component stack
+                  </summary>
+                  <pre className="font-mono text-xs text-stone-500 p-4 overflow-auto max-h-32 whitespace-pre-wrap">
+                    {errorInfo.componentStack}
+                  </pre>
+                </details>
+              )}
+            </div>
+          )}
           <button
             type="button"
             onClick={() => window.location.reload()}

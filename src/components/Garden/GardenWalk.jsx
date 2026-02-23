@@ -1,9 +1,10 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useGarden } from '../../context/GardenContext';
 import { useEnergy } from '../../context/EnergyContext';
 import SpiritShop from './SpiritShop';
 import Garden3D from './Garden3D';
+import VirtualJoystick from './VirtualJoystick';
 
 function clamp(n, min, max) {
   return Math.min(max, Math.max(min, n));
@@ -88,7 +89,7 @@ const GARDEN_GRADIENTS = {
 };
 
 export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCreator, onEditGoal }) {
-  const { goals: contextGoals, decorations = [], fertilizerCount = 0, fertilizeGoal, dailySpoonCount, activeTool, setActiveTool } = useGarden();
+  const { goals: contextGoals, decorations = [], fertilizerCount = 0, fertilizeGoal, waterGoal, waterDrops = 0, addWater = () => {}, dailySpoonCount, activeTool, setActiveTool } = useGarden();
   const { dailyEnergy } = useEnergy();
   const spoons = typeof dailySpoonCount === 'number' ? dailySpoonCount : dailyEnergy;
   const energyTier = getEnergyTier(spoons);
@@ -98,7 +99,32 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
   const [viewMode, setViewMode] = useState('garden'); // 'garden' | 'greenhouse'
   const [selectedGoal, setSelectedGoal] = useState(null);
   const [viewingGoal, setViewingGoal] = useState(null);
+  const [activeFocusGoal, setActiveFocusGoal] = useState(null);
+  const [timeLeft, setTimeLeft] = useState(25 * 60); // 25 minutes in seconds
+  const [isTimerRunning, setIsTimerRunning] = useState(false);
   const [isShopOpen, setIsShopOpen] = useState(false);
+
+  const formatTime = (seconds) => {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  };
+
+  useEffect(() => {
+    let interval = null;
+    if (isTimerRunning && timeLeft > 0) {
+      interval = setInterval(() => setTimeLeft((prev) => prev - 1), 1000);
+    } else if (timeLeft === 0 && activeFocusGoal) {
+      setIsTimerRunning(false);
+      if (typeof addWater === 'function') addWater(1);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('kaizen:toast', { detail: { message: 'Focus Session Complete! Earned 1 💧' } }));
+      }
+      setActiveFocusGoal(null);
+      setTimeLeft(25 * 60);
+    }
+    return () => clearInterval(interval);
+  }, [isTimerRunning, timeLeft, addWater, activeFocusGoal]);
   const [fertilizeMode, setFertilizeMode] = useState(false);
 
   const goals = useMemo(() => {
@@ -184,7 +210,19 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
           </div>
         )}
         <div className="m-2 sm:m-3 h-[70vh] w-full rounded-3xl overflow-hidden relative">
-          <Garden3D onOpenShop={() => setIsShopOpen(true)} onGoalClick={setViewingGoal} />
+          <Garden3D
+            focusGoal={activeFocusGoal}
+            onOpenShop={() => setIsShopOpen(true)}
+            onGoalClick={(goal) => {
+              if (activeTool?.type === 'water') {
+                waterGoal(goal.id);
+                setActiveTool(null);
+              } else {
+                setViewingGoal(goal);
+              }
+            }}
+          />
+          <VirtualJoystick />
         </div>
 
         {/* Goal viewer panel — when user clicks a 3D plant */}
@@ -244,6 +282,55 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
                     <p className="font-sans text-xs text-stone-400">No vines yet.</p>
                   )}
                 </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveFocusGoal(viewingGoal);
+                    setViewingGoal(null);
+                    setTimeLeft(25 * 60);
+                    setIsTimerRunning(true);
+                  }}
+                  className="w-full mt-4 py-3 bg-indigo-500 hover:bg-indigo-600 text-white rounded-xl font-bold shadow-lg flex justify-center items-center gap-2 transition-all"
+                >
+                  <span aria-hidden>🧘</span> Start Focus Session
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <AnimatePresence>
+          {activeFocusGoal && (
+            <motion.div
+              initial={{ opacity: 0, y: 50 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 50 }}
+              transition={{ duration: 0.2 }}
+              className="absolute bottom-12 left-1/2 -translate-x-1/2 bg-stone-900/60 backdrop-blur-md p-8 rounded-3xl text-white text-center shadow-2xl border border-white/10 z-50 min-w-[300px] pointer-events-auto"
+            >
+              <h3 className="text-lg font-medium text-stone-300 mb-1">Focusing on</h3>
+              <h2 className="text-2xl font-bold mb-4">{activeFocusGoal.title}</h2>
+              <div className="text-6xl font-mono font-light mb-8 text-indigo-200">
+                {formatTime(timeLeft)}
+              </div>
+              <div className="flex gap-4 justify-center">
+                <button
+                  type="button"
+                  onClick={() => setIsTimerRunning(!isTimerRunning)}
+                  className="px-6 py-2 bg-white/20 hover:bg-white/30 text-white rounded-full font-bold transition-all"
+                >
+                  {isTimerRunning ? 'Pause' : 'Resume'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveFocusGoal(null);
+                    setIsTimerRunning(false);
+                  }}
+                  className="px-6 py-2 bg-rose-500 hover:bg-rose-600 text-white rounded-full font-bold shadow-md transition-all"
+                >
+                  Stop
+                </button>
               </div>
             </motion.div>
           )}
@@ -282,6 +369,21 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
 
         {/* Toolbelt — bottom center overlay */}
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-50 flex flex-wrap items-center justify-center gap-2 px-3 py-2 rounded-2xl bg-stone-800/90 backdrop-blur-sm shadow-lg border border-stone-600/50">
+          <button
+            type="button"
+            disabled={waterDrops === 0}
+            onClick={() => waterDrops > 0 && setActiveTool({ type: 'water' })}
+            className={`px-3 py-2 rounded-xl font-sans text-sm font-medium transition-all focus:outline-none focus:ring-2 focus:ring-sky-500/50 focus:ring-offset-2 ${
+              waterDrops === 0
+                ? 'opacity-50 cursor-not-allowed bg-stone-300 border border-stone-400 text-stone-500'
+                : activeTool?.type === 'water'
+                  ? 'ring-2 ring-sky-400 scale-105 bg-sky-50 shadow-md border-2 border-sky-300 text-sky-800'
+                  : 'bg-white/95 border border-stone-200 text-stone-700 hover:bg-stone-50 hover:border-stone-300'
+            }`}
+          >
+            <span className="mr-1" aria-hidden>💦</span>
+            Water ({waterDrops})
+          </button>
           {toolBtn('water', 'Water', '💧')}
           {toolBtn('stone', 'Stone', '🪨')}
           {toolBtn('sand', 'Sand', '🏖️')}
@@ -298,6 +400,22 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
             >
               <span className="mr-1" aria-hidden>🎒</span>
               Plant Next Seed
+            </button>
+          )}
+          {unplacedDecorations.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setActiveTool({ type: 'place', decoration: unplacedDecorations[0] })}
+              className={`p-3 rounded-full flex items-center gap-2 transition-all focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:ring-offset-2 ${
+                activeTool?.type === 'place' && (activeTool?.decoration?.id === unplacedDecorations[0]?.id || activeTool?.decorationId === unplacedDecorations[0]?.id)
+                  ? 'bg-amber-500 text-white scale-110'
+                  : 'bg-white text-stone-700 hover:bg-stone-100 border border-stone-200'
+              }`}
+            >
+              <span className="text-xl" aria-hidden>🏕️</span>
+              <span className="font-bold hidden md:inline">
+                Place {unplacedDecorations[0].name} ({unplacedDecorations.length})
+              </span>
             </button>
           )}
           {firstUnplacedDecoration && (
