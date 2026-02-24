@@ -3,6 +3,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useGarden } from '../../context/GardenContext';
 import { useTheme } from '../../context/ThemeContext';
 import { useReward } from '../../context/RewardContext';
+import { useEnergy } from '../../context/EnergyContext';
+import WoodenSpoon from '../WoodenSpoon';
 import { buildReward } from '../../services/dopamineEngine';
 import { getSettings } from '../../services/userSettings';
 import { pickStarterTask } from '../../services/startAssist';
@@ -14,7 +16,6 @@ import AccessibilitySettingsModal from '../Settings/AccessibilitySettingsModal';
 import GoalCreator from '../Goals/GoalCreator';
 import ProjectPlanner from '../Projects/ProjectPlanner';
 import HorizonsGantt from '../Horizons/HorizonsGantt';
-import HorizonsMetrics from '../Horizons/HorizonsMetrics';
 import GoalEditor from '../Goals/GoalEditor';
 import TimeSlicer, { HOURS, MAX_SLOTS_BY_WEATHER } from './TimeSlicer';
 import CompassWidget from './CompassWidget';
@@ -25,7 +26,7 @@ import MochiSpiritWithDialogue, { DefaultSpiritSvg, getSpiritGreeting, getPlanRe
 import SpiritChat from './SpiritChat';
 import CompostHeap from './CompostHeap';
 import NextTinyStep from './NextTinyStep';
-import { generateSpiritInsight, generateWeeklyPlan, generateMonthlyPlan } from '../../services/geminiService';
+import { generateSpiritInsight, generateWeeklyPlan, generateMonthlyPlan, rebalanceMonthQuota } from '../../services/geminiService';
 import { importICSFile, downloadICS, CALENDAR_PROVIDERS } from '../../services/calendarSyncService';
 import { fetchOutlookEvents } from '../../services/microsoftCalendarService';
 import { getStoredBriefing, setStoredBriefing } from '../../services/spiritBriefingStorage';
@@ -214,9 +215,11 @@ class ScheduleErrorBoundary extends Component {
 }
 
 function GardenDashboard() {
-  const { goals, weeklyEvents, logs, addGoal, updateGoalProgress, updateGoalMilestone, editGoal, deleteGoal, addSubtask, updateSubtask, deleteSubtask, updateSubtaskProgress, toggleMilestone, lastCheckInDate, completeMorningCheckIn, dailyEnergyModifier, dailySpoonCount, addLog, logMetric, googleUser, connectCalendar, disconnectCalendar, googleToken, updateWeeklyEvents, cloudSaveStatus, spiritConfig, setSpiritConfig, compost, addToCompost, removeFromCompost, soilNutrients, consumeSoilNutrients, earnEmbers, assignments, setAssignments, gentleResetToToday, archiveStalePlanItems, eveningMode, setEveningMode, userSettings, addRitualCategory, saveDayPlanForDate, msUser, msToken, connectOutlook, disconnectOutlook, refreshOutlookToken } = useGarden();
+  const { goals, weeklyEvents, logs, addGoal, updateGoalProgress, updateGoalMilestone, editGoal, deleteGoal, addSubtask, updateSubtask, deleteSubtask, updateSubtaskProgress, toggleMilestone, lastCheckInDate, completeMorningCheckIn, dailyEnergyModifier, dailySpoonCount, addLog, logMetric, googleUser, connectCalendar, disconnectCalendar, googleToken, updateWeeklyEvents, cloudSaveStatus, spiritConfig, setSpiritConfig, compost, addToCompost, removeFromCompost, soilNutrients, consumeSoilNutrients, earnEmbers, addWater, assignments, setAssignments, gentleResetToToday, archiveStalePlanItems, eveningMode, setEveningMode, userSettings, addRitualCategory, saveDayPlanForDate, loadDayPlan, weekAssignments, monthlyQuotas, addMonthlyQuota, updateMonthlyQuota, msUser, msToken, connectOutlook, disconnectOutlook, refreshOutlookToken } = useGarden();
   const { pushReward } = useReward();
   const { darkMode: themeDarkMode, setDarkModeOverride } = useTheme();
+  const { dailyEnergy, setEnergyLevel } = useEnergy();
+  const [showEnergyMenu, setShowEnergyMenu] = useState(false);
   const isDark = themeDarkMode || eveningMode === 'night-owl';
 
   const renderSpiritAvatar = () => {
@@ -280,6 +283,10 @@ function GardenDashboard() {
   const [showSpiritMirror, setShowSpiritMirror] = useState(false);
   const [showProjectPlanner, setShowProjectPlanner] = useState(false);
   const [horizonsView, setHorizonsView] = useState('planning'); // 'planning' | 'metrics'
+  const [planView, setPlanView] = useState('week'); // 'week' | 'projects' | 'horizons' | 'month'
+  const [rebalanceQuotaId, setRebalanceQuotaId] = useState(null); // id of quota being rebalanced
+  const [newQuotaName, setNewQuotaName] = useState('');
+  const [newQuotaHours, setNewQuotaHours] = useState(60);
   const [showStartNowModal, setShowStartNowModal] = useState(false);
   const [startNowCandidate, setStartNowCandidate] = useState(null);
   const [scheduleExpanded, setScheduleExpanded] = useState(false);
@@ -458,8 +465,8 @@ function GardenDashboard() {
     [deleteGoal, clearAssignmentsForGoal]
   );
 
-  /** Auto-Fill Week: non-destructive preview. Runs autoFillWeek and puts result in weekPreview so user can Apply or Discard. */
-  const handleAutoFillWeek = useCallback(async () => {
+  /** Auto-Plan Week: fill week from goals + calendar, save to plan, then toast. Used by WeeklyMap in Plan tab. */
+  const handleAutoPlanWeek = useCallback(async () => {
     setAutoFillLoading(true);
     try {
       const weekStart = getDefaultWeekStart();
@@ -477,13 +484,22 @@ function GardenDashboard() {
       }
 
       const filled = autoFillWeek(goals ?? [], allEvents, weekStart);
-      setWeekPreview(filled);
+      const saves = Object.entries(filled).map(([dateStr, dayAssigns]) =>
+        saveDayPlanForDate(dateStr, dayAssigns)
+      );
+      await Promise.all(saves);
+      if (typeof pushReward === 'function') {
+        pushReward({ message: '✨ Week successfully planned!', tone: 'moss', icon: '✨', durationMs: 2800 });
+      }
     } catch (e) {
-      console.warn('Auto-Fill Week failed', e);
+      console.warn('Auto-Plan Week failed', e);
+      if (typeof pushReward === 'function') {
+        pushReward({ message: 'Planning failed. Try again or check your calendar connection.', tone: 'slate', icon: '⚠️', sound: null });
+      }
     } finally {
       setAutoFillLoading(false);
     }
-  }, [goals, googleToken, msToken, updateWeeklyEvents]);
+  }, [goals, googleToken, msToken, updateWeeklyEvents, saveDayPlanForDate, pushReward]);
 
   const handlePlanWeek = useCallback(async () => {
     setPlanningWeek(true);
@@ -532,6 +548,66 @@ function GardenDashboard() {
       pushReward({ message: 'Monthly planning failed. Check API key (VITE_GEMINI_API_KEY) or try again later.', tone: 'slate', icon: '🔌', sound: null });
     }
   }, [goals, pushReward]);
+
+  const handleRebalance = useCallback(async (quota) => {
+    if (!quota?.id || typeof saveDayPlanForDate !== 'function' || typeof loadDayPlan !== 'function') return;
+    const remainingHours = Math.max(0, (quota.targetHours ?? 0) - (quota.loggedHours ?? 0));
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = now.getMonth();
+    const today = now.getDate();
+    const lastDay = new Date(year, month + 1, 0).getDate();
+    const availableDates = [];
+    for (let d = today; d <= lastDay; d++) {
+      const date = new Date(year, month, d);
+      if (date.getDay() !== 0) availableDates.push(localISODate(date));
+    }
+    if (availableDates.length === 0 || remainingHours <= 0) {
+      if (typeof pushReward === 'function') pushReward({ message: 'No days left or no hours to distribute.', tone: 'slate', icon: '⚠️', sound: null });
+      return;
+    }
+    setRebalanceQuotaId(quota.id);
+    const userEvents = (Array.isArray(weeklyEvents) ? weeklyEvents : []).slice(0, 50).map((e) => {
+      const start = e.start ? new Date(e.start) : null;
+      const end = e.end ? new Date(e.end) : null;
+      if (!start) return null;
+      return {
+        date: localISODate(start),
+        start: start.toTimeString().slice(0, 5),
+        end: end ? end.toTimeString().slice(0, 5) : start.toTimeString().slice(0, 5),
+      };
+    }).filter(Boolean);
+    try {
+      const blocks = await rebalanceMonthQuota(remainingHours, availableDates, userEvents);
+      const byDate = {};
+      blocks.forEach((b) => {
+        if (!byDate[b.date]) byDate[b.date] = [];
+        byDate[b.date].push(b);
+      });
+      const quotaAssignment = { type: 'quota', quotaId: quota.id, title: quota.name ?? 'Quota' };
+      for (const dateStr of Object.keys(byDate)) {
+        const dayBlocks = byDate[dateStr];
+        const current = await loadDayPlan(dateStr);
+        const next = { ...current };
+        Object.keys(next).forEach((h) => {
+          const a = next[h];
+          if (a && typeof a === 'object' && a.type === 'quota' && a.quotaId === quota.id) delete next[h];
+        });
+        dayBlocks.forEach((block) => {
+          const startH = parseInt(String(block.startTime).slice(0, 2), 10);
+          const endH = parseInt(String(block.endTime).slice(0, 2), 10);
+          for (let h = startH; h < endH; h++) next[String(h)] = quotaAssignment;
+        });
+        await saveDayPlanForDate(dateStr, next);
+      }
+      if (typeof pushReward === 'function') pushReward({ message: 'Month rebalanced.', tone: 'moss', icon: '⚖️', durationMs: 2200 });
+    } catch (e) {
+      console.warn('Rebalance failed', e);
+      if (typeof pushReward === 'function') pushReward({ message: 'Rebalance failed. Check API key or try again.', tone: 'slate', icon: '⚠️', sound: null });
+    } finally {
+      setRebalanceQuotaId(null);
+    }
+  }, [weeklyEvents, saveDayPlanForDate, loadDayPlan, pushReward]);
 
   const handleGardenGoalClick = useCallback((goal) => {
     setSeedForMilestones(goal);
@@ -981,17 +1057,29 @@ function GardenDashboard() {
     setShowStartNowModal(true);
   }, [todayTaskEntries]);
 
-  /** Primary CTA: "Help me start (5 min)". Opens StartNowModal with best task or 3 suggestions. */
-  const handleHelpMeStart5Min = useCallback(() => {
-    const candidate = pickStarterTask({ items: todayPlanItemsWithHour });
-    if (candidate?.goal) {
-      setStartNowCandidate(candidate);
-      setShowStartNowModal(true);
-    } else {
+  /** Single frictionless "Help Me Start" for ADHD: pick first uncompleted goal (and first uncompleted subtask if any), set 5 min, launch focus overlay. */
+  const handleHelpMeStart = useCallback(() => {
+    const isGoalComplete = (g) => {
+      const est = Number(g.estimatedMinutes) || 0;
+      if (est <= 0) return false;
+      return (Number(g.totalMinutes) || 0) >= est;
+    };
+    const goal = (goals ?? []).find((g) => !isGoalComplete(g));
+    if (!goal) {
       setStartNowCandidate(null);
       setShowStartNowModal(true);
+      return;
     }
-  }, [todayPlanItemsWithHour]);
+    const subs = Array.isArray(goal.subtasks) ? goal.subtasks : [];
+    const firstUncompletedSub = subs.find(
+      (s) => (Number(s.completedHours) || 0) < (Number(s.estimatedHours) || 0.01)
+    );
+    setActiveSession({
+      ...goal,
+      sessionDurationMinutes: 5,
+      subtaskId: firstUncompletedSub?.id ?? null,
+    });
+  }, [goals]);
 
   const handleStartNowStart = useCallback((taskOrCandidate, durationMinutes) => {
     const mins = Math.max(1, Math.min(120, durationMinutes ?? 5));
@@ -1092,7 +1180,71 @@ function GardenDashboard() {
   };
 
   const handleSessionComplete = (payload) => {
-    setCompletedTask({ ...activeSession, timeSpentMinutes: payload?.timeSpentMinutes });
+    const timeSpentMinutes = payload?.timeSpentMinutes ?? Math.max(1, activeSession?.sessionDurationMinutes ?? 25);
+    const rating = payload?.rating;
+
+    if (rating) {
+      // Tea Ceremony completed inside FocusSession: rewards + close overlay
+      addWater(1);
+      earnEmbers(5);
+      pushReward({ message: 'Ritual complete. Energy restored.', tone: 'moss', icon: '🍵', durationMs: 2800 });
+      setCompletedTask({ ...activeSession, timeSpentMinutes });
+      const taskId = activeSession?.id;
+      const goalTitle = activeSession?.title ?? goals?.find((g) => g.id === taskId)?.title ?? 'Goal';
+      if (taskId) {
+        updateGoalProgress(taskId, timeSpentMinutes);
+        if (activeSession?.subtaskId) {
+          updateSubtaskProgress(taskId, activeSession.subtaskId, timeSpentMinutes / 60);
+        }
+        setGrowthToast(`Your ${goalTitle} has grown.`);
+      }
+      addLog({
+        taskId,
+        taskTitle: goalTitle,
+        rating,
+        note: '',
+        date: new Date(),
+        minutes: timeSpentMinutes,
+      });
+      if (soilNutrients > 0 && consumeSoilNutrients(1)) {
+        earnEmbers(2);
+        pushReward({ message: 'Compost paid off: +2 Embers', tone: 'moss', icon: '♻️✨', durationMs: 2800 });
+      }
+      const focusReward = buildReward({
+        type: 'FOCUS_COMPLETE',
+        payload: { goalTitle, minutes: timeSpentMinutes, spoonCount: todaySpoonCount ?? dailySpoonCount },
+      });
+      if (focusReward) {
+        if (focusReward.variableBonus?.embers) earnEmbers(focusReward.variableBonus.embers);
+        pushReward(focusReward);
+      }
+      setShowTeaCeremony(false);
+      setJustFinishedSession(true);
+      setShowSpiritDialogue(true);
+      setTimeout(() => {
+        setShowSpiritDialogue(false);
+        setJustFinishedSession(false);
+      }, 5000);
+      setActiveSession(null);
+      setCompletedTask(null);
+      const goal = goals?.find((g) => g.id === taskId);
+      if (goal) {
+        if (goal.linkedVitalityGoalId) {
+          const vg = goals?.find((g2) => g2.id === goal.linkedVitalityGoalId);
+          if (vg) {
+            setMetricPrompt({ goalId: goal.id, metricName: vg.title, unit: vg.metricSettings?.unit ?? '', vitalityGoalId: vg.id });
+            setMetricPromptValue('');
+          }
+        } else if (Array.isArray(goal.linkedMetrics) && goal.linkedMetrics.length > 0) {
+          const first = goal.linkedMetrics[0];
+          setMetricPrompt({ goalId: goal.id, metricName: first.name, unit: first.unit ?? '' });
+          setMetricPromptValue('');
+        }
+      }
+      return;
+    }
+
+    setCompletedTask({ ...activeSession, timeSpentMinutes });
     setShowTeaCeremony(true);
     setActiveSession(null);
   };
@@ -1405,6 +1557,65 @@ function GardenDashboard() {
                 </span>
               </>
             )}
+            <span className="hidden sm:inline opacity-50 select-none" aria-hidden>•</span>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setShowEnergyMenu((v) => !v)}
+                className={`flex items-center gap-1.5 py-1.5 px-2.5 rounded-lg font-sans text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-moss-500/40 ${
+                  isDark ? 'text-slate-300 hover:bg-slate-700/60' : 'text-stone-700 hover:bg-stone-200/60'
+                }`}
+                aria-label="Energy level"
+                aria-expanded={showEnergyMenu}
+                aria-haspopup="true"
+              >
+                <motion.span
+                  key={todaySpoonCount ?? dailyEnergy}
+                  initial={{ scale: 1.2 }}
+                  animate={{ scale: 1 }}
+                  transition={{ type: 'spring', stiffness: 400, damping: 15 }}
+                  className="flex items-center gap-0.5"
+                >
+                  <WoodenSpoon size={16} className="shrink-0" />
+                  <span className="font-medium tabular-nums">{todaySpoonCount ?? dailyEnergy ?? 5}</span>
+                </motion.span>
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0 opacity-70"><polyline points="6 9 12 15 18 9" /></svg>
+              </button>
+              <AnimatePresence>
+                {showEnergyMenu && (
+                  <>
+                    <div className="fixed inset-0 z-40" aria-hidden onClick={() => setShowEnergyMenu(false)} />
+                    <motion.div
+                      initial={{ opacity: 0, y: -4 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -4 }}
+                      transition={{ duration: 0.15 }}
+                      className="absolute left-0 top-full mt-1 z-50 py-1.5 min-w-[7rem] rounded-xl bg-white dark:bg-slate-800 border border-stone-200 dark:border-slate-600 shadow-lg"
+                    >
+                      <p className="px-3 py-1 font-sans text-[10px] font-semibold text-stone-500 dark:text-slate-400 uppercase tracking-wider">Energy</p>
+                      {[1, 2, 3, 4, 5].map((n) => (
+                        <button
+                          key={n}
+                          type="button"
+                          onClick={() => {
+                            setEnergyLevel(n);
+                            completeMorningCheckIn(n);
+                            setShowEnergyMenu(false);
+                          }}
+                          className={`w-full flex items-center justify-center gap-1.5 py-2 px-3 font-sans text-sm transition-colors focus:outline-none focus:bg-stone-100 dark:focus:bg-slate-700 ${
+                            (todaySpoonCount ?? dailyEnergy) === n
+                              ? 'bg-moss-100 dark:bg-moss-900/30 text-moss-800 dark:text-moss-200 font-medium'
+                              : 'text-stone-700 dark:text-slate-200 hover:bg-stone-50 dark:hover:bg-slate-700/50'
+                          }`}
+                        >
+                          {n} <span aria-hidden>🥄</span>
+                        </button>
+                      ))}
+                    </motion.div>
+                  </>
+                )}
+              </AnimatePresence>
+            </div>
           </div>
 
           {/* Right: Toolbelt – Chat, Inbox, Mirror, Evening, Settings */}
@@ -1529,531 +1740,281 @@ function GardenDashboard() {
       <main className={`flex-1 w-full min-w-0 px-4 py-8 max-w-5xl mx-auto relative pb-24`}>
         {activeTab === 'today' && (
           <>
-            <div className="mb-6 flex gap-3">
-              <button
-                id="plant-seed-btn"
-                type="button"
-                onClick={() => setIsPlanting(true)}
-                className="flex-1 py-3 px-4 rounded-xl bg-moss-600 text-white font-sans font-medium hover:bg-moss-700 transition-colors flex items-center justify-center gap-2 shadow-sm shadow-moss-900/20"
-              >
-                <span className="text-xl">🌱</span> Plant a New Seed
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowProjectPlanner(true)}
-                className="py-3 px-4 rounded-xl bg-stone-100 text-stone-700 font-sans font-medium hover:bg-stone-200 transition-colors flex items-center justify-center gap-2 border border-stone-200"
-              >
-                <span className="text-xl">📋</span> Plan Project
-              </button>
-            </div>
+            {/* Zen Now: minimal view — only essentials. No compost/overdue widgets here. */}
             {needsMorningCheckIn ? (
-              <div className="mb-4">
+              <div className="flex flex-col items-center justify-center min-h-[50vh] px-4">
                 <GuidedEmptyState
                   variant="needEnergy"
                   onSetSpoons={() => setShowMorningCheckInModal(true)}
                   lowStim={getSettings().lowStim}
                 />
               </div>
+            ) : (nextUpItems ?? []).length === 0 ? (
+              <div className="flex flex-col items-center justify-center min-h-[50vh] px-4">
+                <button
+                  type="button"
+                  onClick={handleHelpMeStart}
+                  className="w-full max-w-md py-8 px-8 rounded-2xl border-2 border-moss-500 bg-moss-600 text-stone-50 font-sans font-semibold text-xl hover:bg-moss-700 transition-colors flex flex-col items-center gap-3 shadow-xl shadow-moss-900/20 focus:outline-none focus:ring-4 focus:ring-moss-500/40"
+                  aria-label="Help me start — 5 minute focus on one task"
+                >
+                  <span className="text-4xl" aria-hidden>🆘</span>
+                  <span>Help Me Start</span>
+                  <span className="text-base font-normal text-moss-100 opacity-95">One tiny step. That&apos;s enough.</span>
+                </button>
+              </div>
             ) : (
-              <>
-                {isCompostOnlyDay && (
-                  <div className="mb-4 p-3 rounded-xl border border-stone-300 bg-stone-100 text-stone-700 font-sans text-sm flex flex-wrap items-center justify-between gap-2">
-                    <span>Today is capture-only — no plan. Add thoughts to compost.</span>
-                    <button
-                      type="button"
-                      onClick={() => setShowCompost(true)}
-                      className="shrink-0 px-3 py-1.5 rounded-lg font-medium bg-stone-700 text-stone-100 hover:bg-stone-800 focus:outline-none focus:ring-2 focus:ring-stone-500/50"
+              <div className="space-y-6">
+                <div className="flex flex-col items-center gap-4">
+                  <div className="w-full max-w-md p-5 rounded-2xl border-2 border-moss-400 bg-moss-50/80 shadow-lg">
+                    <p className="font-sans text-xs font-semibold text-moss-700 uppercase tracking-wider mb-2">Current / Next</p>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <div className="min-w-0 flex-1">
+                        <span className="font-sans text-lg font-semibold text-stone-900 block truncate">{(nextUpItems[0]?.title ?? nextUpItems[0]?.goal?.title) ?? 'Task'}</span>
+                        <span className="font-sans text-sm text-stone-500">
+                          {(nextUpItems[0]?.estimatedMinutes ?? nextUpItems[0]?.goal?.estimatedMinutes) ?? 0}m
+                          {(nextUpItems[0]?.spoonCost ?? nextUpItems[0]?.goal?.spoonCost) != null && (nextUpItems[0]?.spoonCost ?? nextUpItems[0]?.goal?.spoonCost) > 0
+                            ? ` · ${nextUpItems[0]?.spoonCost ?? nextUpItems[0]?.goal?.spoonCost} spoon${(nextUpItems[0]?.spoonCost ?? nextUpItems[0]?.goal?.spoonCost) !== 1 ? 's' : ''}`
+                            : ''}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleStartNowStart({ goal: nextUpItems[0]?.goal, goalId: nextUpItems[0]?.goalId, subtaskId: nextUpItems[0]?.subtaskId }, 5)}
+                        className="shrink-0 px-5 py-2.5 rounded-xl font-sans text-sm font-medium bg-moss-600 text-stone-50 hover:bg-moss-700 focus:outline-none focus:ring-2 focus:ring-moss-500/50"
+                      >
+                        Start 5 min
+                      </button>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleHelpMeStart}
+                    className="w-full max-w-md py-4 px-4 rounded-xl border-2 border-moss-500 bg-moss-600 text-stone-50 font-sans font-medium hover:bg-moss-700 transition-colors flex flex-col items-center gap-1 shadow-sm focus:outline-none focus:ring-2 focus:ring-moss-500 focus:ring-offset-2"
+                    aria-label="Help me start"
+                  >
+                    <span>🆘 Help Me Start</span>
+                    <span className="text-sm font-normal text-moss-100">One tiny step.</span>
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setScheduleExpanded((prev) => !prev)}
+                  className="w-full py-3 px-4 rounded-xl font-sans text-sm font-medium border-2 border-stone-300 bg-stone-100 text-stone-700 hover:bg-stone-200 focus:outline-none focus:ring-2 focus:ring-moss-500/50 flex items-center justify-center gap-2"
+                >
+                  <span aria-hidden>📋</span> View Full Schedule
+                </button>
+                <AnimatePresence>
+                  {scheduleExpanded && (
+                    <motion.div
+                      id="tour-timeline"
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: 'auto' }}
+                      exit={{ opacity: 0, height: 0 }}
+                      transition={{ duration: 0.25 }}
+                      className="overflow-hidden"
                     >
-                      Open compost
-                    </button>
-                  </div>
-                )}
-                <div className="mb-4">
-                  <NextTinyStep
-                    onStartSession={handleTinyStepStartSession}
-                    onMarkPlanItemDone={undefined}
-                    onMovePlanItemToCompost={handleTinyStepMoveToCompost}
-                    onCompostStart5Min={handleCompostStart5Min}
-                    onCompostMarkDone={removeFromCompost}
-                    lowEnergy={
-                      (typeof dailyEnergyModifier === 'number' && dailyEnergyModifier < 0) ||
-                      (todaySpoonCount != null && todaySpoonCount <= 6)
-                    }
-                  />
-                </div>
-                {todayTaskEntries.length === 0 && (
-                  <div className="mb-4 space-y-4">
-                    <GuidedEmptyState
-                      variant="noTasks"
-                      onPickSuggestion={handleGuidedSuggestion}
-                      onStartFiveMin={handleGuidedSuggestion}
-                      lowStim={getSettings().lowStim}
-                    />
-                    {goals.length > 0 && (
-                      <GuidedEmptyState
-                        variant="noGoals"
-                        goals={goals}
-                        onPickGoal={handleGuidedPickGoal}
-                        lowStim={getSettings().lowStim}
-                      />
-                    )}
-                  </div>
-                )}
-                {(compost?.length ?? 0) === 0 && (
-                  <div className="mb-4">
-                    <GuidedEmptyState variant="noCompost" lowStim={getSettings().lowStim} />
-                  </div>
-                )}
-                <div className="mb-4">
-                  <button
-                    type="button"
-                    onClick={handleHelpMeStart5Min}
-                    className="w-full py-4 px-4 rounded-xl border-2 border-moss-500 bg-moss-600 text-stone-50 font-sans font-medium hover:border-moss-600 hover:bg-moss-700 transition-colors flex flex-col items-center gap-1 shadow-sm focus:outline-none focus:ring-2 focus:ring-moss-500 focus:ring-offset-2"
-                    aria-label="Help me start a 5 minute focus session"
-                  >
-                    <span className="text-base">Help me start (5 min)</span>
-                    <span className="text-sm font-normal text-moss-100">One tiny step. That&apos;s enough.</span>
-                  </button>
-                </div>
-                {staleArchivedCount > 0 && (
-              <div className="mb-4 p-3 rounded-xl border border-moss-200 bg-moss-50/80 font-sans text-sm text-stone-700 flex flex-wrap items-center justify-between gap-2">
-                <span>Some items were archived. Review them in compost if you like.</span>
-                <span className="flex items-center gap-2 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => { setShowCompost(true); handleDismissStaleBanner(); }}
-                    className="text-moss-700 font-medium hover:text-moss-800 underline underline-offset-2 focus:outline-none focus:ring-2 focus:ring-moss-500 rounded"
-                  >
-                    Review compost
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleDismissStaleBanner}
-                    className="text-stone-400 hover:text-stone-600 focus:outline-none focus:ring-2 focus:ring-moss-500 rounded"
-                    aria-label="Dismiss"
-                  >
-                    ×
-                  </button>
-                </span>
-              </div>
-            )}
-            {isMobileNav && (
-              <div id="tour-compass" className="mb-4">
-                <CompassWidget
-                  assignments={assignments}
-                  goals={goals}
-                  now={now}
-                  weather={weather}
-                  onStartFocus={(assignment, slotKey) => {
-                    const goalId = typeof assignment === 'object' ? (assignment.parentGoalId ?? assignment.goalId) : assignment;
-                    const ritualTitle = typeof assignment === 'object' ? assignment.ritualTitle : null;
-                    const subtaskId = typeof assignment === 'object' ? assignment.subtaskId : null;
-                    if (goalId) handleStartSession(goalId, slotKey, ritualTitle ?? undefined, subtaskId ?? undefined);
-                  }}
-                  onPlantHere={() => {}}
-                />
-              </div>
-            )}
-            {stormWarnings.length > 0 && (
-              <div className="mb-4 p-4 rounded-xl border-2 border-amber-300 bg-amber-50 font-sans text-sm text-amber-900" role="alert">
-                <p className="font-medium flex items-center gap-2">
-                  <span aria-hidden>⛈️</span>
-                  {getSettings().gentleMode ? 'Heads up — a lot on today' : 'Storm Warning'}
-                </p>
-                <ul className="mt-2 list-disc list-inside space-y-1 text-amber-800">
-                  {stormWarnings.map((w, i) => (
-                    <li key={w.subtaskId ?? i}>{w.message}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-            {stormImpactToday.stormCount > 0 && stormImpactToday.reason && (
-              <div className="mb-4 p-3 rounded-xl border border-slate-200 bg-slate-50 font-sans text-sm text-stone-700" role="status" aria-live="polite">
-                <p className="font-medium text-stone-800 mb-0.5">Why today&apos;s plan is lighter</p>
-                <p className="text-stone-600">{stormImpactToday.reason}</p>
-              </div>
-            )}
-            <div className="mb-4">
-              <button
-                type="button"
-                onClick={handleMochiPickForMe}
-                className="w-full py-4 px-4 rounded-xl border-2 border-amber-300 bg-amber-50 text-amber-800 font-sans font-medium hover:border-amber-400 hover:bg-amber-100 transition-colors flex items-center justify-center gap-2 shadow-sm focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2"
-                aria-label="Mochi picks a random low-effort task and opens a 15-minute session"
-              >
-                <span className="text-lg">✨</span>
-                <span>Mochi, pick for me</span>
-              </button>
-            </div>
-            {!scheduleExpanded ? (
-              <div className="mb-4 space-y-3">
-                <h3 className="font-serif text-stone-800 text-base">Next up</h3>
-                {(nextUpItems ?? []).length === 0 ? (
-                  <p className="font-sans text-sm text-stone-500 py-2">Nothing planned yet.</p>
-                ) : (
-                  <ul className="space-y-2" aria-label="Next up tasks">
-                    {(nextUpItems ?? []).filter((item) => item != null && (item.goalId != null || item.goal)).map((item) => (
-                      <li key={`${item?.hour ?? ''}-${item?.goalId ?? ''}`} className="flex flex-wrap items-center gap-2 p-3 rounded-xl border border-stone-200 bg-white/80">
-                        <div className="min-w-0 flex-1">
-                          <span className="font-sans text-sm font-medium text-stone-900 block truncate">{item?.title ?? 'Task'}</span>
-                          <span className="font-sans text-xs text-stone-500">
-                            {item?.estimatedMinutes ?? 0}m{item?.spoonCost != null && item.spoonCost > 0 ? ` · ${item.spoonCost} spoon${item.spoonCost !== 1 ? 's' : ''}` : ''}
-                          </span>
-                        </div>
+                      <div className="flex justify-end mb-2">
                         <button
                           type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleStartNowStart({ goal: item?.goal, goalId: item?.goalId, subtaskId: item?.subtaskId }, 5);
-                          }}
-                          className="shrink-0 px-3 py-1.5 rounded-lg font-sans text-xs font-medium bg-moss-600 text-stone-50 hover:bg-moss-700 focus:outline-none focus:ring-2 focus:ring-moss-500/50"
+                          onClick={() => setScheduleExpanded(false)}
+                          className="px-3 py-1.5 rounded-lg font-sans text-sm text-stone-500 hover:text-stone-700 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/50"
                         >
-                          Start 5 min
+                          Collapse schedule
                         </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                <div className="flex flex-wrap items-center gap-2 pt-1">
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setScheduleExpanded((prev) => !prev);
-                    }}
-                    className="px-3 py-2 rounded-lg font-sans text-sm font-medium border-2 border-moss-400 bg-moss-50 text-moss-800 hover:bg-moss-100 focus:outline-none focus:ring-2 focus:ring-moss-500/50"
-                  >
-                    Expand schedule
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setScheduleExpanded(true);
-                      setTimeout(() => document.getElementById('tour-timeline')?.scrollIntoView?.({ behavior: 'smooth' }), 100);
-                    }}
-                    className="font-sans text-sm text-stone-500 hover:text-stone-700 underline underline-offset-2 focus:outline-none focus:ring-2 focus:ring-moss-500/50 rounded"
-                  >
-                    Plan my day
-                  </button>
-                </div>
+                      </div>
+                      <ScheduleErrorBoundary onCollapse={() => setScheduleExpanded(false)}>
+                        <TimeSlicer
+                          zenMode
+                          weather={weather ?? 'sun'}
+                          goals={Array.isArray(goals) ? goals : []}
+                          todayRitualItems={Array.isArray(todayRitualItems) ? todayRitualItems : []}
+                          goalBank={Array.isArray(goalBank) ? goalBank : []}
+                          dailyEnergyModifier={dailyEnergyModifier ?? 0}
+                          dailySpoonCount={todaySpoonCount}
+                          assignments={assignments && typeof assignments === 'object' ? assignments : {}}
+                          onAssignmentsChange={setAssignments}
+                          calendarEvents={Array.isArray(events) ? events : []}
+                          onStartFocus={handleStartSession}
+                          hideCapacityOnMobile={isMobileNav}
+                          onSeedClick={(goal) => setSeedForMilestones(goal)}
+                          onMilestoneCheck={handleMilestoneCheck}
+                          onEditGoal={(goal) => setEditingGoal(goal)}
+                          onCompostGoal={handleCompostGoal}
+                          onAddRoutineTime={handleAddRoutineTime}
+                          onAddSubtask={addSubtask}
+                          onLoadLightened={handleLoadLightened}
+                          onOpenGoalCreator={() => setIsPlanting(true)}
+                          googleToken={googleToken}
+                          onPlanWeek={handlePlanWeek}
+                          onPlanMonth={handlePlanMonth}
+                          planningWeek={planningWeek}
+                          weekPreview={weekPreview}
+                          onConfirmWeekPlan={handleConfirmWeekPlan}
+                          onDiscardWeekPlan={handleDiscardWeekPlan}
+                          monthlyRoadmap={monthlyRoadmap}
+                        />
+                      </ScheduleErrorBoundary>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </div>
-            ) : (
-              <div id="tour-timeline" className="mb-4 min-w-0">
-                <div className="flex justify-end mb-2">
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setScheduleExpanded((prev) => !prev);
-                    }}
-                    className="px-3 py-1.5 rounded-lg font-sans text-sm text-stone-500 hover:text-stone-700 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/50"
-                  >
-                    Collapse schedule
-                  </button>
-                </div>
-                <ScheduleErrorBoundary onCollapse={() => setScheduleExpanded(false)}>
-                <TimeSlicer
-              weather={weather ?? 'sun'}
-              goals={Array.isArray(goals) ? goals : []}
-              todayRitualItems={Array.isArray(todayRitualItems) ? todayRitualItems : []}
-              goalBank={Array.isArray(goalBank) ? goalBank : []}
-              dailyEnergyModifier={dailyEnergyModifier ?? 0}
-              dailySpoonCount={todaySpoonCount}
-              assignments={assignments && typeof assignments === 'object' ? assignments : {}}
-              onAssignmentsChange={setAssignments}
-              calendarEvents={Array.isArray(events) ? events : []}
-              onStartFocus={handleStartSession}
-              hideCapacityOnMobile={isMobileNav}
-              onSeedClick={(goal) => setSeedForMilestones(goal)}
-              onMilestoneCheck={handleMilestoneCheck}
-              onEditGoal={(goal) => setEditingGoal(goal)}
-              onCompostGoal={handleCompostGoal}
-              onAddRoutineTime={handleAddRoutineTime}
-              onAutoFillWeek={handleAutoFillWeek}
-              onAddSubtask={addSubtask}
-              onLoadLightened={handleLoadLightened}
-              onOpenGoalCreator={() => setIsPlanting(true)}
-              autoFillLoading={autoFillLoading}
-              googleToken={googleToken}
-              onPlanWeek={handlePlanWeek}
-              onPlanMonth={handlePlanMonth}
-              planningWeek={planningWeek}
-              weekPreview={weekPreview}
-              onConfirmWeekPlan={handleConfirmWeekPlan}
-              onDiscardWeekPlan={handleDiscardWeekPlan}
-              monthlyRoadmap={monthlyRoadmap}
-            />
-                </ScheduleErrorBoundary>
-              </div>
-            )}
-              </>
             )}
           </>
         )}
         {activeTab === 'planner' && (
-          <div className="w-full space-y-8 animate-in fade-in slide-in-from-bottom-2 duration-500">
-            {/* Project Planner + Horizons Gantt stacked */}
-            <div className="rounded-xl border border-amber-200 bg-amber-50/80 p-4 shadow-sm">
-              <h2 className="font-serif text-stone-800 text-lg mb-2">📋 Plan a Project</h2>
-              <p className="font-sans text-sm text-stone-600 mb-4">Slice a big goal into phases and tasks.</p>
-              <button
-                type="button"
-                onClick={() => setShowProjectPlanner(true)}
-                className="w-full py-3 px-4 rounded-xl border-2 border-amber-300 bg-white text-amber-800 font-sans font-medium hover:border-amber-400 hover:bg-amber-50 transition-colors flex items-center justify-center gap-2"
-              >
-                <span className="text-xl">📋</span> Open Project Planner
-              </button>
-            </div>
-            <div className="border-t border-stone-200 pt-6" aria-hidden />
-            <div className="rounded-xl border border-stone-200 bg-white p-4 shadow-sm">
-              <h2 className="font-serif text-stone-800 text-lg mb-3">Week at a glance</h2>
-              <WeeklyMap
-                weeklyPlan={planWeeklyPlanForMap}
-                selectedDate={planSelectedDayIndex}
-                onSelectDate={setPlanSelectedDayIndex}
-                weekDateLabels={planWeekDateLabels}
-                goals={goals}
-              />
-            </div>
-            <div className="flex gap-1 p-1 rounded-xl bg-stone-100 border border-stone-200 w-full max-w-sm">
-              <button
-                type="button"
-                onClick={() => setHorizonsView('planning')}
-                className={`flex-1 py-2 px-4 rounded-lg font-sans text-sm font-medium transition-colors ${horizonsView === 'planning' ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-600 hover:text-stone-800'}`}
-              >
-                Project planning
-              </button>
-              <button
-                type="button"
-                onClick={() => setHorizonsView('metrics')}
-                className={`flex-1 py-2 px-4 rounded-lg font-sans text-sm font-medium transition-colors ${horizonsView === 'metrics' ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-600 hover:text-stone-800'}`}
-              >
-                Tracking metrics
-              </button>
+          <div className="w-full animate-in fade-in slide-in-from-bottom-2 duration-500">
+            <div className="flex justify-center p-2 mb-6">
+              <div className="flex gap-2 bg-stone-200/50 backdrop-blur-md p-1 rounded-full border border-white/50">
+                <button
+                  type="button"
+                  onClick={() => setPlanView('week')}
+                  className={`px-4 py-2 rounded-full font-medium transition-all ${planView === 'week' ? 'bg-white shadow-md text-indigo-600' : 'text-stone-600 hover:text-stone-800'}`}
+                >
+                  📅 Week
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPlanView('projects')}
+                  className={`px-4 py-2 rounded-full font-medium transition-all ${planView === 'projects' ? 'bg-white shadow-md text-indigo-600' : 'text-stone-600 hover:text-stone-800'}`}
+                >
+                  🗂️ Projects
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPlanView('horizons')}
+                  className={`px-4 py-2 rounded-full font-medium transition-all ${planView === 'horizons' ? 'bg-white shadow-md text-indigo-600' : 'text-stone-600 hover:text-stone-800'}`}
+                >
+                  🔭 Horizons
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPlanView('month')}
+                  className={`px-4 py-2 rounded-full font-medium transition-all ${planView === 'month' ? 'bg-white shadow-md text-indigo-600' : 'text-stone-600 hover:text-stone-800'}`}
+                >
+                  📆 Month
+                </button>
+              </div>
             </div>
 
-            {horizonsView === 'metrics' ? (
-              <HorizonsMetrics
-                goals={goals}
-                logMetric={logMetric}
-                onRecord={() => { setRecordedToast(true); setTimeout(() => setRecordedToast(false), 2500); }}
-              />
-            ) : (
-              <>
-            <HorizonsGantt
+            {planView === 'week' && (
+              <div className="space-y-6">
+                <div className="rounded-xl border border-stone-200 bg-white p-4 shadow-sm">
+                  <h2 className="font-serif text-stone-800 text-lg mb-3">Week at a glance</h2>
+                  <WeeklyMap
+                    weeklyPlan={planWeeklyPlanForMap}
+                    selectedDate={planSelectedDayIndex}
+                    onSelectDate={setPlanSelectedDayIndex}
+                    weekDateLabels={planWeekDateLabels}
+                    goals={goals}
+                    onAutoPlanWeek={handleAutoPlanWeek}
+                    autoPlanWeekLoading={autoFillLoading}
+                  />
+                </div>
+                <div className="rounded-xl border border-stone-200 bg-stone-50 p-4 shadow-sm">
+                  <h3 className="font-serif text-stone-800 text-base mb-2">Compost Heap</h3>
+                  <p className="font-sans text-sm text-stone-600 mb-3">Capture thoughts and move them into your plan when ready.</p>
+                  <button
+                    type="button"
+                    onClick={() => setShowCompost(true)}
+                    className="px-4 py-2 rounded-xl bg-stone-700 text-white font-sans text-sm font-medium hover:bg-stone-800 focus:outline-none focus:ring-2 focus:ring-stone-500/50"
+                  >
+                    Open Compost Heap
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {planView === 'projects' && (
+              <div className="rounded-xl border border-stone-200 bg-stone-50/80 p-4 shadow-sm">
+                <p className="font-sans text-sm text-stone-600 text-center">Project planner opens above. Close it to return to Week view.</p>
+              </div>
+            )}
+
+            {planView === 'horizons' && (
+              <div className="rounded-xl border border-stone-200 bg-white p-4 shadow-sm">
+                <HorizonsGantt
               goals={goals}
               onGoalClick={(goal) => setEditingGoal(goal)}
               onDeleteGoal={deleteGoal}
               onToggleMilestone={toggleMilestone}
               onUpdateSubtask={updateSubtask}
             />
+              </div>
+            )}
 
-            {/* Ponds: Vitality goals grouped by domain + their tributary Rocks */}
-            {(() => {
-              const vitalityGoals = (goals ?? []).filter((g) => g.type === 'vitality');
-              if (vitalityGoals.length === 0) return null;
-              const byDomain = {};
-              vitalityGoals.forEach((g) => {
-                const d = g.domain || 'body';
-                if (!byDomain[d]) byDomain[d] = { vitality: [], tributaryIds: new Set() };
-                byDomain[d].vitality.push(g);
-                (g.tributaryGoalIds || []).forEach((id) => byDomain[d].tributaryIds.add(id));
-              });
-              const domainOrder = ['body', 'finance', 'mind', 'spirit'];
-              return (
-                <div id="tour-ponds" className="mt-8">
-                  <h3 className="font-serif text-stone-800 text-base mb-3">Ponds</h3>
+            {planView === 'month' && (
+              <div className="space-y-6">
+                <div className="rounded-xl border border-stone-200 bg-white p-4 shadow-sm">
+                  <h2 className="font-serif text-stone-800 text-lg mb-2">Monthly Quotas</h2>
+                  <p className="font-sans text-sm text-stone-500 mb-4">Set a target (e.g. 60 hours for a client). Track logged hours. Hit Rebalance to spread remaining hours across the rest of the month.</p>
                   <div className="space-y-4">
-                    {domainOrder.filter((d) => byDomain[d]).map((domainId) => {
-                      const { vitality, tributaryIds } = byDomain[domainId];
-                      const tributaryRocks = (goals ?? []).filter((g) => (g.type === 'routine' && tributaryIds.has(g.id)) || vitality.some((v) => g.linkedVitalityGoalId === v.id));
-                      const pondLabel = POND_LABELS[domainId] ?? domainId;
-                      return (
-                        <div
-                          key={domainId}
-                          className="rounded-xl border border-stone-200 bg-white shadow-sm overflow-hidden"
-                        >
-                          <div className="px-4 py-3 bg-stone-100 border-b border-stone-200 font-serif text-stone-900 font-medium">
-                            {pondLabel}
-                          </div>
-                          <div className="p-4 space-y-3">
-                            {vitality.map((goal) => {
-                              const latest = getLatestMetricValue(goal);
-                              const ms = goal.metricSettings ?? {};
-                              const unit = ms.unit || '';
-                              const target = ms.targetValue;
-                              const current = latest ?? ms.currentValue ?? 0;
-                              const direction = ms.direction ?? 'higher';
-                              const entries = Array.isArray(goal.metrics) ? goal.metrics.slice(-7) : [];
-                              const hasTarget = target != null && target !== 0;
-                              let progressPct = 0;
-                              if (hasTarget) {
-                                const start = ms.currentValue ?? 0;
-                                const range = Math.abs(target - start);
-                                const moved = direction === 'lower' ? start - current : current - start;
-                                progressPct = range > 0 ? Math.max(0, Math.min(100, (moved / range) * 100)) : 0;
-                              }
-                              return (
-                                <div key={goal.id} className="rounded-lg border border-stone-100 bg-stone-50/50 p-3">
-                                  <div className="flex items-center gap-2 mb-2">
-                                    <span className="text-lg">💧</span>
-                                    <span className="font-sans text-sm font-medium text-stone-800 flex-1">{goal.title}</span>
-                                    <span className="font-sans text-lg font-bold text-stone-900 tabular-nums">
-                                      {latest != null ? latest : '—'}
-                                    </span>
-                                    {unit && <span className="font-sans text-xs text-stone-500">{unit}</span>}
-                                  </div>
-                                  {hasTarget && (
-                                    <div className="mb-2">
-                                      <div className="flex items-center justify-between mb-1">
-                                        <span className="font-sans text-[10px] text-stone-400">
-                                          {direction === 'lower' ? 'Goal: lower to' : 'Goal: reach'} {target} {unit}
-                                        </span>
-                                        <span className="font-sans text-[10px] text-stone-500 font-medium">{Math.round(progressPct)}%</span>
-                                      </div>
-                                      <div className="h-2 w-full rounded-full bg-stone-200 overflow-hidden">
-                                        <div
-                                          className={`h-full rounded-full transition-all duration-500 ${progressPct >= 100 ? 'bg-moss-500' : progressPct >= 50 ? 'bg-sky-400' : 'bg-amber-400'}`}
-                                          style={{ width: Math.min(progressPct, 100) + '%' }}
-                                        />
-                                      </div>
-                                    </div>
-                                  )}
-                                  {entries.length > 1 && (
-                                    <div className="flex items-end gap-px h-8 mb-2">
-                                      {(() => {
-                                        const vals = entries.map((e) => e.value);
-                                        const mn = Math.min(...vals);
-                                        const mx = Math.max(...vals);
-                                        const range = mx - mn || 1;
-                                        return vals.map((v, idx) => (
-                                          <div
-                                            key={idx}
-                                            className="flex-1 rounded-sm bg-sky-300/70"
-                                            style={{ height: Math.max(4, ((v - mn) / range) * 28) + 'px' }}
-                                            title={`${entries[idx].date}: ${v} ${unit}`}
-                                          />
-                                        ));
-                                      })()}
-                                    </div>
-                                  )}
-                                  <div className="flex items-center gap-2">
-                                    <input
-                                      type="number"
-                                      step="any"
-                                      placeholder={latest != null ? String(latest) : '0'}
-                                      className="flex-1 py-1.5 px-2 rounded-md border border-stone-200 bg-white font-sans text-sm text-stone-800 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-moss-500/40 focus:border-moss-500 tabular-nums"
-                                      onKeyDown={(e) => {
-                                        if (e.key === 'Enter') {
-                                          const num = parseFloat(e.target.value);
-                                          if (!Number.isNaN(num)) {
-                                            logMetric(goal.id, num);
-                                            e.target.value = '';
-                                            setRecordedToast(true);
-                                            setTimeout(() => setRecordedToast(false), 2500);
-                                          }
-                                        }
-                                      }}
-                                    />
-                                    <button
-                                      type="button"
-                                      onClick={(e) => {
-                                        const input = e.currentTarget.previousElementSibling;
-                                        const num = parseFloat(input.value);
-                                        if (!Number.isNaN(num)) {
-                                          logMetric(goal.id, num);
-                                          input.value = '';
-                                          setRecordedToast(true);
-                                          setTimeout(() => setRecordedToast(false), 2500);
-                                        }
-                                      }}
-                                      className="shrink-0 py-1.5 px-3 rounded-md bg-moss-600 text-white font-sans text-xs font-medium hover:bg-moss-700 focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors"
-                                    >
-                                      Log
-                                    </button>
-                                  </div>
-                                </div>
-                              );
-                            })}
-                            {tributaryRocks.map((rock) => {
-                              const minsThisWeek = getMinutesThisWeekForGoal(logs ?? [], rock.id);
-                              const filledHours = Math.round((minsThisWeek / 60) * 10) / 10;
-                              const targetHours = rock.targetHours ?? 0;
-                              return (
-                                <div key={rock.id} className="flex items-center gap-2 font-sans text-sm">
-                                  <span className="text-stone-500 shrink-0">🪨</span>
-                                  <span className="text-stone-800 font-medium">{rock.title}:</span>
-                                  <span className="text-stone-600">
-                                    {filledHours}h / {targetHours}h
-                                  </span>
-                                </div>
-                              );
-                            })}
+                    {(Array.isArray(monthlyQuotas) ? monthlyQuotas : []).map((quota) => (
+                      <div
+                        key={quota.id}
+                        className="flex flex-wrap items-center gap-3 p-4 rounded-xl border border-stone-200 bg-stone-50/80"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <p className="font-sans font-medium text-stone-800 truncate">{quota.name}</p>
+                          <div className="flex flex-wrap items-center gap-2 mt-1">
+                            <input
+                              type="number"
+                              min={0}
+                              step={0.5}
+                              value={quota.loggedHours ?? 0}
+                              onChange={(e) => updateMonthlyQuota(quota.id, { loggedHours: Number(e.target.value) || 0 })}
+                              className="w-14 py-1 px-2 rounded border border-stone-200 bg-white font-sans text-sm text-stone-800 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
+                            />
+                            <span className="font-sans text-sm text-stone-500">h logged / {quota.targetHours ?? 0}h target</span>
+                            <span className="font-sans text-sm text-moss-600 font-medium">{Math.max(0, (quota.targetHours ?? 0) - (quota.loggedHours ?? 0))}h left</span>
                           </div>
                         </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })()}
-
-            {/* Monthly Tracker (goals with monthlyTarget) */}
-            {(() => {
-              const monthlyGoals = (goals ?? []).filter((g) => g?.schedulerSettings?.monthlyTarget != null);
-              if (monthlyGoals.length === 0) return null;
-              return (
-                <div className="mt-8">
-                  <h3 className="font-serif text-stone-800 text-base mb-3">Monthly Tracker</h3>
-                  <div className="flex flex-wrap gap-4">
-                    {monthlyGoals.map((goal) => {
-                      const targetHours = goal.schedulerSettings.monthlyTarget;
-                      const minutesLogged = getMinutesThisMonthForGoal(logs ?? [], goal.id);
-                      const hoursLogged = Math.round((minutesLogged / 60) * 10) / 10;
-                      const fillPercent = targetHours > 0 ? Math.min(100, (hoursLogged / targetHours) * 100) : 0;
-                      const { onTrack, encouragement, daysRemaining } = getMonthlyProjection(minutesLogged, targetHours);
-                      const ringColor = onTrack ? '#4A5D23' : fillPercent > 0 ? '#d97706' : '#a8a29e';
-                      return (
-                        <div
-                          key={goal.id}
-                          className="flex items-center gap-4 p-4 rounded-xl border border-stone-200 bg-white shadow-sm max-w-md w-full"
+                        <button
+                          type="button"
+                          onClick={() => handleRebalance(quota)}
+                          disabled={rebalanceQuotaId != null}
+                          className="shrink-0 px-4 py-2 rounded-xl font-sans text-sm font-medium bg-indigo-100 text-indigo-800 hover:bg-indigo-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 disabled:opacity-50 disabled:pointer-events-none transition-colors"
                         >
-                          <div className="shrink-0 relative w-16 h-16 flex items-center justify-center" aria-hidden>
-                            <svg viewBox="0 0 36 36" className="w-16 h-16 -rotate-90">
-                              <circle cx="18" cy="18" r="14" fill="none" stroke="#e7e5e4" strokeWidth="3" />
-                              <circle
-                                cx="18"
-                                cy="18"
-                                r="14"
-                                fill="none"
-                                stroke={ringColor}
-                                strokeWidth="3"
-                                strokeDasharray={`${(fillPercent / 100) * 88} 88`}
-                                strokeLinecap="round"
-                                className="transition-all duration-500"
-                              />
-                            </svg>
-                            <span className="absolute font-sans text-xs font-semibold text-stone-600 tabular-nums">
-                              {Math.round(fillPercent)}%
-                            </span>
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <p className="font-sans font-medium text-stone-800 truncate">{goal.title}</p>
-                            <p className="font-sans text-sm text-stone-500 mt-0.5">
-                              {hoursLogged}h of {targetHours}h · {daysRemaining} days left
-                            </p>
-                            <p className={`font-sans text-xs mt-1 ${onTrack ? 'text-moss-600' : 'text-amber-700'}`}>
-                              {encouragement}
-                            </p>
-                          </div>
-                        </div>
-                      );
-                    })}
+                          {rebalanceQuotaId === quota.id ? '…' : '⚖️ Rebalance Month'}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-4 pt-4 border-t border-stone-200">
+                    <p className="font-sans text-sm font-medium text-stone-600 mb-2">Add quota</p>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <input
+                        type="text"
+                        value={newQuotaName}
+                        onChange={(e) => setNewQuotaName(e.target.value)}
+                        placeholder="e.g. Freelance Client"
+                        className="flex-1 min-w-[140px] py-2 px-3 rounded-lg border border-stone-200 bg-white font-sans text-stone-800 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-moss-500/40 focus:border-moss-500"
+                      />
+                      <input
+                        type="number"
+                        min={1}
+                        max={200}
+                        value={newQuotaHours}
+                        onChange={(e) => setNewQuotaHours(Number(e.target.value) || 60)}
+                        className="w-20 py-2 px-3 rounded-lg border border-stone-200 bg-white font-sans text-stone-800 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
+                      />
+                      <span className="font-sans text-sm text-stone-500">hours</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (newQuotaName.trim()) {
+                            addMonthlyQuota({ name: newQuotaName.trim(), targetHours: newQuotaHours, loggedHours: 0, blocks: [] });
+                            setNewQuotaName('');
+                            setNewQuotaHours(60);
+                          }
+                        }}
+                        className="px-4 py-2 rounded-xl font-sans text-sm font-medium bg-moss-600 text-white hover:bg-moss-700 focus:outline-none focus:ring-2 focus:ring-moss-500/50"
+                      >
+                        Add
+                      </button>
+                    </div>
                   </div>
                 </div>
-              );
-            })()}
-              </>
+              </div>
             )}
           </div>
         )}
@@ -2182,8 +2143,11 @@ function GardenDashboard() {
       />
 
       <ProjectPlanner
-        open={showProjectPlanner}
-        onClose={() => setShowProjectPlanner(false)}
+        open={showProjectPlanner || (activeTab === 'planner' && planView === 'projects')}
+        onClose={() => {
+          setShowProjectPlanner(false);
+          if (activeTab === 'planner') setPlanView('week');
+        }}
         onCreateGoals={handleProjectGoals}
       />
 

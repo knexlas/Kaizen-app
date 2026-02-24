@@ -27,8 +27,8 @@ function getLastWateredOrCreated(goal) {
 }
 
 export default function ProceduralFlora({ goal, isHovered }) {
-  const progress = getGoalProgressPercent(goal);
-  const scale = progress === 0 ? 0.15 : 0.3 + (progress / 100) * 2.2;
+  const progress = getGoalProgressPercent(goal) || 0;
+  const growthScale = Math.max(0.3, progress / 100);
 
   const lastWateredOrCreated = getLastWateredOrCreated(goal);
   const isThirsty =
@@ -38,14 +38,9 @@ export default function ProceduralFlora({ goal, isHovered }) {
 
   const isProject = goal?._projectGoal;
   const hash = getHash(goal?.id ?? '');
-  let modelPath = '';
-  if (isProject) {
-    const bigTrees = [...TREES, ...PINES];
-    modelPath = bigTrees.length > 0 ? bigTrees[Math.abs(hash) % bigTrees.length] : FLOWERS[0] ?? ALL_PATHS[0];
-  } else {
-    const smallPlants = [...FLOWERS, ...MUSHROOMS];
-    modelPath = smallPlants.length > 0 ? smallPlants[Math.abs(hash) % smallPlants.length] : TREES[0] ?? ALL_PATHS[0];
-  }
+  const FLORA_MODELS = isProject ? [...TREES, ...PINES] : [...FLOWERS, ...MUSHROOMS];
+  const hashFallback = FLORA_MODELS.length > 0 ? FLORA_MODELS[Math.abs(hash) % FLORA_MODELS.length] : (FLOWERS[0] ?? ALL_PATHS[0]);
+  const modelFile = goal?.seedModel ? `/models/${goal.seedModel}` : hashFallback;
 
   const plantRef = useRef();
   useFrame((state) => {
@@ -56,7 +51,7 @@ export default function ProceduralFlora({ goal, isHovered }) {
   });
 
   return (
-    <group scale={scale * 0.8} position={[0, 0, 0]}>
+    <group scale={0.8} position={[0, 0, 0]}>
       {/* Tilled Soil Base */}
       <mesh position={[0, 0.05, 0]} receiveShadow castShadow>
         <cylinderGeometry args={[0.45, 0.5, 0.1, 8]} />
@@ -65,7 +60,7 @@ export default function ProceduralFlora({ goal, isHovered }) {
       {/* Droop wrapper when thirsty; inner group has sway animation */}
       <group rotation={isThirsty ? [0.2, 0, 0.2] : [0, 0, 0]}>
         <group ref={plantRef}>
-          <KenneyModel path={progress === 0 ? FLOWERS[0] : modelPath} />
+          <KenneyModel path={modelFile} scale={growthScale} />
         </group>
       </group>
     </group>

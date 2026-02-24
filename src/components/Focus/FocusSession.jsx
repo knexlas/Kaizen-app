@@ -124,6 +124,7 @@ export default function FocusSession({
   const [sessionMode, setSessionMode] = useState('focus'); // 'focus' | 'break'
   const [isPaused, setIsPaused] = useState(false);
   const [isComplete, setIsComplete] = useState(false);
+  const [sessionComplete, setSessionComplete] = useState(false); // timer hit 0 → show Tea Ceremony rating
   const [completedTimeSpentMinutes, setCompletedTimeSpentMinutes] = useState(null);
   const hasPlayedBreakGongRef = useRef(false);
   const [showControls, setShowControls] = useState(false);
@@ -337,7 +338,7 @@ export default function FocusSession({
       if (sessionMode === 'focus') {
         const mins = Math.max(1, Math.floor(durationSeconds / 60));
         setCompletedTimeSpentMinutes(mins);
-        setIsComplete(true);
+        setSessionComplete(true); // show Tea Ceremony rating in-place; don't close yet
       }
       releaseWakeLock();
       return;
@@ -352,7 +353,7 @@ export default function FocusSession({
 
   // Re-request wake lock when user returns to tab during an active session
   const timerActiveRef = useRef(false);
-  timerActiveRef.current = hasCommitted && !isPaused && !(sessionMode === 'focus' && isComplete) && secondsLeft > 0;
+  timerActiveRef.current = hasCommitted && !isPaused && !sessionComplete && !(sessionMode === 'focus' && isComplete) && secondsLeft > 0;
   useEffect(() => {
     const handleVisibility = () => {
       if (document.visibilityState === 'visible' && timerActiveRef.current) {
@@ -484,7 +485,7 @@ export default function FocusSession({
 
       {/* Top-right: Pause / X (opens Broken Path overlay) */}
       <AnimatePresence>
-        {showControls && !isComplete && !isBreakComplete && !showBrokenPath && (
+        {showControls && !isComplete && !sessionComplete && !isBreakComplete && !showBrokenPath && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -565,14 +566,54 @@ export default function FocusSession({
         )}
       </AnimatePresence>
 
-      {/* Center: Spirit + task title */}
+      {/* Center: Spirit + task title (hidden when Tea Ceremony rating is shown) */}
       <div className="flex flex-col items-center justify-center flex-1 px-6">
-        <MochiSpirit isComplete={isComplete && sessionMode === 'focus'} />
-        <h1 className="mt-8 font-serif text-3xl md:text-4xl text-stone-900 text-center max-w-md">
-          {sessionMode === 'break' ? 'Rest your eyes' : activeTask.title}
-        </h1>
+        {sessionComplete ? (
+          /* Tea Ceremony rating UI — merged into end of Zen Focus Timer */
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.3 }}
+            className="w-full max-w-sm rounded-2xl border border-white/20 bg-stone-100/95 backdrop-blur-md shadow-xl p-6"
+          >
+            <h2 className="font-serif text-stone-800 text-xl text-center mb-6">
+              Focus Complete. How was your flow?
+            </h2>
+            <div className="flex justify-center gap-4 flex-wrap">
+              {[
+                { emoji: '🍵', label: 'Deep Flow', rating: 'deep' },
+                { emoji: '🌿', label: 'Steady', rating: 'steady' },
+                { emoji: '🌪️', label: 'Distracted', rating: 'distracted' },
+              ].map(({ emoji, label, rating }) => (
+                <button
+                  key={rating}
+                  type="button"
+                  onClick={() => {
+                    setSessionComplete(false);
+                    onComplete?.({
+                      timeSpentMinutes: completedTimeSpentMinutes ?? Math.max(1, Math.floor(durationSeconds / 60)),
+                      rating,
+                    });
+                  }}
+                  className="flex flex-col items-center gap-1 p-4 rounded-xl border-2 border-stone-200 bg-white/80 hover:border-moss-400 hover:bg-moss-50/80 transition-colors focus:outline-none focus:ring-2 focus:ring-moss-500/50"
+                  aria-label={label}
+                >
+                  <span className="text-4xl" aria-hidden>{emoji}</span>
+                  <span className="font-sans text-sm font-medium text-stone-700">{label}</span>
+                </button>
+              ))}
+            </div>
+          </motion.div>
+        ) : (
+          <>
+            <MochiSpirit isComplete={isComplete && sessionMode === 'focus'} />
+            <h1 className="mt-8 font-serif text-3xl md:text-4xl text-stone-900 text-center max-w-md">
+              {sessionMode === 'break' ? 'Rest your eyes' : activeTask.title}
+            </h1>
+          </>
+        )}
         <AnimatePresence mode="wait">
-          {isBreakComplete ? (
+          {sessionComplete ? null : isBreakComplete ? (
             <motion.div
               key="break-done"
               initial={{ opacity: 0, y: 8 }}

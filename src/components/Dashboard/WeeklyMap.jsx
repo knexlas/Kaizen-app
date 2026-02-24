@@ -61,7 +61,7 @@ function normalizeEvents(raw) {
   });
 }
 
-export default function WeeklyMap({ weeklyPlan, selectedDate, onSelectDate, weekDateLabels, goals = [] }) {
+export default function WeeklyMap({ weeklyPlan, selectedDate, onSelectDate, weekDateLabels, goals = [], onAutoPlanWeek, autoPlanWeekLoading = false }) {
   const [hoveredDay, setHoveredDay] = useState(null);
   const [selectedDay, setSelectedDay] = useState(null);
 
@@ -95,6 +95,27 @@ export default function WeeklyMap({ weeklyPlan, selectedDate, onSelectDate, week
   return (
     <>
     <div className="w-full overflow-hidden">
+      {typeof onAutoPlanWeek === 'function' && (
+        <div className="flex justify-center mb-4">
+          <button
+            type="button"
+            onClick={() => onAutoPlanWeek()}
+            disabled={autoPlanWeekLoading}
+            className="flex items-center justify-center gap-2 px-5 py-3 rounded-2xl font-sans text-sm font-medium transition-all focus:outline-none focus:ring-2 focus:ring-moss-500/50 focus:ring-offset-2 disabled:opacity-60 disabled:pointer-events-none"
+            style={{
+              background: 'rgba(255,255,255,0.7)',
+              backdropFilter: 'blur(12px)',
+              boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.6), 0 4px 20px -4px rgba(0,0,0,0.1)',
+              border: '1px solid rgba(255,255,255,0.5)',
+              color: '#4a5d23',
+            }}
+            aria-label="Auto-plan week: distribute tasks across upcoming days"
+          >
+            <span aria-hidden>{autoPlanWeekLoading ? '…' : '✨'}</span>
+            <span>{autoPlanWeekLoading ? 'Planning…' : 'Auto-Plan Week'}</span>
+          </button>
+        </div>
+      )}
       <h2 className="font-serif text-stone-800 text-lg mb-6">Weekly Terrain</h2>
       <div className="grid grid-cols-7 gap-2 md:gap-4 overflow-hidden min-w-0">
         {dayData.map((day) => {

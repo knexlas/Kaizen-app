@@ -56,6 +56,15 @@ export function getHash(str) {
   return Math.abs(hash);
 }
 
+/** Seed catalog for Transplant UI — must match SpiritShop SEED_ITEMS (id, model, name, icon). */
+const SEED_CATALOG = [
+  { id: 'seed_oak', name: 'Mighty Oak', model: 'tree_oak.glb', icon: '🌳' },
+  { id: 'seed_pine', name: 'Ancient Pine', model: 'tree_pineTallA.glb', icon: '🌲' },
+  { id: 'seed_palm', name: 'Tropical Palm', model: 'tree_palm.glb', icon: '🌴' },
+  { id: 'seed_sunflower', name: 'Sunflower', model: 'flower_yellowA.glb', icon: '🌻' },
+  { id: 'seed_mushroom', name: 'Giant Spore', model: 'mushroom_redGroup.glb', icon: '🍄' },
+];
+
 function isProjectDone(goal) {
   const ms = Array.isArray(goal?.milestones) ? goal.milestones : [];
   if (ms.length > 0 && ms.every((m) => m.completed)) return true;
@@ -91,7 +100,7 @@ const GARDEN_GRADIENTS = {
 };
 
 export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCreator, onEditGoal }) {
-  const { goals: contextGoals, decorations = [], fertilizerCount = 0, fertilizeGoal, waterGoal, waterDrops = 0, addWater = () => {}, dailySpoonCount, activeTool, setActiveTool } = useGarden();
+  const { goals: contextGoals, decorations = [], fertilizerCount = 0, fertilizeGoal, waterGoal, waterDrops = 0, addWater = () => {}, dailySpoonCount, activeTool, setActiveTool, ownedSeeds = [], editGoal } = useGarden();
   const { dailyEnergy } = useEnergy();
   const spoons = typeof dailySpoonCount === 'number' ? dailySpoonCount : dailyEnergy;
   const energyTier = getEnergyTier(spoons);
@@ -106,12 +115,18 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
   const [isTimerRunning, setIsTimerRunning] = useState(false);
   const [isShopOpen, setIsShopOpen] = useState(false);
   const [activeAlmanac, setActiveAlmanac] = useState(null); // 'journal' | 'insights' | null
+  const [showPlantingModal, setShowPlantingModal] = useState(false);
+  const [isTransplanting, setIsTransplanting] = useState(false);
 
   const formatTime = (seconds) => {
     const m = Math.floor(seconds / 60);
     const s = seconds % 60;
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
+
+  useEffect(() => {
+    if (!viewingGoal) setIsTransplanting(false);
+  }, [viewingGoal]);
 
   useEffect(() => {
     let interval = null;
@@ -299,6 +314,50 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
                 </div>
                 <button
                   type="button"
+                  onClick={() => setIsTransplanting((prev) => !prev)}
+                  className="text-sm font-bold text-emerald-600 hover:text-emerald-700 bg-emerald-50 px-3 py-1 rounded-full mt-2 focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
+                >
+                  ✨ Change Plant Appearance
+                </button>
+                <AnimatePresence>
+                  {isTransplanting && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={{ duration: 0.2 }}
+                      className="mt-4 p-4 bg-stone-50 rounded-xl border border-stone-200 overflow-hidden"
+                    >
+                      <h4 className="text-sm font-bold text-stone-700 mb-2">Your Premium Seeds</h4>
+                      <div className="flex flex-wrap gap-2">
+                        {(() => {
+                          const availableSeeds = SEED_CATALOG.filter((s) => Array.isArray(ownedSeeds) && ownedSeeds.includes(s.id));
+                          return availableSeeds.length > 0 ? (
+                            availableSeeds.map((seed) => (
+                              <button
+                                key={seed.id}
+                                type="button"
+                                onClick={() => {
+                                  if (typeof editGoal === 'function') editGoal(viewingGoal.id, { seedModel: seed.model });
+                                  setIsTransplanting(false);
+                                  window.dispatchEvent(new CustomEvent('kaizen:toast', { detail: { message: `Transplanted into ${seed.name}!` } }));
+                                }}
+                                className="flex flex-col items-center p-2 bg-white rounded-lg shadow-sm hover:shadow-md hover:scale-105 transition-all border border-stone-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
+                              >
+                                <span className="text-2xl" aria-hidden>{seed.icon}</span>
+                                <span className="text-xs font-medium text-stone-600 mt-1">{seed.name}</span>
+                              </button>
+                            ))
+                          ) : (
+                            <p className="text-xs text-stone-500 italic">No seeds owned. Buy some in the Spirit Shop!</p>
+                          );
+                        })()}
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+                <button
+                  type="button"
                   onClick={() => {
                     setActiveFocusGoal(viewingGoal);
                     setViewingGoal(null);
@@ -435,20 +494,33 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
           {toolBtn('stone', 'Stone', '🪨')}
           {toolBtn('sand', 'Sand', '🏖️')}
           {toolBtn('grass', 'Grass (Eraser)', '🌱')}
-          {firstUnplacedGoal && (
-            <button
-              type="button"
-              onClick={() => setActiveTool({ type: 'plant', goalId: firstUnplacedGoal.id })}
-              className={`px-3 py-2 rounded-xl font-sans text-sm font-medium transition-all focus:outline-none focus:ring-2 focus:ring-moss-500/50 focus:ring-offset-2 ${
-                activeTool?.type === 'plant' && activeTool?.goalId === firstUnplacedGoal.id
-                  ? 'ring-2 ring-moss-500 scale-105 bg-white shadow-md border-2 border-moss-400 text-stone-800'
-                  : 'bg-white/95 border border-stone-200 text-stone-700 hover:bg-stone-50 hover:border-stone-300'
-              }`}
-            >
-              <span className="mr-1" aria-hidden>🎒</span>
-              Plant Next Seed
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={() => setActiveTool({ type: 'move' })}
+            className={`px-3 py-2 rounded-xl font-sans text-sm font-medium transition-all focus:outline-none focus:ring-2 focus:ring-moss-500/50 focus:ring-offset-2 ${
+              activeTool?.type === 'move'
+                ? 'ring-2 ring-moss-500 scale-105 bg-white shadow-md border-2 border-moss-400 text-stone-800'
+                : 'bg-white/95 border border-stone-200 text-stone-700 hover:bg-stone-50 hover:border-stone-300'
+            }`}
+          >
+            <span className="mr-1" aria-hidden>✋</span>
+            Move
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTool(null);
+              setShowPlantingModal(true);
+            }}
+            className={`px-3 py-2 rounded-xl font-sans text-sm font-medium transition-all focus:outline-none focus:ring-2 focus:ring-moss-500/50 focus:ring-offset-2 ${
+              activeTool?.type === 'plant'
+                ? 'ring-2 ring-moss-500 scale-105 bg-white shadow-md border-2 border-moss-400 text-stone-800'
+                : 'bg-white/95 border border-stone-200 text-stone-700 hover:bg-stone-50 hover:border-stone-300'
+            }`}
+          >
+            <span className="mr-1" aria-hidden>🌱</span>
+            Plant Seed
+          </button>
           {unplacedDecorations.length > 0 && (
             <button
               type="button"
@@ -490,6 +562,80 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
           ))}
         </div>
       </div>
+
+      {/* Planting Modal — pick a seed to plant or create a new goal */}
+      <AnimatePresence>
+        {showPlantingModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/50 backdrop-blur-sm"
+            onClick={() => setShowPlantingModal(false)}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="planting-modal-title"
+          >
+            <motion.div
+              initial={{ scale: 0.96, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.96, opacity: 0 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+              onClick={(e) => e.stopPropagation()}
+              className="w-full max-w-sm rounded-2xl overflow-hidden"
+              style={{
+                background: 'rgba(253, 252, 245, 0.98)',
+                backdropFilter: 'blur(12px)',
+                boxShadow: '0 25px 50px -12px rgba(0,0,0,0.2), 0 0 0 1px rgba(255,255,255,0.5)',
+                border: '1px solid rgba(0,0,0,0.06)',
+              }}
+            >
+              <div className="px-5 pt-5 pb-2">
+                <h2 id="planting-modal-title" className="font-serif text-stone-800 text-lg font-medium">
+                  Choose a seed to plant
+                </h2>
+                <p className="font-sans text-sm text-stone-500 mt-1">Tap one, then tap the grass to place it.</p>
+              </div>
+              <div className="px-4 pb-4 max-h-[60vh] overflow-y-auto">
+                {unplacedGoals.length > 0 ? (
+                  <ul className="space-y-2" role="list">
+                    {unplacedGoals.map((goal) => (
+                      <li key={goal.id}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveTool({ type: 'plant', goalId: goal.id });
+                            setShowPlantingModal(false);
+                          }}
+                          className="w-full flex items-center gap-3 px-4 py-3 rounded-xl font-sans text-left text-stone-800 bg-white/80 border border-stone-200/80 hover:bg-moss-50/80 hover:border-moss-300/80 focus:outline-none focus:ring-2 focus:ring-moss-500/50 focus:ring-offset-2 transition-colors"
+                        >
+                          <span className="text-xl shrink-0" aria-hidden>🌱</span>
+                          <span className="font-medium truncate">{goal.title || 'Untitled goal'}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <div className="pt-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowPlantingModal(false);
+                        onOpenGoalCreator?.();
+                      }}
+                      className="w-full flex items-center justify-center gap-2 px-4 py-4 rounded-xl font-sans text-moss-700 font-medium bg-moss-50 border-2 border-moss-200 hover:bg-moss-100 hover:border-moss-300 focus:outline-none focus:ring-2 focus:ring-moss-500/50 focus:ring-offset-2 transition-colors"
+                    >
+                      <span aria-hidden>+</span>
+                      <span>Create a New Goal</span>
+                    </button>
+                    <p className="font-sans text-sm text-stone-500 mt-3 text-center">You have no unplanted goals yet.</p>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Plant Details Modal */}
       <AnimatePresence>

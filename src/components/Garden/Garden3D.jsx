@@ -166,6 +166,10 @@ function GoalNode({ goal, onGoalClick, activeTool, waterGoal, fireToast, setActi
       scale={scale}
       onClick={(e) => {
         e.stopPropagation();
+        if (activeTool?.type === 'move') {
+          setActiveTool?.({ type: 'place', item: goal, isRelocating: true, originalType: 'goal' });
+          return;
+        }
         if (activeTool?.type === 'water') {
           try {
             waterGoal(goal.id);
@@ -181,7 +185,7 @@ function GoalNode({ goal, onGoalClick, activeTool, waterGoal, fireToast, setActi
       onPointerOver={(e) => {
         e.stopPropagation();
         setHovered(true);
-        document.body.style.cursor = 'pointer';
+        document.body.style.cursor = activeTool?.type === 'move' ? 'grab' : 'pointer';
       }}
       onPointerOut={() => {
         setHovered(false);
@@ -193,12 +197,22 @@ function GoalNode({ goal, onGoalClick, activeTool, waterGoal, fireToast, setActi
   );
 }
 
-function DecorationNode({ decoration }) {
+function DecorationNode({ decoration, activeTool, setActiveTool }) {
   if (!decoration?.position3D || !Array.isArray(decoration.position3D) || !decoration.model) return null;
   const isOrganic = decoration.id?.startsWith('anim_') || decoration.id?.startsWith('dec_pot') || decoration.id?.startsWith('dec_lily');
   const yRotation = useMemo(() => (isOrganic ? Math.random() * Math.PI * 2 : 0), [isOrganic]);
   return (
-    <group position={decoration.position3D}>
+    <group
+      position={decoration.position3D}
+      onClick={(e) => {
+        e.stopPropagation();
+        if (activeTool?.type === 'move') {
+          setActiveTool?.({ type: 'place', item: decoration, isRelocating: true, originalType: 'decoration' });
+        }
+      }}
+      onPointerOver={() => activeTool?.type === 'move' && (document.body.style.cursor = 'grab')}
+      onPointerOut={() => document.body.style.cursor = 'auto'}
+    >
       <AnimatedModel
         path={`/models/${decoration.model}`}
         rotation={[0, yRotation, 0]}
@@ -209,14 +223,19 @@ function DecorationNode({ decoration }) {
 }
 
 function Scene({ placedGoals, onPlant, onGoalClick, timePhase, activeTool, waterGoal, fireToast, setActiveTool, decorations }) {
+  const isItemBeingMoved = (id, kind) =>
+    activeTool?.type === 'place' && activeTool?.isRelocating && activeTool?.originalType === kind && (activeTool?.item?.id === id || activeTool?.decorationId === id || activeTool?.decoration?.id === id);
+  const visibleDecorations = decorations?.filter((dec) => !isItemBeingMoved(dec.id, 'decoration')) ?? [];
+  const visibleGoals = placedGoals?.filter((goal) => !isItemBeingMoved(goal.id, 'goal')) ?? [];
+
   return (
     <>
       <TerrainTiles />
       <Ground onClick={onPlant} />
-      {decorations?.map((dec) => (
-        <DecorationNode key={dec.id} decoration={dec} />
-      )) ?? null}
-      {placedGoals?.map((goal) => (
+      {visibleDecorations.map((dec) => (
+        <DecorationNode key={dec.id} decoration={dec} activeTool={activeTool} setActiveTool={setActiveTool} />
+      ))}
+      {visibleGoals.map((goal) => (
         <GoalNode
           key={goal.id}
           goal={goal}
@@ -226,7 +245,7 @@ function Scene({ placedGoals, onPlant, onGoalClick, timePhase, activeTool, water
           fireToast={fireToast}
           setActiveTool={setActiveTool}
         />
-      )) ?? null}
+      ))}
       <Ecosystem placedGoals={placedGoals} timePhase={timePhase} />
     </>
   );
@@ -286,7 +305,7 @@ function JournalMonument({ onClick }) {
   if (!clone) return null;
   return (
     <group
-      position={[-8, 0, -4]}
+      position={[-14, 0, -14]}
       onClick={(e) => { e.stopPropagation(); onClick?.(); }}
       onPointerOver={() => { document.body.style.cursor = 'pointer'; }}
       onPointerOut={() => { document.body.style.cursor = 'auto'; }}
@@ -307,7 +326,7 @@ function InsightMonolith({ onClick }) {
   if (!clone) return null;
   return (
     <group
-      position={[8, 0, 4]}
+      position={[14, 0, -14]}
       onClick={(e) => { e.stopPropagation(); onClick?.(); }}
       onPointerOver={() => { document.body.style.cursor = 'pointer'; }}
       onPointerOut={() => { document.body.style.cursor = 'auto'; }}
@@ -347,6 +366,16 @@ export default function Garden3D({ onGoalClick, onOpenShop, focusGoal, onOpenJou
     z = Math.round(z);
 
     if (activeTool?.type === 'place') {
+      if (activeTool.isRelocating && activeTool.item) {
+        const item = activeTool.item;
+        if (activeTool.originalType === 'decoration') {
+          updateDecoration(item.id, { position3D: [x, 0, z] });
+        } else if (activeTool.originalType === 'goal') {
+          editGoal(item.id, { position3D: [x, 0, z] });
+        }
+        setActiveTool(null);
+        return;
+      }
       const decorationId = activeTool.decoration?.id ?? activeTool.decorationId;
       if (decorationId) {
         updateDecoration(decorationId, { position3D: [x, 0, z] });

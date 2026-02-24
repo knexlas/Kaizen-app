@@ -8,8 +8,14 @@ const DEFAULT_DAILY = 5;
 /** Spoon count (1–12) is owned by GardenContext.dailySpoonCount; read via useGarden(). */
 
 export function EnergyProvider({ children }) {
-  const [dailyEnergy] = useState(DEFAULT_DAILY);
+  const [dailyEnergy, setDailyEnergy] = useState(DEFAULT_DAILY);
   const [currentEnergy, setCurrentEnergy] = useState(DEFAULT_DAILY);
+
+  const setEnergyLevel = useCallback((level) => {
+    const n = Math.max(1, Math.min(12, Number(level) || DEFAULT_DAILY));
+    setDailyEnergy(n);
+    setCurrentEnergy(n);
+  }, []);
 
   const recordEnergy = useCallback(async (stones, valence, journal) => {
     const record = { stones, valence, journal };
@@ -24,6 +30,7 @@ export function EnergyProvider({ children }) {
     dailyEnergy,
     currentEnergy,
     setCurrentEnergy,
+    setEnergyLevel,
     recordEnergy,
     restMode: currentEnergy < 1,
   };

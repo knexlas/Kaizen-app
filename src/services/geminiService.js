@@ -881,6 +881,59 @@ Return strict JSON (no markdown):
 }
 
 /**
+ * Rebalance month: distribute remainingHours across availableDates, avoiding userEvents.
+ * @param {number} remainingHours - Hours to distribute
+ * @param {string[]} availableDates - YYYY-MM-DD dates (e.g. remaining days in month excluding Sundays)
+ * @param {Array} userEvents - Hard-coded events [{ start, end, date or start }]
+ * @returns {Promise<Array<{ date: string, startTime: string, endTime: string }>>} Time blocks
+ */
+export async function rebalanceMonthQuota(remainingHours, availableDates = [], userEvents = []) {
+  const apiKey = getApiKey();
+  if (!apiKey) {
+    console.error('Missing API Key');
+    return [];
+  }
+
+  const prompt = `The user needs to distribute ${remainingHours} hours of work across ${availableDates.length} days. Available dates (use ONLY these): ${JSON.stringify(availableDates)}. They have the following hard-coded events: ${JSON.stringify(userEvents)}.
+
+Output a JSON array of time blocks. Each block must have: "date" (YYYY-MM-DD from the available dates list), "startTime" (e.g. "09:00"), "endTime" (e.g. "11:00"). Blocks must not overlap with the hard-coded events. Spread the hours evenly across the available days.
+
+Return ONLY a JSON array, no markdown or explanation. Example: [{"date":"2025-02-21","startTime":"09:00","endTime":"11:00"},{"date":"2025-02-22","startTime":"14:00","endTime":"16:00"}]`;
+
+  try {
+    const { GoogleGenerativeAI } = await import('@google/generative-ai');
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const result = await tryGenerate(genAI, prompt);
+    const text = result?.response?.text?.();
+    if (!text) throw new Error('Empty response');
+    let raw = sanitizeJsonResponse(text);
+    const arrMatch = raw.match(/\[[\s\S]*\]/);
+    if (arrMatch) raw = arrMatch[0];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (b) => b && typeof b.date === 'string' && typeof b.startTime === 'string' && typeof b.endTime === 'string'
+    );
+  } catch (err) {
+    console.warn('Gemini rebalanceMonthQuota failed, trying Groq:', err?.message || err);
+    try {
+      const groqText = await fetchFromGroq(prompt);
+      let raw = sanitizeJsonResponse(groqText);
+      const arrMatch = raw.match(/\[[\s\S]*\]/);
+      if (arrMatch) raw = arrMatch[0];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed.filter(
+        (b) => b && typeof b.date === 'string' && typeof b.startTime === 'string' && typeof b.endTime === 'string'
+      );
+    } catch (groqErr) {
+      console.error('Groq rebalanceMonthQuota fallback failed:', groqErr?.message || groqErr);
+      return [];
+    }
+  }
+}
+
+/**
  * Tweak or extend milestones for a goal based on natural-language instruction.
  * @param {string} goalTitle - Goal name
  * @param {string[]} currentMilestones - Current milestone titles

@@ -35,11 +35,13 @@ const defaultData = {
   spiritPoints: 0, // 1 per minute of focus
   embers: 100, // currency for decorations; new users start with 100 (enough for a bench)
   decorations: [], // { id, type, x, y, variant? }
+  ownedSeeds: [], // seed ids from shop (e.g. 'seed_oak', 'seed_pine')
   terrainMap: {}, // grid coords as keys, e.g. { "2,-3": "water" }
   unlockedAnimals: [], // e.g. ['rabbit', 'fish'] — animals bought from shop
   metrics: [], // { id, name } — available metrics for vitality tracking
   fertilizerCount: 0, // +1 when adding to compost or deleting from compost (visual recycling)
   waterDrops: 5, // earned by completing tasks; spent to water goals
+  monthlyQuotas: [], // { id, name, targetHours, loggedHours, blocks?: [] } for freelancer quota tracking
 };
 
 const GardenContext = createContext(null);
@@ -64,12 +66,14 @@ export function GardenProvider({ children }) {
   const [spiritPoints, setSpiritPoints] = useState(defaultData.spiritPoints);
   const [embers, setEmbers] = useState(defaultData.embers ?? 100);
   const [decorations, setDecorations] = useState(defaultData.decorations);
+  const [ownedSeeds, setOwnedSeeds] = useState(defaultData.ownedSeeds ?? []);
   const [terrainMap, setTerrainMap] = useState(defaultData.terrainMap);
   const [unlockedAnimals, setUnlockedAnimals] = useState(defaultData.unlockedAnimals ?? []);
   const [activeTool, setActiveTool] = useState(null); // UI only: { type: 'paint', material } | { type: 'plant', goalId } | { type: 'place', decorationId } | null
   const [metrics, setMetrics] = useState(defaultData.metrics);
   const [fertilizerCount, setFertilizerCount] = useState(defaultData.fertilizerCount ?? 0);
   const [waterDrops, setWaterDrops] = useState(defaultData.waterDrops ?? 5);
+  const [monthlyQuotas, setMonthlyQuotas] = useState(defaultData.monthlyQuotas ?? []);
   const [smallJoys, setSmallJoys] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem('smallJoys') || '[]');
@@ -149,11 +153,13 @@ export function GardenProvider({ children }) {
         if (typeof data.spiritPoints === 'number') setSpiritPoints(data.spiritPoints);
         if (typeof data.embers === 'number') setEmbers(data.embers);
         if (Array.isArray(data.decorations)) setDecorations(data.decorations);
+        if (Array.isArray(data.ownedSeeds)) setOwnedSeeds(data.ownedSeeds);
         if (data.terrainMap && typeof data.terrainMap === 'object') setTerrainMap(data.terrainMap);
         if (Array.isArray(data.unlockedAnimals)) setUnlockedAnimals(data.unlockedAnimals);
         if (Array.isArray(data.metrics)) setMetrics(data.metrics);
         if (typeof data.fertilizerCount === 'number' && data.fertilizerCount >= 0) setFertilizerCount(data.fertilizerCount);
         if (typeof data.waterDrops === 'number' && data.waterDrops >= 0) setWaterDrops(data.waterDrops);
+        if (Array.isArray(data.monthlyQuotas)) setMonthlyQuotas(data.monthlyQuotas);
       }
     } catch (e) {
       console.warn('GardenContext: failed to load gardenData', e);
@@ -186,11 +192,13 @@ export function GardenProvider({ children }) {
           if (typeof data.spiritPoints === 'number') setSpiritPoints(data.spiritPoints);
           if (typeof data.embers === 'number') setEmbers(data.embers);
           if (Array.isArray(data.decorations)) setDecorations(data.decorations);
+          if (Array.isArray(data.ownedSeeds)) setOwnedSeeds(data.ownedSeeds);
           if (data.terrainMap && typeof data.terrainMap === 'object') setTerrainMap(data.terrainMap);
           if (Array.isArray(data.unlockedAnimals)) setUnlockedAnimals(data.unlockedAnimals);
           if (Array.isArray(data.metrics)) setMetrics(data.metrics);
           if (typeof data.fertilizerCount === 'number' && data.fertilizerCount >= 0) setFertilizerCount(data.fertilizerCount);
           if (typeof data.waterDrops === 'number' && data.waterDrops >= 0) setWaterDrops(data.waterDrops);
+          if (Array.isArray(data.monthlyQuotas)) setMonthlyQuotas(data.monthlyQuotas);
           skipCloudSaveUntilRef.current = Date.now() + 3000;
         }
       } catch (e) {
@@ -380,12 +388,12 @@ export function GardenProvider({ children }) {
   useEffect(() => {
     if (!hydrated) return;
     try {
-      const data = { goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, logs, spiritConfig, compost, soilNutrients, spiritPoints, embers, decorations, terrainMap, unlockedAnimals, metrics, fertilizerCount, waterDrops };
+      const data = { goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, logs, spiritConfig, compost, soilNutrients, spiritPoints, embers, decorations, ownedSeeds, terrainMap, unlockedAnimals, metrics, fertilizerCount, waterDrops, monthlyQuotas };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     } catch (e) {
       console.warn('GardenContext: failed to save gardenData', e);
     }
-  }, [hydrated, goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, logs, spiritConfig, compost, soilNutrients, spiritPoints, embers, decorations, terrainMap, unlockedAnimals, metrics, fertilizerCount, waterDrops]);
+  }, [hydrated, goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, logs, spiritConfig, compost, soilNutrients, spiritPoints, embers, decorations, ownedSeeds, terrainMap, unlockedAnimals, metrics, fertilizerCount, waterDrops, monthlyQuotas]);
 
   // Debounced save to Firestore when goals, logs, weeklyEvents change (and user is logged in)
   useEffect(() => {
@@ -415,11 +423,13 @@ export function GardenProvider({ children }) {
           spiritPoints: spiritPoints ?? 0,
           embers: embers ?? 100,
           decorations: decorations ?? [],
+          ownedSeeds: Array.isArray(ownedSeeds) ? ownedSeeds : [],
           terrainMap: terrainMap && typeof terrainMap === 'object' ? terrainMap : {},
           unlockedAnimals: Array.isArray(unlockedAnimals) ? unlockedAnimals : [],
           metrics: metrics ?? [],
           fertilizerCount: fertilizerCount ?? 0,
           waterDrops: waterDrops ?? 5,
+          monthlyQuotas: Array.isArray(monthlyQuotas) ? monthlyQuotas : [],
           updatedAt: new Date().toISOString(),
         }, { merge: true });
         setCloudSaveStatus('saved');
@@ -441,7 +451,7 @@ export function GardenProvider({ children }) {
         savedIdleTimeoutRef.current = null;
       }
     };
-  }, [hydrated, googleUser?.uid, goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, logs, spiritConfig, compost, soilNutrients, spiritPoints, embers, decorations, terrainMap, unlockedAnimals, metrics, fertilizerCount, waterDrops]);
+  }, [hydrated, googleUser?.uid, goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, logs, spiritConfig, compost, soilNutrients, spiritPoints, embers, decorations, ownedSeeds, terrainMap, unlockedAnimals, metrics, fertilizerCount, waterDrops, monthlyQuotas]);
 
   const addLog = useCallback((log) => {
     const mins = Number(log?.minutes) || 0;
@@ -460,11 +470,15 @@ export function GardenProvider({ children }) {
     ]);
   }, []);
 
-  /** Buy an item from the shop: deduct price from currency and add decoration. Returns true if purchased, false otherwise. */
+  /** Buy an item from the shop: deduct price; if type === 'seed' add to ownedSeeds, else add decoration. Returns true if purchased. */
   const buyItem = useCallback((item) => {
     const price = Number(item?.price ?? item?.cost ?? 0);
     if (price <= 0 || embers < price) return false;
     setEmbers((p) => p - price);
+    if (item?.type === 'seed' && item?.id) {
+      setOwnedSeeds((prev) => (prev.includes(item.id) ? prev : [...prev, item.id]));
+      return true;
+    }
     const id = crypto.randomUUID?.() ?? `dec-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
     const type = item?.type ?? 'path';
     setDecorations((prev) => [...prev, { id, type, x: '50%', y: '50%' }]);
@@ -1040,6 +1054,27 @@ export function GardenProvider({ children }) {
     });
   }, []);
 
+  /** Add a monthly quota (e.g. Freelance Client, targetHours). */
+  const addMonthlyQuota = useCallback((quota) => {
+    const id = quota?.id ?? crypto.randomUUID?.() ?? `quota-${Date.now()}`;
+    const entry = {
+      id,
+      name: typeof quota?.name === 'string' ? quota.name : 'Quota',
+      targetHours: Number(quota?.targetHours) || 0,
+      loggedHours: Number(quota?.loggedHours) || 0,
+      blocks: Array.isArray(quota?.blocks) ? quota.blocks : [],
+    };
+    setMonthlyQuotas((prev) => [...prev, entry]);
+    return id;
+  }, []);
+
+  /** Update a monthly quota by id. */
+  const updateMonthlyQuota = useCallback((id, updates) => {
+    setMonthlyQuotas((prev) =>
+      prev.map((q) => (q.id === id ? { ...q, ...updates } : q))
+    );
+  }, []);
+
   /** Import garden data from JSON (e.g. backup). Merges into state; persist effects will save to localStorage/Firestore. */
   const importGardenData = useCallback((data) => {
     if (!data || typeof data !== 'object') return;
@@ -1057,11 +1092,13 @@ export function GardenProvider({ children }) {
     if (typeof data.spiritPoints === 'number') setSpiritPoints(data.spiritPoints);
     if (typeof data.embers === 'number') setEmbers(data.embers);
     if (Array.isArray(data.decorations)) setDecorations(data.decorations);
+    if (Array.isArray(data.ownedSeeds)) setOwnedSeeds(data.ownedSeeds);
     if (data.terrainMap && typeof data.terrainMap === 'object') setTerrainMap(data.terrainMap);
     if (Array.isArray(data.unlockedAnimals)) setUnlockedAnimals(data.unlockedAnimals);
     if (Array.isArray(data.metrics)) setMetrics(data.metrics);
     if (typeof data.fertilizerCount === 'number' && data.fertilizerCount >= 0) setFertilizerCount(data.fertilizerCount);
     if (typeof data.waterDrops === 'number' && data.waterDrops >= 0) setWaterDrops(data.waterDrops);
+    if (Array.isArray(data.monthlyQuotas)) setMonthlyQuotas(data.monthlyQuotas);
   }, []);
 
   /** Clear all garden data (localStorage + in-memory; if logged in, overwrite Firestore with default). */
@@ -1081,11 +1118,13 @@ export function GardenProvider({ children }) {
     setSpiritPoints(defaultData.spiritPoints);
     setEmbers(defaultData.embers ?? 100);
     setDecorations(defaultData.decorations);
+    setOwnedSeeds(defaultData.ownedSeeds ?? []);
     setTerrainMap(defaultData.terrainMap ?? {});
     setUnlockedAnimals(defaultData.unlockedAnimals ?? []);
     setMetrics(defaultData.metrics);
     setFertilizerCount(defaultData.fertilizerCount ?? 0);
     setWaterDrops(defaultData.waterDrops ?? 5);
+    setMonthlyQuotas(defaultData.monthlyQuotas ?? []);
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(defaultData));
     } catch (e) {
@@ -1171,6 +1210,7 @@ export function GardenProvider({ children }) {
     spiritPoints,
     embers,
     decorations,
+    ownedSeeds,
     placeDecoration,
     buyDecoration,
     addDecoration,
@@ -1192,6 +1232,9 @@ export function GardenProvider({ children }) {
     importGardenData,
     deleteAllData,
     addRitualCategory,
+    monthlyQuotas,
+    addMonthlyQuota,
+    updateMonthlyQuota,
   };
 
   return (

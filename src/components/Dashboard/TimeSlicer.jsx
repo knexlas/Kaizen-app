@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import confetti from 'canvas-confetti';
 import { createGoogleEvent } from '../../services/googleCalendarService';
 import { downloadICS } from '../../services/calendarSyncService';
-import { suggestLoadLightening, generateDailyPlan, autoFillDailyPlan, timeToMinutes, getSpoonCost, getGentlePriorities } from '../../services/schedulerService';
+import { suggestLoadLightening, generateDailyPlan, timeToMinutes, getSpoonCost, getGentlePriorities } from '../../services/schedulerService';
 import { useGarden } from '../../context/GardenContext';
 import { localISODate } from '../../services/dateUtils';
 import { getSettings } from '../../services/userSettings';
@@ -1478,11 +1478,9 @@ function TimeSlicer({
   onEditGoal,
   onCompostGoal,
   onAddRoutineTime,
-  onAutoFillWeek,
   onAddSubtask,
   onLoadLightened,
   onOpenGoalCreator,
-  autoFillLoading = false,
   googleToken: googleTokenProp = null,
   hideCapacityOnMobile = false,
   calendarEvents = [],
@@ -1493,6 +1491,7 @@ function TimeSlicer({
   onConfirmWeekPlan,
   onDiscardWeekPlan,
   monthlyRoadmap = null,
+  zenMode = false,
 }) {
   const { googleToken: googleTokenContext, spiritConfig } = useGarden();
   const googleToken = googleTokenProp ?? googleTokenContext ?? null;
@@ -1507,13 +1506,13 @@ function TimeSlicer({
   const [inspectedDate, setInspectedDate] = useState(null);
   const [activeSeedTab, setActiveSeedTab] = useState('all');
   const [spoonsToast, setSpoonsToast] = useState(false);
-  const [autoPlanToast, setAutoPlanToast] = useState(false);
   const [energyToast, setEnergyToast] = useState(false);
   const [lightenedTasksFeedback, setLightenedTasksFeedback] = useState([]);
   const [showPrioritize, setShowPrioritize] = useState(false);
   const [priorities, setPriorities] = useState(null);
   const [now, setNow] = useState(() => new Date());
   const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < MOBILE_BREAKPOINT);
+  const [showFullSchedule, setShowFullSchedule] = useState(!zenMode);
   const garden = useGarden();
   const weekAssignments = garden?.weekAssignments ?? {};
   const loadWeekPlans = typeof garden?.loadWeekPlans === 'function' ? garden.loadWeekPlans : () => {};
@@ -1594,32 +1593,10 @@ function TimeSlicer({
   }, [spoonsToast]);
 
   useEffect(() => {
-    if (!autoPlanToast) return;
-    const t = setTimeout(() => setAutoPlanToast(false), 3000);
-    return () => clearTimeout(t);
-  }, [autoPlanToast]);
-
-  useEffect(() => {
     if (!energyToast) return;
     const t = setTimeout(() => setEnergyToast(false), 3000);
     return () => clearTimeout(t);
   }, [energyToast]);
-
-  const handleAutoPlanDay = () => {
-    const energyLevel =
-      typeof dailySpoonCount === 'number' && dailySpoonCount >= 1 && dailySpoonCount <= 12
-        ? dailySpoonCount
-        : dailyEnergyModifier < 0
-          ? 'low'
-          : dailyEnergyModifier > 0
-            ? 'high'
-            : 'normal';
-    const plan = autoFillDailyPlan(safeGoals, safeCalendarEvents, energyLevel);
-    const next = { ...assignments, ...plan };
-    if (isControlled) safeOnAssignmentsChange(next);
-    else setInternalAssignments(next);
-    setAutoPlanToast(true);
-  };
 
   const baseCapacity = MAX_SLOTS_BY_WEATHER[weather] ?? 6;
   const maxSlots =
@@ -1924,6 +1901,26 @@ function TimeSlicer({
     if (isControlled) safeOnAssignmentsChange(weekAssignments[todayStr] ?? {});
   }, [editingDate, isControlled, assignments, safeOnAssignmentsChange, weekAssignments, todayStr, saveDayPlanForDate]);
 
+  /** Current or next task for zen-mode: first slot at or after now with assignment, or first of day. */
+  const currentNextItem = useMemo(() => {
+    if (!zenMode) return null;
+    const nowMins = now.getHours() * 60 + now.getMinutes();
+    const items = HOURS.filter((h) => assignments[h]).map((hour) => {
+      const a = assignments[hour];
+      const goalId = getGoalIdFromAssignment(a);
+      const goal = safeGoals.find((g) => g.id === goalId);
+      const [h] = hour.split(':').map(Number);
+      const slotMins = h * 60;
+      return { hour, goalId, goal, slotMins, ritualTitle: getRitualTitleFromAssignment(a), subtaskId: getSubtaskFromAssignment(a)?.id };
+    });
+    if (items.length === 0) return null;
+    const sorted = [...items].sort((a, b) => a.slotMins - b.slotMins);
+    const upcoming = sorted.filter((i) => i.slotMins >= nowMins);
+    const first = upcoming.length > 0 ? upcoming[0] : sorted[0];
+    const title = first.ritualTitle || first.goal?.title;
+    return { ...first, title: title ?? 'Task', estimatedMinutes: first.goal?.estimatedMinutes ?? 60, spoonCost: getSpoonCost(first.goal ?? {}) };
+  }, [zenMode, assignments, safeGoals, now]);
+
   return (
     <div className="bg-stone-50 rounded-xl border border-stone-200 p-6 min-w-0">
       <div className="relative z-50 flex items-center justify-between gap-2 mb-4 flex-wrap">
@@ -1946,25 +1943,6 @@ function TimeSlicer({
         </div>
         {viewMode === 'day' && (
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={(e) => { e.stopPropagation(); handleAutoPlanDay(); }}
-              className="shrink-0 px-3 py-1.5 rounded-lg border border-moss-300 bg-moss-50 font-sans text-sm text-moss-800 hover:bg-moss-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors"
-              aria-label="Auto-plan day with Smart Plan"
-            >
-              ✨ Auto-Plan Day
-            </button>
-            {onAutoFillWeek && (
-              <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); onAutoFillWeek?.(); }}
-                disabled={autoFillLoading}
-                className="shrink-0 px-3 py-1.5 rounded-lg border border-moss-300 bg-moss-50 font-sans text-sm text-moss-800 hover:bg-moss-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40 disabled:opacity-60 disabled:pointer-events-none transition-colors"
-                aria-label="Auto-fill week with routine blocks"
-              >
-                {autoFillLoading ? '…' : '✨ Auto-Fill Week'}
-              </button>
-            )}
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); handleOpenPrioritize(); }}
@@ -2034,7 +2012,54 @@ function TimeSlicer({
         />
       )}
 
-      {viewMode === 'day' && <DndContext onDragEnd={handleDragEnd}>
+      {viewMode === 'day' && (zenMode && !showFullSchedule ? (
+        <div className="space-y-4">
+          <div className="p-5 rounded-2xl border-2 border-moss-400 bg-moss-50/90 shadow-md">
+            <p className="font-sans text-xs font-semibold text-moss-700 uppercase tracking-wider mb-2">Current / Next</p>
+            {currentNextItem ? (
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="min-w-0 flex-1">
+                  <span className="font-sans text-lg font-semibold text-stone-900 block truncate">{currentNextItem.title}</span>
+                  <span className="font-sans text-sm text-stone-500">
+                    {currentNextItem.estimatedMinutes}m
+                    {currentNextItem.spoonCost != null && currentNextItem.spoonCost > 0 ? ` · ${currentNextItem.spoonCost} spoon${currentNextItem.spoonCost !== 1 ? 's' : ''}` : ''}
+                  </span>
+                </div>
+                {onStartFocus && currentNextItem.goal && (
+                  <button
+                    type="button"
+                    onClick={() => onStartFocus(currentNextItem.goal.id, currentNextItem.hour, currentNextItem.ritualTitle ?? undefined, currentNextItem.subtaskId)}
+                    className="shrink-0 px-5 py-2.5 rounded-xl font-sans text-sm font-medium bg-moss-600 text-stone-50 hover:bg-moss-700 focus:outline-none focus:ring-2 focus:ring-moss-500/50"
+                  >
+                    Start 5 min
+                  </button>
+                )}
+              </div>
+            ) : (
+              <p className="font-sans text-stone-500">Nothing planned yet.</p>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowFullSchedule(true)}
+            className="w-full py-3 px-4 rounded-xl font-sans text-sm font-medium border-2 border-stone-300 bg-stone-100 text-stone-700 hover:bg-stone-200 focus:outline-none focus:ring-2 focus:ring-moss-500/50 flex items-center justify-center gap-2"
+          >
+            <span aria-hidden>📋</span> View Full Schedule
+          </button>
+        </div>
+      ) : (
+      <DndContext onDragEnd={handleDragEnd}>
+        {zenMode && (
+          <div className="flex justify-end mb-2">
+            <button
+              type="button"
+              onClick={() => setShowFullSchedule(false)}
+              className="px-3 py-1.5 rounded-lg font-sans text-sm text-stone-500 hover:text-stone-700 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/50"
+            >
+              Collapse schedule
+            </button>
+          </div>
+        )}
         {editingDate && editingDate !== todayStr && (
           <div className="mb-3 px-4 py-2.5 rounded-xl bg-sky-50 border border-sky-200 flex items-center justify-between">
             <div>
@@ -2309,7 +2334,8 @@ function TimeSlicer({
             </AnimatePresence>
           </div>
         </div>
-      </DndContext>}
+      </DndContext>
+      ))}
 
       {/* Day Detail Modal (from week/month click) */}
       {inspectedDate && (
@@ -2322,22 +2348,6 @@ function TimeSlicer({
           onSwitchToDay={handleSwitchToInspectedDay}
         />
       )}
-
-      {/* Auto-Plan toast */}
-      <AnimatePresence>
-        {autoPlanToast && (
-          <motion.div
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 4 }}
-            transition={{ duration: 0.25 }}
-            className="fixed bottom-6 left-4 right-4 z-50 mx-auto max-w-sm rounded-xl border border-moss-200 bg-moss-50/95 px-4 py-3 shadow-lg font-sans text-sm text-moss-900"
-            role="status"
-          >
-            Mochi has organized your day.
-          </motion.div>
-        )}
-      </AnimatePresence>
 
       {/* Spoons exceeded toast */}
       <AnimatePresence>

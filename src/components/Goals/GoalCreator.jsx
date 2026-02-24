@@ -1,7 +1,17 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useGarden } from '../../context/GardenContext';
 import { suggestGoalStructure } from '../../services/geminiService';
 import InfoTooltip from '../InfoTooltip';
+
+/** Seed catalog for display in GoalCreator — must match SpiritShop SEED_ITEMS (id, model, name, icon). */
+const SEED_CATALOG = [
+  { id: 'seed_oak', name: 'Mighty Oak', model: 'tree_oak.glb', icon: '🌳' },
+  { id: 'seed_pine', name: 'Ancient Pine', model: 'tree_pineTallA.glb', icon: '🌲' },
+  { id: 'seed_palm', name: 'Tropical Palm', model: 'tree_palm.glb', icon: '🌴' },
+  { id: 'seed_sunflower', name: 'Sunflower', model: 'flower_yellowA.glb', icon: '🌻' },
+  { id: 'seed_mushroom', name: 'Giant Spore', model: 'mushroom_redGroup.glb', icon: '🍄' },
+];
 
 // --- Wisdom Engine: RITUAL_PATTERNS + MILESTONE_PATTERNS (keywords -> rituals + milestones) ---
 const RITUAL_PATTERNS = [
@@ -111,8 +121,10 @@ function newVine(overrides = {}) {
 }
 
 function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks = [], existingRoutineGoals = [], existingVitalityGoals = [], ritualCategories = [], onAddRitualCategory, onOpenProjectPlanner }) {
+  const { ownedSeeds = [] } = useGarden();
   const [goalType, setGoalType] = useState(null); // null | 'kaizen' | 'routine' | 'vitality'
   const [title, setTitle] = useState('');
+  const [selectedSeed, setSelectedSeed] = useState(null); // { id, name, model, icon } or null
   const [domain, setDomain] = useState('');
   const [estimatedMinutes, setEstimatedMinutes] = useState(60);
   const [targetHours, setTargetHours] = useState(5);
@@ -151,6 +163,11 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
   const [vineHours, setVineHours] = useState('');
   const [vineDeadline, setVineDeadline] = useState('');
   const [showAdvanced, setShowAdvanced] = useState(false);
+
+  const availableSeeds = useMemo(
+    () => SEED_CATALOG.filter((s) => Array.isArray(ownedSeeds) && ownedSeeds.includes(s.id)),
+    [ownedSeeds]
+  );
 
   useEffect(() => {
     if (toast) {
@@ -401,6 +418,7 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
         const found = suggestedMetrics.find((m) => m.name === name);
         return found ? { name: found.name, unit: found.unit, direction: found.direction } : { name, unit: '', direction: 'higher' };
       }) }),
+      seedModel: selectedSeed ? selectedSeed.model : null,
     };
 
     // Auto-create vitality goals for linked metrics that don't have an existing tracker
@@ -468,6 +486,7 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
     setVineHours('');
     setVineDeadline('');
     setLinkedVitalityId('');
+    setSelectedSeed(null);
   };
 
   const showTypeChoice = open && goalType == null;
@@ -612,6 +631,42 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
                 </button>
                 <span className="font-sans text-xs text-stone-400">Session length, steps, and more from Mochi.</span>
               </div>
+
+              {/* Select Seed (Optional) — for 3D garden appearance */}
+              {(goalType === 'kaizen' || goalType === 'routine') && availableSeeds.length > 0 && (
+                <div className="mb-6">
+                  <label className="block font-sans text-sm font-medium text-stone-600 mb-2">Select Seed (Optional)</label>
+                  <p className="font-sans text-xs text-stone-500 mb-2">Choose how this goal looks in the garden. Leave unset for a random plant.</p>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedSeed(null)}
+                      className={`px-3 py-2 rounded-xl font-sans text-sm font-medium transition-colors border-2 focus:outline-none focus:ring-2 focus:ring-moss-500/50 focus:ring-offset-2 ${
+                        selectedSeed === null
+                          ? 'bg-moss-100 border-moss-400 text-moss-800'
+                          : 'bg-white border-stone-200 text-stone-600 hover:border-stone-300'
+                      }`}
+                    >
+                      Random
+                    </button>
+                    {availableSeeds.map((seed) => (
+                      <button
+                        key={seed.id}
+                        type="button"
+                        onClick={() => setSelectedSeed(selectedSeed?.id === seed.id ? null : seed)}
+                        className={`px-3 py-2 rounded-xl font-sans text-sm font-medium transition-colors border-2 focus:outline-none focus:ring-2 focus:ring-moss-500/50 focus:ring-offset-2 ${
+                          selectedSeed?.id === seed.id
+                            ? 'bg-moss-100 border-moss-400 text-moss-800'
+                            : 'bg-white border-stone-200 text-stone-600 hover:border-stone-300'
+                        }`}
+                      >
+                        <span className="mr-1.5" aria-hidden>{seed.icon}</span>
+                        {seed.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Advanced: Color, Energy, Spoons, Activation, Tracking, Schedule, Target Hours, Notes */}
               {showAdvanced && (
