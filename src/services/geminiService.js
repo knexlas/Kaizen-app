@@ -761,8 +761,11 @@ export async function generateWeeklyPlan(goals, calendarEvents = [], energyProfi
 
   const spoons = energyProfile.spoonCount ?? 8;
 
+  const todayString = new Date().toISOString().split('T')[0];
   const prompt = `
 Act as a Kaizen weekly planner. Distribute these goals across Mon-Sun.
+
+CRITICAL CONSTRAINT: Today's date is ${todayString}. You absolutely MUST NOT schedule any tasks on days before this date. Only distribute tasks starting from today and moving forward into the future.
 
 Goals (JSON):
 ${JSON.stringify(goalSummaries, null, 2)}
@@ -834,8 +837,11 @@ export async function generateMonthlyPlan(goals, monthIndex, year) {
 
   if (goalSummaries.length === 0) return null;
 
+  const todayString = new Date().toISOString().split('T')[0];
   const prompt = `
 Act as a Kaizen monthly planner for ${monthName} ${year}.
+
+CRITICAL CONSTRAINT: Today's date is ${todayString}. You absolutely MUST NOT schedule any tasks on days before this date. Only distribute tasks starting from today and moving forward into the future.
 
 Goals:
 ${JSON.stringify(goalSummaries, null, 2)}
@@ -894,7 +900,10 @@ export async function rebalanceMonthQuota(remainingHours, availableDates = [], u
     return [];
   }
 
+  const todayString = new Date().toISOString().split('T')[0];
   const prompt = `The user needs to distribute ${remainingHours} hours of work across ${availableDates.length} days. Available dates (use ONLY these): ${JSON.stringify(availableDates)}. They have the following hard-coded events: ${JSON.stringify(userEvents)}.
+
+CRITICAL CONSTRAINT: Today's date is ${todayString}. You absolutely MUST NOT schedule any tasks on days before this date. Only distribute tasks starting from today and moving forward into the future.
 
 Output a JSON array of time blocks. Each block must have: "date" (YYYY-MM-DD from the available dates list), "startTime" (e.g. "09:00"), "endTime" (e.g. "11:00"). Blocks must not overlap with the hard-coded events. Spread the hours evenly across the available days.
 
@@ -911,9 +920,10 @@ Return ONLY a JSON array, no markdown or explanation. Example: [{"date":"2025-02
     if (arrMatch) raw = arrMatch[0];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter(
+    const valid = parsed.filter(
       (b) => b && typeof b.date === 'string' && typeof b.startTime === 'string' && typeof b.endTime === 'string'
     );
+    return valid.map((b) => ({ ...b, date: b.date < todayString ? todayString : b.date }));
   } catch (err) {
     console.warn('Gemini rebalanceMonthQuota failed, trying Groq:', err?.message || err);
     try {
@@ -923,9 +933,10 @@ Return ONLY a JSON array, no markdown or explanation. Example: [{"date":"2025-02
       if (arrMatch) raw = arrMatch[0];
       const parsed = JSON.parse(raw);
       if (!Array.isArray(parsed)) return [];
-      return parsed.filter(
+      const valid = parsed.filter(
         (b) => b && typeof b.date === 'string' && typeof b.startTime === 'string' && typeof b.endTime === 'string'
       );
+      return valid.map((b) => ({ ...b, date: b.date < todayString ? todayString : b.date }));
     } catch (groqErr) {
       console.error('Groq rebalanceMonthQuota fallback failed:', groqErr?.message || groqErr);
       return [];

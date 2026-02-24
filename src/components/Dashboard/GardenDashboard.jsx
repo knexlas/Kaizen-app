@@ -285,6 +285,7 @@ function GardenDashboard() {
   const [horizonsView, setHorizonsView] = useState('planning'); // 'planning' | 'metrics'
   const [planView, setPlanView] = useState('week'); // 'week' | 'projects' | 'horizons' | 'month'
   const [rebalanceQuotaId, setRebalanceQuotaId] = useState(null); // id of quota being rebalanced
+  const [pendingPlan, setPendingPlan] = useState(null); // { quota, blocks } for Monthly Rebalance review
   const [newQuotaName, setNewQuotaName] = useState('');
   const [newQuotaHours, setNewQuotaHours] = useState(60);
   const [showStartNowModal, setShowStartNowModal] = useState(false);
@@ -578,12 +579,32 @@ function GardenDashboard() {
     }).filter(Boolean);
     try {
       const blocks = await rebalanceMonthQuota(remainingHours, availableDates, userEvents);
-      const byDate = {};
-      blocks.forEach((b) => {
-        if (!byDate[b.date]) byDate[b.date] = [];
-        byDate[b.date].push(b);
-      });
-      const quotaAssignment = { type: 'quota', quotaId: quota.id, title: quota.name ?? 'Quota' };
+      setPendingPlan({ quota, blocks });
+    } catch (e) {
+      console.warn('Rebalance failed', e);
+      if (typeof pushReward === 'function') pushReward({ message: 'Rebalance failed. Check API key or try again.', tone: 'slate', icon: '⚠️', sound: null });
+    } finally {
+      setRebalanceQuotaId(null);
+    }
+  }, [weeklyEvents, saveDayPlanForDate, loadDayPlan, pushReward]);
+
+  const handleApproveRebalance = useCallback(async () => {
+    if (!pendingPlan?.quota || !Array.isArray(pendingPlan.blocks) || pendingPlan.blocks.length === 0) {
+      setPendingPlan(null);
+      return;
+    }
+    const { quota, blocks } = pendingPlan;
+    if (typeof saveDayPlanForDate !== 'function' || typeof loadDayPlan !== 'function') {
+      setPendingPlan(null);
+      return;
+    }
+    const byDate = {};
+    blocks.forEach((b) => {
+      if (!byDate[b.date]) byDate[b.date] = [];
+      byDate[b.date].push(b);
+    });
+    const quotaAssignment = { type: 'quota', quotaId: quota.id, title: quota.name ?? 'Quota' };
+    try {
       for (const dateStr of Object.keys(byDate)) {
         const dayBlocks = byDate[dateStr];
         const current = await loadDayPlan(dateStr);
@@ -601,12 +622,11 @@ function GardenDashboard() {
       }
       if (typeof pushReward === 'function') pushReward({ message: 'Month rebalanced.', tone: 'moss', icon: '⚖️', durationMs: 2200 });
     } catch (e) {
-      console.warn('Rebalance failed', e);
-      if (typeof pushReward === 'function') pushReward({ message: 'Rebalance failed. Check API key or try again.', tone: 'slate', icon: '⚠️', sound: null });
-    } finally {
-      setRebalanceQuotaId(null);
+      console.warn('Apply rebalance failed', e);
+      if (typeof pushReward === 'function') pushReward({ message: 'Failed to apply plan. Try again.', tone: 'slate', icon: '⚠️', sound: null });
     }
-  }, [weeklyEvents, saveDayPlanForDate, loadDayPlan, pushReward]);
+    setPendingPlan(null);
+  }, [pendingPlan, saveDayPlanForDate, loadDayPlan, pushReward]);
 
   const handleGardenGoalClick = useCallback((goal) => {
     setSeedForMilestones(goal);
@@ -1384,18 +1404,20 @@ function GardenDashboard() {
             logMetric={logMetric}
             yesterdayPlan={yesterdayPlan}
             onDismiss={() => setShowMorningCheckInModal(false)}
-            onComplete={(modifier, spoonCount) => {
-              completeMorningCheckIn(spoonCount);
+            onComplete={(modifier, energyLevel) => {
+              const level = energyLevel ?? modifier ?? 3;
+              completeMorningCheckIn(level);
               requestSpiritWisdom(false);
               const hasAnyAssignment = HOURS.some((h) => assignments[h]);
               let planSummary = null;
               if (!hasAnyAssignment) {
                 const eventsForPlan = Array.isArray(weeklyEvents) ? weeklyEvents : [];
-                const plan = generateDailyPlan(goals, spoonCount, eventsForPlan, { stormBufferMinutes: 30 });
+                const slotCount = level >= 1 && level <= 5 ? (level <= 2 ? 2 + (level - 1) * 2 : level === 3 ? 6 : level === 4 ? 8 : 10) : level;
+                const plan = generateDailyPlan(goals, slotCount, eventsForPlan, { stormBufferMinutes: 30 });
                 setAssignments(plan);
                 planSummary = { slotCount: Object.keys(plan).length };
               }
-              const reaction = getPlanReaction(spoonCount, planSummary);
+              const reaction = getPlanReaction(level, planSummary);
               setCheckInReactionMessage(reaction);
               setShowSpiritDialogue(true);
               setTimeout(() => {
@@ -1424,18 +1446,16 @@ function GardenDashboard() {
           isDark ? 'border-slate-700 bg-slate-800/80' : `border-stone-200 ${skyBg}`
         }`}
       >
-        <div className="max-w-4xl mx-auto px-4 py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          {/* Left: Date • Weather • Sync status */}
-          <div className={`flex flex-wrap items-center gap-2 font-sans text-sm ${isDark ? 'text-slate-300' : 'text-stone-600'}`}>
+        <div className="max-w-4xl mx-auto px-4 flex items-center justify-between gap-3 h-12">
+          {/* Left: Date, Weather, Sync status */}
+          <div className={`flex flex-wrap items-center gap-2 font-sans text-sm min-w-0 ${isDark ? 'text-slate-300' : 'text-stone-600'}`}>
             <p className={`font-serif text-xl md:text-2xl mr-1 ${isDark ? 'text-slate-100' : 'text-stone-900'}`}>
               {new Date(today + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}
             </p>
-            <span className="hidden sm:inline opacity-50 select-none" aria-hidden>|</span>
             <div className="flex items-center gap-1.5">
               <WeatherIcon />
               <span>{forecast}</span>
             </div>
-            <span className="hidden sm:inline opacity-50 select-none" aria-hidden>•</span>
             {!isOnline ? (
               <span className="flex items-center gap-1 font-sans text-xs text-stone-500 bg-stone-200/80 px-2 py-1 rounded-full" title="Offline">Offline</span>
             ) : (
@@ -1542,7 +1562,6 @@ function GardenDashboard() {
             )}
             {isOnline && (googleUser || msUser) && cloudSaveStatus === 'saved' && (
               <>
-                <span className="hidden sm:inline opacity-50 select-none" aria-hidden>•</span>
                 <span
                   className="flex items-center gap-1 font-sans text-xs text-moss-600"
                   title="Saved to cloud"
@@ -1555,7 +1574,6 @@ function GardenDashboard() {
                 </span>
               </>
             )}
-            <span className="hidden sm:inline opacity-50 select-none" aria-hidden>•</span>
             <div className="relative">
               <button
                 type="button"
@@ -1616,37 +1634,34 @@ function GardenDashboard() {
             </div>
           </div>
 
-          {/* Right: Toolbelt – Chat, Inbox, Mirror, Evening, Settings */}
-          <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
+          {/* Right: Toolbelt — Chat, Compost, Mirror, Dark mode, Accessibility, Settings, Tour */}
+          <div className="flex items-center justify-end gap-3 h-12 shrink-0">
             <button
               id="mochi-chat-btn"
               type="button"
               onClick={() => setShowChat(true)}
-              className="text-4xl hover:scale-110 transition-transform cursor-pointer drop-shadow-sm filter"
+              className="w-10 h-10 flex items-center justify-center rounded-full hover:scale-105 transition-transform cursor-pointer drop-shadow-sm"
               title="Talk to Mochi"
             >
-              {renderSpiritAvatar()}
+              <span className="text-xl leading-none">{renderSpiritAvatar()}</span>
             </button>
-            <div className="flex items-center gap-1">
-              <button
-                id="tour-compost"
-                type="button"
-                onClick={() => setShowCompost(true)}
-                className={`flex items-center gap-2 min-h-[44px] min-w-[44px] py-2 pl-2 pr-2.5 rounded-lg focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors ${
-                  isDark ? 'text-slate-400 hover:text-slate-100 hover:bg-slate-700/60' : 'text-stone-600 hover:text-stone-900 hover:bg-stone-200/60'
-                }`}
-                aria-label="Compost Heap"
-                title="Compost Heap"
-              >
-                <span className="text-lg leading-none" aria-hidden>🍂</span>
-                <span className="hidden lg:inline text-xs font-medium">Compost</span>
-              </button>
-            </div>
+            <button
+              id="tour-compost"
+              type="button"
+              onClick={() => setShowCompost(true)}
+              className={`w-10 h-10 flex items-center justify-center rounded-full focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors ${
+                isDark ? 'text-slate-400 hover:text-slate-100 hover:bg-slate-700/60' : 'text-stone-600 hover:text-stone-900 hover:bg-stone-200'
+              }`}
+              aria-label="Compost Heap"
+              title="Compost Heap"
+            >
+              <span className="text-xl leading-none" aria-hidden>🍂</span>
+            </button>
             <button
               type="button"
               onClick={() => setShowSpiritMirror(true)}
-              className={`min-h-[44px] min-w-[44px] flex items-center justify-center p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors ${
-                isDark ? 'text-slate-400 hover:text-slate-100 hover:bg-slate-700/60' : 'text-stone-500 hover:text-stone-800 hover:bg-stone-200/60'
+              className={`w-10 h-10 flex items-center justify-center rounded-full focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors ${
+                isDark ? 'text-slate-400 hover:text-slate-100 hover:bg-slate-700/60' : 'text-stone-500 hover:text-stone-800 hover:bg-stone-200'
               }`}
               aria-label="Customize Spirit (Mirror)"
               title="Mirror"
@@ -1656,13 +1671,13 @@ function GardenDashboard() {
             <button
               type="button"
               onClick={() => setDarkModeOverride(!isDark)}
-              className={`min-h-[44px] min-w-[44px] flex items-center justify-center p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors ${
-                isDark ? 'text-indigo-300 hover:text-indigo-200 hover:bg-slate-700/60' : 'text-stone-500 hover:text-indigo-600 hover:bg-indigo-50'
+              className={`w-10 h-10 flex items-center justify-center rounded-full focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors ${
+                isDark ? 'text-indigo-300 hover:text-indigo-200 hover:bg-slate-700/60' : 'text-stone-500 hover:text-indigo-600 hover:bg-stone-200'
               }`}
               aria-label="Dark mode"
               title="Toggle dark mode"
             >
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden className="shrink-0">
                 <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
               </svg>
             </button>
@@ -1671,7 +1686,9 @@ function GardenDashboard() {
                 <button
                   type="button"
                   onClick={() => setShowAccessibilityModal(true)}
-                  className="min-h-[44px] min-w-[44px] flex items-center justify-center p-2 rounded-lg text-stone-500 hover:text-stone-800 hover:bg-stone-200/60 focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors"
+                  className={`w-10 h-10 flex items-center justify-center rounded-full focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors ${
+                    isDark ? 'text-slate-400 hover:text-slate-100 hover:bg-slate-700/60' : 'text-stone-500 hover:text-stone-800 hover:bg-stone-200'
+                  }`}
                   aria-label="Accessibility & Comfort"
                   title="Accessibility & Comfort"
                 >
@@ -1684,7 +1701,9 @@ function GardenDashboard() {
                   id="tour-settings"
                   type="button"
                   onClick={() => setActiveTab('settings')}
-                  className="min-h-[44px] min-w-[44px] flex items-center justify-center p-2 rounded-lg text-stone-500 hover:text-stone-800 hover:bg-stone-200/60 focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors"
+                  className={`w-10 h-10 flex items-center justify-center rounded-full focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors ${
+                    isDark ? 'text-slate-400 hover:text-slate-100 hover:bg-slate-700/60' : 'text-stone-500 hover:text-stone-800 hover:bg-stone-200'
+                  }`}
                   aria-label="Settings"
                   title="Settings"
                 >
@@ -1698,7 +1717,9 @@ function GardenDashboard() {
             <button
               type="button"
               onClick={() => setShowTour(true)}
-              className="min-h-[44px] min-w-[44px] flex items-center justify-center p-2 rounded-lg text-stone-400 hover:text-stone-600 hover:bg-stone-200/60 focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors"
+              className={`w-10 h-10 flex items-center justify-center rounded-full focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors ${
+                isDark ? 'text-slate-400 hover:text-slate-100 hover:bg-slate-700/60' : 'text-stone-400 hover:text-stone-600 hover:bg-stone-200'
+              }`}
               aria-label="Replay tour"
               title="Replay tour"
             >
@@ -1718,11 +1739,11 @@ function GardenDashboard() {
         <button
           type="button"
           onClick={() => setActiveTab(activeTab === 'settings' ? 'today' : 'settings')}
-          className="p-2.5 rounded-full bg-stone-900/80 backdrop-blur-md border border-white/10 shadow-lg text-stone-200 hover:text-white hover:bg-stone-800/90 transition-colors focus:outline-none focus:ring-2 focus:ring-moss-500/50"
+          className="w-10 h-10 flex items-center justify-center rounded-full bg-stone-900/80 backdrop-blur-md border border-white/10 shadow-lg text-stone-200 hover:text-white hover:bg-stone-800/90 transition-colors focus:outline-none focus:ring-2 focus:ring-moss-500/50"
           aria-label={activeTab === 'settings' ? 'Back' : 'Settings'}
           title={activeTab === 'settings' ? 'Back' : 'Settings'}
         >
-          <span className="text-xl" aria-hidden>{activeTab === 'settings' ? '←' : '⚙️'}</span>
+          <span className="text-xl leading-none" aria-hidden>{activeTab === 'settings' ? '←' : '⚙️'}</span>
         </button>
       </div>
 
@@ -1753,15 +1774,14 @@ function GardenDashboard() {
                   <button
                     type="button"
                     onClick={handleHelpMeStart}
-                    className="w-full py-6 px-6 rounded-2xl border-2 border-moss-500 bg-moss-600 text-stone-50 font-sans font-semibold text-lg hover:bg-moss-700 transition-colors flex flex-col items-center gap-2 shadow-xl shadow-moss-900/20 focus:outline-none focus:ring-4 focus:ring-moss-500/40"
+                    className="w-full py-4 bg-gradient-to-r from-indigo-500 to-purple-500 hover:from-indigo-600 hover:to-purple-600 text-white text-lg font-bold rounded-2xl shadow-lg hover:shadow-xl hover:scale-[1.02] transition-all flex justify-center items-center gap-2 focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:ring-offset-2"
                     aria-label="Help me start — 5 minute focus on one task"
                   >
-                    <span className="text-3xl" aria-hidden>🆘</span>
-                    <span>🆘 Help Me Start</span>
-                    <span className="text-sm font-normal text-moss-100 opacity-95">One tiny step. That&apos;s enough.</span>
+                    <span aria-hidden>✨</span>
+                    <span>Help Me Start</span>
                   </button>
                   {(nextUpItems ?? []).length > 0 && (
-                    <div className="w-full p-5 rounded-2xl border-2 border-moss-400 bg-moss-50/80 shadow-lg">
+                    <div className="relative w-full p-5 rounded-2xl border-2 border-moss-400 bg-moss-50/80 shadow-lg before:absolute before:-inset-1 before:bg-indigo-400/30 before:rounded-3xl before:animate-pulse before:-z-10">
                       <p className="font-sans text-xs font-semibold text-moss-700 uppercase tracking-wider mb-2">Current / Next</p>
                       <div className="flex flex-wrap items-center gap-3">
                         <div className="min-w-0 flex-1">
@@ -1982,6 +2002,78 @@ function GardenDashboard() {
                     </div>
                   </div>
                 </div>
+
+                <AnimatePresence>
+                  {pendingPlan && (
+                    <motion.div
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-stone-900/50 backdrop-blur-sm"
+                      onClick={() => setPendingPlan(null)}
+                      role="dialog"
+                      aria-modal="true"
+                      aria-labelledby="review-plan-heading"
+                    >
+                      <motion.div
+                        initial={{ y: 24, opacity: 0 }}
+                        animate={{ y: 0, opacity: 1 }}
+                        exit={{ y: 24, opacity: 0 }}
+                        transition={{ type: 'spring', damping: 28, stiffness: 300 }}
+                        onClick={(e) => e.stopPropagation()}
+                        className="w-full max-w-lg max-h-[85vh] flex flex-col rounded-t-2xl sm:rounded-2xl bg-white border border-stone-200 shadow-xl overflow-hidden"
+                      >
+                        <h2 id="review-plan-heading" className="font-serif text-stone-900 text-xl font-bold p-4 pb-2 shrink-0">
+                          ✨ AI Plan Generated. Do you agree?
+                        </h2>
+                        <p className="font-sans text-sm text-stone-500 px-4 pb-4 shrink-0">
+                          {pendingPlan.quota?.name ?? 'Quota'} — {pendingPlan.blocks?.length ?? 0} blocks
+                        </p>
+                        <div className="overflow-y-auto flex-1 min-h-0 px-4 pb-4">
+                          <ul className="space-y-2" role="list">
+                            {(pendingPlan.blocks ?? []).map((block, idx) => {
+                              const startH = parseInt(String(block.startTime).slice(0, 2), 10);
+                              const endH = parseInt(String(block.endTime).slice(0, 2), 10);
+                              const hours = Math.max(0, (endH - startH) || 1);
+                              const dateLabel = block.date
+                                ? new Date(block.date + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
+                                : block.date;
+                              return (
+                                <li
+                                  key={idx}
+                                  className="flex justify-between items-center py-3 px-3 rounded-xl bg-stone-50 border border-stone-100"
+                                >
+                                  <div>
+                                    <span className="font-sans font-medium text-stone-800 block">{dateLabel}</span>
+                                    <span className="font-sans text-sm text-stone-500">
+                                      {block.startTime} – {block.endTime} · {hours}h
+                                    </span>
+                                  </div>
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        </div>
+                        <div className="flex gap-3 p-4 pt-2 border-t border-stone-200 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => setPendingPlan(null)}
+                            className="flex-1 py-3.5 px-4 rounded-xl font-sans text-base font-semibold bg-stone-200 text-stone-800 hover:bg-stone-300 focus:outline-none focus:ring-2 focus:ring-stone-400 focus:ring-offset-2 transition-colors"
+                          >
+                            ❌ Discard
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleApproveRebalance}
+                            className="flex-1 py-3.5 px-4 rounded-xl font-sans text-base font-semibold bg-moss-600 text-white hover:bg-moss-700 focus:outline-none focus:ring-2 focus:ring-moss-500 focus:ring-offset-2 transition-colors"
+                          >
+                            ✅ Approve & Apply
+                          </button>
+                        </div>
+                      </motion.div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </div>
             )}
           </div>

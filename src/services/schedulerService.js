@@ -905,6 +905,7 @@ export function materializeWeeklyPlan(weekPlan, goals, calendarEvents = []) {
   if (!weekPlan || typeof weekPlan !== 'object') return {};
 
   const today = new Date();
+  const todayString = localISODate(today);
   const todayDay = today.getDay();
   const diff = todayDay === 0 ? -6 : 1 - todayDay;
   const monday = new Date(today);
@@ -923,6 +924,7 @@ export function materializeWeeklyPlan(weekPlan, goals, calendarEvents = []) {
     const d = new Date(monday);
     d.setDate(monday.getDate() + i);
     const dateStr = localISODate(d);
+    if (dateStr < todayString) continue;
     const dayIndex = d.getDay();
 
     const options = { weekStartDate: getDefaultWeekStart(), startHour: DEFAULT_HOUR_START, endHour: DEFAULT_HOUR_END, stormBufferMinutes: 30 };

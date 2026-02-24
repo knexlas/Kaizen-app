@@ -2,40 +2,23 @@ import { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { localISODate } from '../../services/dateUtils';
 import { useGarden } from '../../context/GardenContext';
+import { useEnergy } from '../../context/EnergyContext';
 
-const SPOON_COUNT = 12;
+/** Energy levels 1–5: used as Friction Filter (e.g. ≤2 → prioritize short tasks). */
+const ENERGY_OPTIONS = [
+  { level: 1, label: 'Survival Mode', sublabel: 'Only essentials & 5-min Kaizen tasks', emoji: '🥄' },
+  { level: 2, label: 'Low Battery', sublabel: 'Light plan, easy wins', emoji: '🥄' },
+  { level: 3, label: 'Steady', sublabel: 'Normal daily routines', emoji: '🥄' },
+  { level: 4, label: 'High Energy', sublabel: 'Ready for deeper work', emoji: '🥄' },
+  { level: 5, label: 'Peak Flow', sublabel: 'Bring on the big projects', emoji: '🥄' },
+];
 
-/** Wooden spoon SVG – cozy, wooden style (amber). */
-function WoodenSpoonIcon({ className = 'w-8 h-8 text-amber-700' }) {
-  return (
-    <svg viewBox="0 0 24 24" fill="currentColor" className={className} aria-hidden>
-      <path d="M7 2C9.76 2 12 4.24 12 7C12 8.64 11.21 10.11 10 11.09V22H4V11.09C2.79 10.11 2 8.64 2 7C2 4.24 4.24 2 7 2Z" />
-    </svg>
-  );
-}
-
-/** Dynamic label by spoon range (1–12). */
-function getSpoonLabel(count) {
-  if (count == null || count < 1) return null;
-  if (count <= 4) return 'Survival Mode. We will go gently.';
-  if (count <= 8) return 'Nourishing Day. Good for growth.';
-  return 'Abundance. Ready for the harvest.';
-}
-
-/** Spoon count (1–12) → energy modifier for plan logic. */
-function spoonCountToModifier(count) {
-  if (count == null || count < 1) return 0;
-  if (count <= 4) return -2;
-  if (count <= 8) return 0;
-  return 2;
-}
-
-/** Map legacy modifier to spoon count for "Repeat Yesterday". */
-function modifierToSpoonCount(modifier) {
-  if (modifier == null || typeof modifier !== 'number') return 6;
-  if (modifier <= -2) return 4;
-  if (modifier >= 1) return 9;
-  return 6;
+/** Map legacy modifier to energy level 1–5 for "Repeat Yesterday". */
+function modifierToEnergyLevel(modifier) {
+  if (modifier == null || typeof modifier !== 'number') return 3;
+  if (modifier <= -2) return 1;
+  if (modifier >= 1) return 5;
+  return 3;
 }
 
 /** Get yesterday as YYYY-MM-DD (local timezone). */
@@ -117,9 +100,9 @@ export default function MorningCheckIn({ onComplete, onDismiss, goals = [], logM
     if (!smallJoys || smallJoys.length === 0) return null;
     return smallJoys[Math.floor(Math.random() * smallJoys.length)];
   });
+  const { setEnergyLevel } = useEnergy();
   const [step, setStep] = useState('energy');
-  const [selectedSpoonCount, setSelectedSpoonCount] = useState(null);
-  const [hoverSpoonCount, setHoverSpoonCount] = useState(null);
+  const [selectedEnergyLevel, setSelectedEnergyLevel] = useState(null);
   const [measurementValues, setMeasurementValues] = useState({});
 
   const vitalityGoals = useMemo(
@@ -132,17 +115,17 @@ export default function MorningCheckIn({ onComplete, onDismiss, goals = [], logM
     [goals]
   );
 
-  const yesterdaySpoonCount = useMemo(() => {
+  const yesterdayEnergyLevel = useMemo(() => {
     if (!yesterdayPlan) return null;
-    if (typeof yesterdayPlan.spoonCount === 'number' && yesterdayPlan.spoonCount >= 1 && yesterdayPlan.spoonCount <= 12) return yesterdayPlan.spoonCount;
-    return modifierToSpoonCount(yesterdayPlan.modifier);
+    if (typeof yesterdayPlan.spoonCount === 'number' && yesterdayPlan.spoonCount >= 1 && yesterdayPlan.spoonCount <= 5) return yesterdayPlan.spoonCount;
+    return modifierToEnergyLevel(yesterdayPlan.modifier);
   }, [yesterdayPlan]);
 
-  const handleSpoonSelect = (spoonCount) => {
-    setSelectedSpoonCount(spoonCount);
-    const modifier = spoonCountToModifier(spoonCount);
+  const handleEnergySelect = (level) => {
+    setSelectedEnergyLevel(level);
+    setEnergyLevel(level);
     if (vitalityGoals.length === 0) {
-      onComplete?.(modifier, spoonCount);
+      onComplete?.(level, level);
       return;
     }
     const initial = {};
@@ -154,8 +137,8 @@ export default function MorningCheckIn({ onComplete, onDismiss, goals = [], logM
   };
 
   const finishWithMeasurements = () => {
-    const count = selectedSpoonCount ?? 6;
-    onComplete?.(spoonCountToModifier(count), count);
+    const level = selectedEnergyLevel ?? 3;
+    onComplete?.(level, level);
   };
 
   const handleMeasurementsDone = () => {
@@ -220,56 +203,43 @@ export default function MorningCheckIn({ onComplete, onDismiss, goals = [], logM
                 </div>
               )}
               <p className="font-sans text-stone-600 text-center mb-4">
-                How many spoons did you wake up with?
+                How&apos;s your energy today?
               </p>
-              {yesterdayPlan && yesterdaySpoonCount != null && (
+              {yesterdayPlan && yesterdayEnergyLevel != null && (
                 <div className="mb-4">
                   <button
                     type="button"
-                    onClick={() => handleSpoonSelect(yesterdaySpoonCount)}
+                    onClick={() => handleEnergySelect(yesterdayEnergyLevel)}
                     className="w-full py-3 px-4 rounded-xl border-2 border-moss-300 bg-moss-50/80 font-sans text-sm text-moss-800 hover:bg-moss-100 hover:border-moss-400 focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors"
                   >
-                    🔄 Repeat Yesterday&apos;s Flow ({yesterdaySpoonCount} spoons)
+                    🔄 Repeat Yesterday ({ENERGY_OPTIONS.find((o) => o.level === yesterdayEnergyLevel)?.label ?? `Level ${yesterdayEnergyLevel}`})
                   </button>
                 </div>
               )}
-              <div
-                className="flex flex-wrap justify-center gap-0.5 sm:gap-1 mb-4"
-                role="group"
-                aria-label="Select number of spoons"
-                onMouseLeave={() => setHoverSpoonCount(null)}
-              >
-                {Array.from({ length: SPOON_COUNT }, (_, i) => {
-                  const count = i + 1;
-                  const selected = selectedSpoonCount === count;
-                  const highlightUpTo = hoverSpoonCount ?? selectedSpoonCount;
-                  const highlighted = highlightUpTo != null && count <= highlightUpTo;
+              <div className="space-y-2" role="group" aria-label="Select energy level">
+                {ENERGY_OPTIONS.map((option) => {
+                  const selected = selectedEnergyLevel === option.level;
                   return (
                     <button
-                      key={count}
+                      key={option.level}
                       type="button"
-                      onClick={() => handleSpoonSelect(count)}
-                      onMouseEnter={() => setHoverSpoonCount(count)}
-                      className={`rounded-lg border-2 flex items-center justify-center transition-colors focus:outline-none focus:ring-2 focus:ring-moss-500/40 focus:ring-offset-1 ${
-                        highlighted
-                          ? 'border-amber-600 bg-amber-50 text-amber-800'
-                          : 'border-stone-200 bg-white text-stone-400'
-                      } ${selected ? 'ring-2 ring-amber-400/60 ring-offset-1' : ''}`}
-                      style={{ width: 36, height: 36 }}
+                      onClick={() => handleEnergySelect(option.level)}
+                      className={`w-full text-left py-3 px-4 rounded-xl border-2 transition-colors focus:outline-none focus:ring-2 focus:ring-moss-500/40 focus:ring-offset-1 ${
+                        selected
+                          ? 'border-amber-500 bg-amber-50 text-amber-900 ring-2 ring-amber-400/60 ring-offset-1'
+                          : 'border-stone-200 bg-white text-stone-700 hover:border-stone-300 hover:bg-stone-50'
+                      }`}
                       aria-pressed={selected}
-                      aria-label={`${count} spoons`}
-                      title={`${count} spoons`}
+                      aria-label={`${option.level} ${option.label}`}
                     >
-                      <WoodenSpoonIcon className="w-6 h-6 sm:w-7 sm:h-7 text-amber-700" />
+                      <span className="font-sans font-medium">
+                        [{option.level} {option.emoji}] {option.label}
+                      </span>
+                      <p className="font-sans text-xs text-stone-500 mt-0.5">{option.sublabel}</p>
                     </button>
                   );
                 })}
               </div>
-              {selectedSpoonCount != null && (
-                <p className="font-sans text-sm text-stone-600 text-center">
-                  {getSpoonLabel(selectedSpoonCount)}
-                </p>
-              )}
             </motion.div>
           )}
 

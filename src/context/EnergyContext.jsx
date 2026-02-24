@@ -3,16 +3,16 @@ import { addEnergyRecord as saveEnergyRecord } from '../firebase/services';
 
 const EnergyContext = createContext(null);
 
-const DEFAULT_DAILY = 5;
+const DEFAULT_DAILY = 3;
 
-/** Spoon count (1–12) is owned by GardenContext.dailySpoonCount; read via useGarden(). */
+/** Energy level 1–5 is used as a "Friction Filter" (e.g. ≤2 → prioritize short tasks). Stored here and in GardenContext.dailySpoonCount. */
 
 export function EnergyProvider({ children }) {
   const [dailyEnergy, setDailyEnergy] = useState(DEFAULT_DAILY);
   const [currentEnergy, setCurrentEnergy] = useState(DEFAULT_DAILY);
 
   const setEnergyLevel = useCallback((level) => {
-    const n = Math.max(1, Math.min(12, Number(level) || DEFAULT_DAILY));
+    const n = Math.max(1, Math.min(5, Number(level) || DEFAULT_DAILY));
     setDailyEnergy(n);
     setCurrentEnergy(n);
   }, []);

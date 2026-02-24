@@ -41,6 +41,21 @@ function isRoutineSession(a) {
   return a && typeof a === 'object' && a.type === 'routine' && a.parentGoalId;
 }
 
+/** Parse duration in minutes from a title string (e.g. "5 mins", "10-minute stretch"). */
+function parseDurationFromTitle(title) {
+  if (!title || typeof title !== 'string') return null;
+  const m = title.match(/(\d+)\s*(?:min|minute|mins?)\b/i) || title.match(/(\d+)-minute/i);
+  return m ? parseInt(m[1], 10) : null;
+}
+
+/** Backlog category display labels with emoji for section headers. */
+const BACKLOG_CATEGORY_LABELS = {
+  'Care & Hygiene': '🧼 Care & Hygiene',
+  'Life Admin': '📁 Life Admin',
+  'Deep Work': '💼 Deep Work',
+  'Other': '📋 Other',
+};
+
 /** Emoji for the user's spirit from Spirit Builder (creation). Matches GardenDashboard / MochiSpirit. */
 function getSpiritEmoji(spiritConfig) {
   if (!spiritConfig) return '🦉';
@@ -278,7 +293,7 @@ function TimeSlot({
         )}
         {routineSession ? (
           <>
-            <div className="flex items-center justify-between gap-2">
+            <div className={`flex items-center justify-between gap-2 ${isFullyHarvested ? 'line-through text-stone-400 opacity-60 transition-all duration-500' : ''}`}>
               <div className="flex items-center gap-2 min-w-0">
                 <RepeatIcon />
                 <span className="font-sans text-sm font-medium truncate">{assignment.title ?? goal?.title ?? 'Routine'}</span>
@@ -310,7 +325,7 @@ function TimeSlot({
                 {durationLabel}
               </span>
             )}
-            <div className="flex items-center justify-between gap-2 pr-24">
+            <div className={`flex items-center justify-between gap-2 pr-24 ${isFullyHarvested ? 'line-through text-stone-400 opacity-60 transition-all duration-500' : ''}`}>
               <span className="font-sans text-sm font-medium truncate">{goal.title}</span>
               {cloudSaved && (
                 <motion.span
@@ -397,6 +412,16 @@ function TimeSlot({
   );
 }
 
+/** True if goal is considered completed (harvested) for cross-off styling. */
+function isGoalCompleted(goal) {
+  if (!goal) return false;
+  const est = Number(goal.estimatedMinutes) || 0;
+  const total = Number(goal.totalMinutes) || 0;
+  if (est > 0 && total >= est) return true;
+  const milestones = goal.milestones ?? [];
+  return milestones.length > 0 && milestones.every((m) => m.completed);
+}
+
 /** Anytime Today (Flexible) drop zone: tasks without a fixed hour. */
 function AnytimePoolSection({
   assignments,
@@ -406,7 +431,16 @@ function AnytimePoolSection({
   onMilestoneCheck,
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: 'anytime-pool' });
-  const list = assignments?.anytime ?? [];
+  const rawList = assignments?.anytime ?? [];
+  const listWithIndex = rawList.map((assignment, originalIndex) => ({ assignment, originalIndex }));
+  const list = [...listWithIndex].sort((a, b) => {
+    const goalA = goals?.find((g) => g.id === getGoalIdFromAssignment(a.assignment));
+    const goalB = goals?.find((g) => g.id === getGoalIdFromAssignment(b.assignment));
+    const doneA = isGoalCompleted(goalA);
+    const doneB = isGoalCompleted(goalB);
+    if (doneA === doneB) return 0;
+    return doneA ? 1 : -1;
+  });
   return (
     <div className="mb-4">
       <h3 className="font-sans text-sm font-semibold text-stone-700 mb-2 flex items-center gap-2">
@@ -422,7 +456,7 @@ function AnytimePoolSection({
         {list.length === 0 && (
           <span className="font-sans text-sm text-stone-400 py-2">Drop liquid tasks here — no fixed time</span>
         )}
-        {list.map((assignment, index) => {
+        {list.map(({ assignment, originalIndex }, index) => {
           const goalId = getGoalIdFromAssignment(assignment);
           const slotRitualTitle = getRitualTitleFromAssignment(assignment);
           const subtask = getSubtaskFromAssignment(assignment);
@@ -431,10 +465,12 @@ function AnytimePoolSection({
           const title = routineSession ? (assignment.title ?? goal?.title ?? 'Routine') : (goal?.title ?? 'Task');
           const firstUncompleted = goal?.milestones?.find((m) => !m.completed);
           const milestoneTitle = firstUncompleted?.title ?? firstUncompleted?.text;
+          const completed = isGoalCompleted(goal);
+          const completedClasses = completed ? 'line-through text-stone-400 opacity-60 transition-all duration-500' : '';
           return (
             <div
-              key={assignment.id ?? `anytime-${index}`}
-              className={`flex items-center gap-2 px-3 py-2 rounded-lg border shrink-0 ${
+              key={assignment.id ?? `anytime-${originalIndex}`}
+              className={`flex items-center gap-2 px-3 py-2 rounded-lg border shrink-0 ${completedClasses} ${
                 routineSession ? 'bg-slate-200 border-slate-300' : 'bg-moss-200 border-moss-500/50'
               } text-stone-800`}
             >
@@ -473,7 +509,7 @@ function AnytimePoolSection({
                 <input
                   type="checkbox"
                   checked={false}
-                  onChange={() => onRemove(index)}
+                  onChange={() => onRemove(originalIndex)}
                   className="rounded border-stone-300 text-moss-500 focus:ring-moss-500/50"
                   aria-label={`Complete and remove: ${title}`}
                 />
@@ -1505,6 +1541,7 @@ function TimeSlicer({
   const [seedBagTapTarget, setSeedBagTapTarget] = useState(null); // { goal, item? } for tap-to-add popover
   const [inspectedDate, setInspectedDate] = useState(null);
   const [activeSeedTab, setActiveSeedTab] = useState('all');
+  const [seedBagSearch, setSeedBagSearch] = useState('');
   const [spoonsToast, setSpoonsToast] = useState(false);
   const [energyToast, setEnergyToast] = useState(false);
   const [lightenedTasksFeedback, setLightenedTasksFeedback] = useState([]);
@@ -1599,13 +1636,19 @@ function TimeSlicer({
   }, [energyToast]);
 
   const baseCapacity = MAX_SLOTS_BY_WEATHER[weather] ?? 6;
+  /** Energy level 1–5 maps to slot count (Friction Filter); legacy 6–12 is used as-is. */
+  const energyLevelToSlots = (n) => (n <= 2 ? 2 + (n - 1) * 2 : n === 3 ? 6 : n === 4 ? 8 : 10);
   const maxSlots =
-    typeof dailySpoonCount === 'number' && dailySpoonCount >= 0 && dailySpoonCount <= 12
-      ? dailySpoonCount
-      : Math.max(1, baseCapacity + dailyEnergyModifier);
+    typeof dailySpoonCount === 'number' && dailySpoonCount >= 1 && dailySpoonCount <= 5
+      ? energyLevelToSlots(dailySpoonCount)
+      : typeof dailySpoonCount === 'number' && dailySpoonCount >= 0 && dailySpoonCount <= 12
+        ? dailySpoonCount
+        : Math.max(1, baseCapacity + dailyEnergyModifier);
   const isLowEnergy =
-    (typeof dailySpoonCount === 'number' && dailySpoonCount <= 4) || dailyEnergyModifier === -2;
+    (typeof dailySpoonCount === 'number' && dailySpoonCount <= 2) || dailyEnergyModifier === -2;
   const filledTimes = HOURS.filter((h) => assignments[h] != null);
+  const anytimeCount = (assignments?.anytime ?? []).length;
+  const hasNoAssignments = filledTimes.length === 0 && anytimeCount === 0;
   const filledSpoonTotal = useMemo(() => {
     return HOURS.reduce((sum, h) => {
       const a = assignments[h];
@@ -2129,6 +2172,13 @@ function TimeSlicer({
                   </div>
                 );
               })()}
+              {hasNoAssignments && (
+                <div className="flex flex-col items-center justify-center w-full text-center p-8 opacity-80 animate-in fade-in duration-500" aria-live="polite">
+                  <span className="text-6xl mb-4" aria-hidden>🍃</span>
+                  <h3 className="text-xl font-bold text-stone-700 mb-2">Your day is clear.</h3>
+                  <p className="text-stone-500 text-sm">Rest in your garden, or pull a new seed from the backlog.</p>
+                </div>
+              )}
               <div className="space-y-0">
                 {HOURS.map((hour) => (
                   <TimeSlot
@@ -2153,131 +2203,128 @@ function TimeSlicer({
             </div>
           </div>
 
-          {/* Seed Bag — below schedule */}
+          {/* Seed Bag — searchable backlog list */}
           <div className="border border-stone-200 rounded-lg bg-white/60 p-4 flex flex-col min-h-0">
             <h3 className="font-serif text-stone-800 text-sm mb-1 shrink-0">Seed Bag</h3>
             <p className="font-sans text-xs text-stone-500 mb-3 shrink-0">
-              Drag or tap a slot to add a task.
+              Tap + to pull an item into your day.
             </p>
-            <div className="flex flex-col gap-4 min-h-0 max-h-[50vh] overflow-y-auto">
-              {todayRitualEntries.length === 0 && safeGoalBank.length === 0 ? (
-                <div className="py-6 text-center">
-                  <p className="font-sans text-sm text-stone-500 mb-3">
-                    Seed bag empty.
-                  </p>
-                  {onOpenGoalCreator && (
-                    <button
-                      type="button"
-                      onClick={onOpenGoalCreator}
-                      className="py-2.5 px-4 rounded-lg border-2 border-dashed border-moss-400 text-moss-700 font-sans text-sm hover:bg-moss-50 hover:border-moss-500 focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors"
-                    >
-                      Plant a Seed
-                    </button>
-                  )}
-                </div>
-              ) : (
-                <>
-                  <div>
-                    <h4 className="font-sans text-xs font-medium text-amber-800 mb-2">🌱 Today&apos;s Rituals</h4>
-                    <div className="flex flex-wrap gap-2">
-                      {todayRitualEntries.length === 0 ? (
-                        <p className="font-sans text-xs text-stone-400">No rituals today.</p>
-                      ) : (
-                        todayRitualEntries.map(({ goal, ritual }) => (
-                          <SeedChip
-                            key={ritual.id}
-                            goal={goal}
-                            item={{ ...ritual, goalId: goal.id, _type: 'routine' }}
-                            isRitual={true}
-                            assignments={assignments}
-                            onSeedClick={onSeedClick}
-                            onMilestoneCheck={handleMilestoneCheck}
-                            onEditGoal={onEditGoal}
-                            onCompostGoal={onCompostGoal}
-                            onAddRoutineTime={onAddRoutineTime}
-                            onPlantRoutineBlock={handlePlantRoutineBlock}
-                            onStartFocus={onStartFocus}
-                            onTap={(g, it) => setSeedBagTapTarget({ goal: g, item: it })}
-                          />
-                        ))
+            <input
+              type="text"
+              placeholder="🔍 Search backlog..."
+              value={seedBagSearch}
+              onChange={(e) => setSeedBagSearch(e.target.value)}
+              className="w-full p-3 bg-stone-100 border border-stone-200 rounded-xl mb-4 focus:outline-none focus:ring-2 focus:ring-indigo-400 shrink-0"
+              aria-label="Search backlog"
+            />
+            <div className="flex flex-col min-h-0 max-h-[50vh] overflow-y-auto rounded-xl border border-stone-100 bg-white/80">
+              {(() => {
+                const searchLower = (seedBagSearch || '').trim().toLowerCase();
+                const ritualRows = todayRitualEntries.map(({ goal, ritual }) => {
+                  const durationMin = (parseDurationFromTitle(ritual.title) ?? Number(goal.estimatedMinutes)) || 5;
+                  return {
+                    key: `ritual-${ritual.id}`,
+                    goal,
+                    item: { ...ritual, goalId: goal.id, _type: 'routine' },
+                    title: ritual.title || goal.title,
+                    typeLabel: 'Ritual',
+                    category: goal.category || goal.title || 'Other',
+                    durationMinutes: durationMin,
+                  };
+                });
+                const bankRows = safeGoalBank.map((goal) => {
+                  const durationMin = Number(goal.estimatedMinutes) || 15;
+                  return {
+                    key: goal.id,
+                    goal,
+                    item: null,
+                    title: goal.title,
+                    typeLabel: goal._projectGoal ? (goal._projectName || 'Project') : (goal.type === 'routine' ? 'Routine' : goal.type === 'vitality' ? 'Vitality' : 'Kaizen'),
+                    category: goal.category || 'Other',
+                    durationMinutes: durationMin,
+                  };
+                });
+                const allRows = [...ritualRows, ...bankRows];
+                const filtered = searchLower
+                  ? allRows.filter((r) => (r.title || '').toLowerCase().includes(searchLower) || (r.typeLabel || '').toLowerCase().includes(searchLower) || (r.category || '').toLowerCase().includes(searchLower))
+                  : allRows;
+
+                const categoryOrder = ['Care & Hygiene', 'Life Admin', 'Deep Work', 'Other'];
+                const byCategory = filtered.reduce((acc, row) => {
+                  const cat = row.category || 'Other';
+                  if (!acc[cat]) acc[cat] = [];
+                  acc[cat].push(row);
+                  return acc;
+                }, {});
+                const sortedCategories = [...new Set(filtered.map((r) => r.category || 'Other'))].sort(
+                  (a, b) => (categoryOrder.indexOf(a) === -1 ? 99 : categoryOrder.indexOf(a)) - (categoryOrder.indexOf(b) === -1 ? 99 : categoryOrder.indexOf(b)) || a.localeCompare(b)
+                );
+
+                if (filtered.length === 0) {
+                  return (
+                    <div className="py-8 text-center">
+                      <p className="font-sans text-sm text-stone-500 mb-3">
+                        {allRows.length === 0 ? 'Seed bag empty.' : 'No matches.'}
+                      </p>
+                      {onOpenGoalCreator && allRows.length === 0 && (
+                        <button
+                          type="button"
+                          onClick={onOpenGoalCreator}
+                          className="py-2.5 px-4 rounded-lg border-2 border-dashed border-moss-400 text-moss-700 font-sans text-sm hover:bg-moss-50 hover:border-moss-500 focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors"
+                        >
+                          Plant a Seed
+                        </button>
                       )}
                     </div>
-                  </div>
-                  {/* Pill tabs + filtered Seed Bag */}
-                  {(() => {
-                    const kaizenSeeds = safeGoalBank.filter((g) => g.type !== 'routine' && g.type !== 'vitality' && !g._projectGoal);
-                    const routineSeeds = safeGoalBank.filter((g) => g.type === 'routine');
-                    const vitalitySeeds = safeGoalBank.filter((g) => g.type === 'vitality');
-                    const projectSeeds = safeGoalBank.filter((g) => g._projectGoal);
-                    const chipProps = (goal) => ({ key: goal.id, goal, assignments, onSeedClick, onMilestoneCheck: handleMilestoneCheck, onEditGoal, onCompostGoal, onAddRoutineTime, onPlantRoutineBlock: handlePlantRoutineBlock, onAddSubtask, onStartFocus, onTap: (g, it) => setSeedBagTapTarget({ goal: g, item: it }) });
-                    const hasAny = safeGoalBank.length > 0;
-                    if (!hasAny) return (
-                      <div className="py-2">
-                        <p className="font-sans text-xs text-stone-400 mb-2">No goals yet.</p>
-                        {onOpenGoalCreator && (
-                          <button type="button" onClick={onOpenGoalCreator} className="font-sans text-xs text-moss-600 hover:text-moss-700 underline underline-offset-2">
-                            + Create a goal
-                          </button>
-                        )}
-                      </div>
-                    );
-                    const tabs = [
-                      { id: 'all', label: 'All' },
-                      { id: 'kaizen', label: '🌱 Kaizen' },
-                      { id: 'routine', label: '🪨 Routines' },
-                      { id: 'project', label: '🌻 Projects' },
-                    ];
-                    const sections = [
-                      { id: 'kaizen', label: '🌱 Kaizen', items: kaizenSeeds, emptyText: 'No kaizen goals yet.' },
-                      { id: 'routine', label: '🪨 Routines', items: routineSeeds, emptyText: 'No routines.' },
-                      { id: 'project', label: '🌻 Projects', items: projectSeeds, emptyText: null },
-                      { id: 'vitality', label: '💧 Vitality', items: vitalitySeeds, emptyText: null },
-                    ];
-                    const sectionsToShow = activeSeedTab === 'all'
-                      ? sections.filter((s) => s.items.length > 0 || s.emptyText)
-                      : sections.filter((s) => s.id === activeSeedTab);
-                    return (
-                      <>
-                        <div className="flex gap-1.5 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-stone-300 scrollbar-track-transparent" role="tablist" aria-label="Seed bag filter">
-                          {tabs.map((tab) => (
-                            <button
-                              key={tab.id}
-                              type="button"
-                              role="tab"
-                              aria-selected={activeSeedTab === tab.id}
-                              onClick={() => setActiveSeedTab(tab.id)}
-                              className={`shrink-0 px-3 py-1.5 rounded-full font-sans text-xs font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-moss-500/40 ${
-                                activeSeedTab === tab.id
-                                  ? 'bg-moss-600 text-stone-50'
-                                  : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
-                              }`}
-                            >
-                              {tab.label}
-                            </button>
-                          ))}
+                  );
+                }
+                return (
+                  <div className="divide-y divide-stone-100">
+                    {sortedCategories.map((cat) => (
+                      <section key={cat} className="relative">
+                        <div className="sticky top-0 z-10 bg-stone-100/95 backdrop-blur py-2 px-3 border-b border-stone-200">
+                          <h4 className="font-sans text-xs font-bold text-stone-700 uppercase tracking-wide">
+                            {BACKLOG_CATEGORY_LABELS[cat] ?? cat}
+                          </h4>
                         </div>
-                        <div className="flex flex-col gap-3">
-                          {sectionsToShow.map((section) => (
-                            <div key={section.id}>
-                              {activeSeedTab === 'all' && (
-                                <h4 className="font-sans text-[11px] font-semibold text-stone-500 uppercase tracking-wider mb-1.5">{section.label}</h4>
-                              )}
-                              {section.items.length === 0 ? (
-                                section.emptyText && <p className="font-sans text-xs text-stone-400">{section.emptyText}</p>
-                              ) : (
-                                <div className="flex flex-wrap gap-2">
-                                  {section.items.map((goal) => <SeedChip key={goal.id} {...chipProps(goal)} compact />)}
+                        <ul className="divide-y divide-stone-100" role="list">
+                          {(byCategory[cat] || []).map(({ key, goal, item, title, typeLabel, durationMinutes }) => {
+                            const isKaizen = durationMinutes <= 15;
+                            return (
+                              <li key={key}>
+                                <div className="flex justify-between items-center p-3 hover:bg-stone-50 transition-colors">
+                                  <div className="min-w-0 flex-1 pr-3">
+                                    <p className="font-sans text-sm font-medium text-stone-900 truncate">
+                                      <span className="font-sans text-xs text-stone-500 font-normal tabular-nums mr-1.5">[{durationMinutes} min]</span>
+                                      {title || 'Untitled'}
+                                      {isKaizen && (
+                                        <span className="ml-1.5 inline-flex items-center rounded-md bg-emerald-50 px-1.5 py-0.5 font-sans text-[10px] font-medium text-emerald-700" title="Low-friction (≤15 min)">
+                                          🌱 Kaizen
+                                        </span>
+                                      )}
+                                    </p>
+                                    <p className="font-sans text-[11px] text-stone-500">{typeLabel}</p>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => setSeedBagTapTarget({ goal, item })}
+                                    className="p-2 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-lg font-bold text-sm shrink-0 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                                    aria-label={`Add ${title || 'item'} to day`}
+                                  >
+                                    +
+                                  </button>
                                 </div>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      </>
-                    );
-                  })()}
-                </>
-              )}
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </section>
+                    ))}
+                  </div>
+                );
+              })()}
             </div>
+          </div>
 
             {/* Tap-to-add popover / action sheet */}
             <AnimatePresence>
@@ -2332,7 +2379,6 @@ function TimeSlicer({
                 </motion.div>
               )}
             </AnimatePresence>
-          </div>
         </div>
       </DndContext>
       ))}

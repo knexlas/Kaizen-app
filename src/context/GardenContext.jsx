@@ -747,6 +747,8 @@ export function GardenProvider({ children }) {
       type,
       totalMinutes: goal.totalMinutes ?? 0,
       createdAt: goal.createdAt ?? new Date().toISOString(),
+      estimatedMinutes: goal.estimatedMinutes ?? 15,
+      category: goal.category ?? null,
       milestones,
       subtasks,
       ...(type === 'vitality' && { metrics: Array.isArray(goal.metrics) ? goal.metrics : [] }),
@@ -779,6 +781,8 @@ export function GardenProvider({ children }) {
       id: uid(),
       type: 'routine',
       title: 'Care & Hygiene',
+      category: 'Care & Hygiene',
+      estimatedMinutes: 5,
       totalMinutes: 0,
       createdAt: now,
       rituals: [
@@ -794,6 +798,8 @@ export function GardenProvider({ children }) {
       id: uid(),
       type: 'routine',
       title: 'Life Admin',
+      category: 'Life Admin',
+      estimatedMinutes: 5,
       totalMinutes: 0,
       createdAt: now,
       rituals: [
@@ -1012,9 +1018,9 @@ export function GardenProvider({ children }) {
     );
   }, []);
 
-  const completeMorningCheckIn = useCallback((spoonCountOrModifier) => {
-    const n = Number(spoonCountOrModifier);
-    if (n >= 1 && n <= 12) {
+  const completeMorningCheckIn = useCallback((energyLevelOrModifier) => {
+    const n = Number(energyLevelOrModifier);
+    if (n >= 1 && n <= 5) {
       setDailySpoonCount(n);
       setDailyEnergyModifier(0);
     } else if (n === 0) {

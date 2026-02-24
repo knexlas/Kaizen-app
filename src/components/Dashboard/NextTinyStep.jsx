@@ -273,7 +273,7 @@ export default function NextTinyStep({
   return (
     <>
     <div
-      className={`rounded-xl border-2 border-stone-200 bg-stone-50/90 ${compact ? 'p-3' : 'p-4'} ${className}`}
+      className={`relative before:absolute before:-inset-1 before:bg-indigo-400/30 before:rounded-3xl before:animate-pulse before:-z-10 rounded-xl border-2 border-stone-200 bg-stone-50/90 ${compact ? 'p-3' : 'p-4'} ${className}`}
       aria-label="Next tiny steps"
     >
       <h3 className={`font-serif text-stone-800 ${compact ? 'text-sm mb-2' : 'text-base mb-3'}`}>
