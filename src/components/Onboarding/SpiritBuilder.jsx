@@ -106,7 +106,7 @@ export default function SpiritBuilder({ onComplete, mode = 'create', initialConf
   };
 
   return (
-    <div className="min-h-[60vh] flex flex-col items-center justify-center p-6 bg-[#FDFCF5] rounded-2xl border border-stone-200 relative overflow-hidden shadow-inner">
+    <div className="min-h-0 max-h-[85vh] sm:min-h-[50vh] flex flex-col items-center justify-center p-4 sm:p-6 overflow-y-auto bg-[#FDFCF5] rounded-2xl border border-stone-200 relative shadow-inner">
       {poofing && (
         <div className="absolute inset-0 z-20 flex items-center justify-center pointer-events-none" aria-hidden>
           <div className="animate-poof-burst w-32 h-32 rounded-full bg-amber-200/80 mix-blend-lighten" />
@@ -156,14 +156,14 @@ export default function SpiritBuilder({ onComplete, mode = 'create', initialConf
             className="w-full max-w-lg flex flex-col items-center text-center"
           >
             <h2 className="font-serif text-stone-900 text-xl mb-1">The Shape</h2>
-            <p className="font-sans text-stone-600 text-sm mb-6">Choose your companion’s essence.</p>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 w-full">
+            <p className="font-sans text-stone-600 text-sm mb-4 sm:mb-6">Choose your companion’s essence.</p>
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 sm:gap-4 w-full">
               {ARCHETYPES.map((arch) => (
                 <button
                   key={arch.id}
                   type="button"
                   onClick={() => setType(arch.id)}
-                  className={`flex flex-col items-center gap-2 p-4 rounded-2xl border-2 transition-all focus:outline-none focus:ring-2 focus:ring-moss-500/50 ${
+                  className={`flex flex-col items-center gap-1 sm:gap-2 p-3 sm:p-4 rounded-xl sm:rounded-2xl border-2 transition-all focus:outline-none focus:ring-2 focus:ring-moss-500/50 min-h-[44px] ${
                     type === arch.id
                       ? `${arch.colorClass} ring-2 ${arch.glowClass} shadow-lg`
                       : 'bg-stone-50 border-stone-200 hover:border-stone-300 hover:bg-stone-100'
@@ -176,8 +176,8 @@ export default function SpiritBuilder({ onComplete, mode = 'create', initialConf
                       <span className="text-4xl leading-none">{arch.emoji}</span>
                     )}
                   </span>
-                  <span className="font-serif text-stone-900 font-medium">{arch.title}</span>
-                  <span className="font-sans text-xs text-stone-500">{arch.description}</span>
+                  <span className="font-serif text-stone-900 font-medium text-sm sm:text-base">{arch.title}</span>
+                  <span className="font-sans text-[10px] sm:text-xs text-stone-500 line-clamp-2">{arch.description}</span>
                 </button>
               ))}
             </div>

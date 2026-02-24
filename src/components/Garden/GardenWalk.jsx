@@ -228,16 +228,6 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
           </div>
         )}
         <div className="m-2 sm:m-3 h-[70vh] w-full rounded-3xl overflow-hidden relative">
-          {/* Top-left: Almanac button */}
-          <button
-            type="button"
-            onClick={() => setActiveAlmanac('journal')}
-            className="absolute top-4 left-4 z-50 p-3 bg-white/80 backdrop-blur rounded-2xl shadow-lg hover:bg-white transition-all text-stone-700 font-bold flex items-center gap-2 focus:outline-none focus:ring-2 focus:ring-moss-500/50 focus:ring-offset-2"
-            aria-label="Open Almanac"
-          >
-            <span aria-hidden>📖</span>
-            Almanac
-          </button>
           <Garden3D
             focusGoal={activeFocusGoal}
             onOpenShop={() => setIsShopOpen(true)}
@@ -251,26 +241,36 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
                 setViewingGoal(goal);
               }
             }}
+            uiBlocksCanvas={!!(viewingGoal || activeAlmanac)}
           />
           <VirtualJoystick />
-        </div>
-
-        {/* Goal viewer panel — when user clicks a 3D plant */}
-        <AnimatePresence>
-          {viewingGoal && (
-            <motion.div
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: 20 }}
-              transition={{ duration: 0.2 }}
-              className="fixed top-20 right-8 z-50 w-96 pointer-events-auto"
+          {/* UI overlay: pointer-events-none so 3D canvas gets clicks; each interactive element has pointer-events-auto */}
+          <div className="absolute inset-0 z-40 pointer-events-none rounded-3xl">
+            <button
+              type="button"
+              onClick={() => setActiveAlmanac('journal')}
+              className="absolute top-4 left-4 z-50 p-3 bg-white/80 backdrop-blur rounded-2xl shadow-lg hover:bg-white transition-all text-stone-700 font-bold flex items-center gap-2 focus:outline-none focus:ring-2 focus:ring-moss-500/50 focus:ring-offset-2 pointer-events-auto"
+              aria-label="Open Almanac"
             >
-              <div className="bg-white/90 backdrop-blur-md p-6 rounded-3xl shadow-2xl border border-white">
+              <span aria-hidden>📖</span>
+              Almanac
+            </button>
+            {/* Goal viewer panel — when user clicks a 3D plant */}
+            <AnimatePresence>
+              {viewingGoal && (
+                <motion.div
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: 20 }}
+                  transition={{ duration: 0.2 }}
+                  className="fixed top-16 right-2 left-2 sm:left-auto sm:right-8 z-50 w-[calc(100vw-1rem)] sm:w-96 max-w-md pointer-events-auto"
+                >
+              <div className="bg-white/90 backdrop-blur-md p-4 sm:p-6 rounded-2xl sm:rounded-3xl shadow-2xl border border-white max-h-[80vh] overflow-y-auto">
                 <button
                   type="button"
                   onClick={() => setViewingGoal(null)}
                   aria-label="Close"
-                  className="absolute top-4 right-4 w-8 h-8 flex items-center justify-center rounded-full text-stone-400 hover:text-stone-600 hover:bg-stone-100 transition-colors font-sans text-lg"
+                  className="absolute top-3 right-3 w-9 h-9 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full text-stone-400 hover:text-stone-600 hover:bg-stone-100 transition-colors font-sans text-lg"
                 >
                   ×
                 </button>
@@ -407,13 +407,13 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
                 </button>
               </div>
             </motion.div>
-          )}
-        </AnimatePresence>
+            )}
+          </AnimatePresence>
 
-        {/* Shop overlay — glassmorphic modal over 3D canvas */}
-        <div className="absolute inset-0 z-50 pointer-events-none rounded-3xl">
-          <AnimatePresence>
-            {isShopOpen && (
+            {/* Shop overlay — glassmorphic modal over 3D canvas */}
+            <div className="absolute inset-0 z-50 pointer-events-none rounded-3xl">
+              <AnimatePresence>
+                {isShopOpen && (
               <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
@@ -474,7 +474,7 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
         </div>
 
         {/* Toolbelt — bottom center overlay */}
-        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-50 flex flex-wrap items-center justify-center gap-2 px-3 py-2 rounded-2xl bg-stone-800/90 backdrop-blur-sm shadow-lg border border-stone-600/50">
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-50 flex flex-wrap items-center justify-center gap-2 px-3 py-2 rounded-2xl bg-stone-800/90 backdrop-blur-sm shadow-lg border border-stone-600/50 pointer-events-auto">
           <button
             type="button"
             disabled={waterDrops === 0}
@@ -561,6 +561,8 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
             </button>
           ))}
         </div>
+          </div>
+      </div>
       </div>
 
       {/* Planting Modal — pick a seed to plant or create a new goal */}

@@ -86,6 +86,18 @@
   padding-top: env(safe-area-inset-top, 0px);
 }
 
+/* Mobile-friendly: ensure touch targets and prevent zoom on inputs (optional) */
+@media (max-width: 640px) {
+  .min-touch {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
+/* Prevent overly large tap highlights on mobile */
+* {
+  -webkit-tap-highlight-color: rgba(0, 0, 0, 0.08);
+}
+
 /* Add a global reset for that "Paper" feel */
 body {
   background-color: #FDFCF5; /* cream-50 */

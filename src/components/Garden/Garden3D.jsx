@@ -73,7 +73,7 @@ function KeyboardController() {
   return null;
 }
 
-function OrbitControlsWithFollowTarget() {
+function OrbitControlsWithFollowTarget({ enabled = true }) {
   const { camera } = useThree();
   const targetRef = useRef(new THREE.Vector3(0, 0, 0));
   useFrame(() => {
@@ -82,6 +82,7 @@ function OrbitControlsWithFollowTarget() {
   return (
     <OrbitControls
       makeDefault
+      enabled={enabled}
       maxPolarAngle={Math.PI / 2 - 0.01}
       minDistance={2}
       maxDistance={25}
@@ -143,14 +144,14 @@ function TerrainTiles() {
   );
 }
 
-function Ground({ onClick }) {
+function Ground({ onClick, disabled }) {
   return (
     <RoundedBox
       args={[30, 0.5, 30]}
       radius={0.1}
       position={[0, -0.3, 0]}
       receiveShadow
-      onClick={onClick}
+      onClick={disabled ? undefined : onClick}
     >
       <meshStandardMaterial color="#2d5a27" />
     </RoundedBox>
@@ -222,7 +223,7 @@ function DecorationNode({ decoration, activeTool, setActiveTool }) {
   );
 }
 
-function Scene({ placedGoals, onPlant, onGoalClick, timePhase, activeTool, waterGoal, fireToast, setActiveTool, decorations }) {
+function Scene({ placedGoals, onPlant, onGoalClick, timePhase, activeTool, waterGoal, fireToast, setActiveTool, decorations, canvasInteractionDisabled }) {
   const isItemBeingMoved = (id, kind) =>
     activeTool?.type === 'place' && activeTool?.isRelocating && activeTool?.originalType === kind && (activeTool?.item?.id === id || activeTool?.decorationId === id || activeTool?.decoration?.id === id);
   const visibleDecorations = decorations?.filter((dec) => !isItemBeingMoved(dec.id, 'decoration')) ?? [];
@@ -231,7 +232,7 @@ function Scene({ placedGoals, onPlant, onGoalClick, timePhase, activeTool, water
   return (
     <>
       <TerrainTiles />
-      <Ground onClick={onPlant} />
+      <Ground onClick={onPlant} disabled={canvasInteractionDisabled} />
       {visibleDecorations.map((dec) => (
         <DecorationNode key={dec.id} decoration={dec} activeTool={activeTool} setActiveTool={setActiveTool} />
       ))}
@@ -352,7 +353,7 @@ useGLTF.preload('/models/tree_pineTallA.glb');
 useGLTF.preload('/models/sign.glb');
 useGLTF.preload('/models/statue_obelisk.glb');
 
-export default function Garden3D({ onGoalClick, onOpenShop, focusGoal, onOpenJournal, onOpenInsights }) {
+export default function Garden3D({ onGoalClick, onOpenShop, focusGoal, onOpenJournal, onOpenInsights, uiBlocksCanvas = false }) {
   const [timePhase, setTimePhase] = useState('day');
   const { goals, editGoal, activeTool, setActiveTool, paintTerrain, updateDecoration, waterGoal, decorations = [] } = useGarden();
   const placedGoals = goals?.filter((g) => Array.isArray(g.position3D) && g.position3D.length >= 3) ?? [];
@@ -413,7 +414,7 @@ export default function Garden3D({ onGoalClick, onOpenShop, focusGoal, onOpenJou
             <Sky sunPosition={[10, 20, 10]} />
             <Environment preset="forest" />
             <KeyboardController />
-            <OrbitControlsWithFollowTarget />
+            <OrbitControlsWithFollowTarget enabled={!uiBlocksCanvas} />
             <FocusCamera focusGoal={focusGoal} />
             <Scene
               placedGoals={placedGoals}
@@ -425,6 +426,7 @@ export default function Garden3D({ onGoalClick, onOpenShop, focusGoal, onOpenJou
               fireToast={fireToast}
               setActiveTool={setActiveTool}
               decorations={decorations}
+              canvasInteractionDisabled={uiBlocksCanvas}
             />
             {onOpenShop && (
           <group>

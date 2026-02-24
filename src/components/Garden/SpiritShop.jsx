@@ -136,7 +136,7 @@ export default function SpiritShop({ onClose, embedded = false }) {
       animate={{ opacity: 1, scale: 1, y: 0 }}
       exit={{ opacity: 0, scale: 0.96 }}
       transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
-      className="relative w-full max-w-lg rounded-3xl overflow-hidden"
+      className="relative w-full max-w-lg max-h-[90dvh] sm:max-h-[90vh] rounded-2xl sm:rounded-3xl overflow-hidden flex flex-col my-auto"
       style={{
         background: 'linear-gradient(180deg, #FDFCF5 0%, #f5f3eb 50%, #eeece2 100%)',
         boxShadow: '0 32px 64px -12px rgba(0,0,0,0.2), 0 0 0 1px rgba(0,0,0,0.06)',
@@ -148,13 +148,13 @@ export default function SpiritShop({ onClose, embedded = false }) {
           type="button"
           onClick={onClose}
           aria-label="Close"
-          className="absolute top-4 right-4 z-10 w-9 h-9 flex items-center justify-center rounded-xl text-stone-400 hover:text-stone-700 hover:bg-stone-200/80 focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors"
+          className="absolute top-4 right-4 z-10 w-9 h-9 flex items-center justify-center rounded-xl text-stone-400 hover:text-stone-700 hover:bg-stone-200/80 focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors shrink-0"
         >
           ×
         </button>
       )}
-        {/* Header: The Ember Exchange + Embers */}
-        <div className="px-6 pt-6 pb-4">
+        {/* Header: The Ember Exchange + Embers — sticky */}
+        <div className="px-6 pt-6 pb-4 shrink-0">
           <div className="flex items-center justify-between gap-4 flex-wrap">
             <h2 id="spirit-shop-title" className="font-serif text-2xl text-stone-900">
               The Ember Exchange
@@ -173,9 +173,9 @@ export default function SpiritShop({ onClose, embedded = false }) {
           </div>
         </div>
 
-        {/* Shopkeeper greeting */}
+        {/* Shopkeeper greeting — sticky */}
         <div
-          className="mx-4 mt-2 mb-6 flex items-center gap-4 p-5 rounded-2xl border shadow-lg"
+          className="mx-4 mt-2 mb-6 flex items-center gap-4 p-5 rounded-2xl border shadow-lg shrink-0"
           style={{
             background: 'linear-gradient(135deg, #3d4e1c 0%, #4a5d23 50%, #5c6e2e 100%)',
             borderColor: 'rgba(74, 93, 35, 0.5)',
@@ -189,8 +189,8 @@ export default function SpiritShop({ onClose, embedded = false }) {
           </div>
         </div>
 
-        {/* Horizontal category tabs — glassmorphic */}
-        <div className="mx-4 mb-4">
+        {/* Horizontal category tabs — glassmorphic, sticky */}
+        <div className="mx-4 mb-4 shrink-0">
           <div
             className="flex rounded-2xl p-1.5 gap-1 overflow-x-auto"
             style={{
@@ -222,9 +222,9 @@ export default function SpiritShop({ onClose, embedded = false }) {
           </div>
         </div>
 
-        {/* Single grid: items for active tab */}
-        <div className="px-4 sm:px-5 pb-2">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-h-[50vh] overflow-y-auto">
+        {/* Scrollable items grid — only this area scrolls */}
+        <div className="overflow-y-auto flex-1 min-h-0 px-4 py-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
             <AnimatePresence mode="wait">
               {itemsForTab.map((item, i) => {
                 const isSeed = item.type === 'seed';
@@ -310,7 +310,7 @@ export default function SpiritShop({ onClose, embedded = false }) {
           </div>
         </div>
 
-        <div className="px-6 pb-5 pt-3">
+        <div className="px-6 pb-5 pt-3 shrink-0">
           <button
             type="button"
             onClick={onClose}
@@ -374,7 +374,7 @@ export default function SpiritShop({ onClose, embedded = false }) {
   );
   return embedded ? card : (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/50 backdrop-blur-md"
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-stone-900/50 backdrop-blur-md overflow-y-auto safe-area-pb"
       onClick={(e) => e.target === e.currentTarget && onClose?.()}
       role="dialog"
       aria-modal="true"

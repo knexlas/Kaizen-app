@@ -55,11 +55,11 @@ export default function WelcomeGarden() {
   const transition = { type: 'tween', duration: 0.25 };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-stone-900/40 backdrop-blur-sm">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-stone-900/40 backdrop-blur-sm overflow-y-auto safe-area-pt safe-area-pb">
       <motion.div
         initial={{ opacity: 0, scale: 0.98 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="w-full max-w-lg bg-stone-50 rounded-2xl border border-stone-200 shadow-2xl overflow-hidden"
+        className="w-full max-w-lg max-h-[100dvh] sm:max-h-[90vh] my-auto bg-stone-50 rounded-2xl border border-stone-200 shadow-2xl overflow-hidden flex flex-col"
         role="dialog"
         aria-modal="true"
         aria-labelledby="welcome-title"
@@ -72,7 +72,7 @@ export default function WelcomeGarden() {
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: 12 }}
               transition={transition}
-              className="p-8 md:p-10"
+              className="p-5 sm:p-8 md:p-10 overflow-y-auto flex-1 min-h-0"
             >
               <h1 id="welcome-title" className="font-serif text-2xl md:text-3xl text-stone-900 mb-4">
                 Welcome to Kaizen.
@@ -110,7 +110,7 @@ export default function WelcomeGarden() {
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: 12 }}
               transition={transition}
-              className="p-6 md:p-8"
+              className="p-4 sm:p-6 md:p-8 overflow-y-auto flex-1 min-h-0"
             >
               <h2 className="font-serif text-xl text-stone-900 mb-2 text-center">The Spirit</h2>
               <p className="font-sans text-sm text-stone-500 mb-6 text-center">
@@ -127,7 +127,7 @@ export default function WelcomeGarden() {
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: 12 }}
               transition={transition}
-              className="p-8 md:p-10"
+              className="p-5 sm:p-8 md:p-10 overflow-y-auto flex-1 min-h-0"
             >
               <h2 className="font-serif text-2xl text-stone-900 mb-4">The First Seed</h2>
               <p className="font-sans text-stone-600 text-base leading-relaxed mb-6">

@@ -289,7 +289,6 @@ function GardenDashboard() {
   const [newQuotaHours, setNewQuotaHours] = useState(60);
   const [showStartNowModal, setShowStartNowModal] = useState(false);
   const [startNowCandidate, setStartNowCandidate] = useState(null);
-  const [scheduleExpanded, setScheduleExpanded] = useState(false);
   const [showGentleRestart, setShowGentleRestart] = useState(false);
   const gentleRestartGapDaysRef = useRef(0);
   const [staleArchivedCount, setStaleArchivedCount] = useState(0);
@@ -1098,7 +1097,6 @@ function GardenDashboard() {
   const handleStartNowPickDifferent = useCallback(() => {
     setShowStartNowModal(false);
     setStartNowCandidate(null);
-    setScheduleExpanded(true);
   }, []);
 
   const handleTinyStepStartSession = useCallback(
@@ -1733,14 +1731,13 @@ function GardenDashboard() {
           <GardenWalk goals={goals} onCompost={handleCompostGoal} onGoalClick={handleGardenGoalClick} onOpenGoalCreator={() => setIsPlanting(true)} onEditGoal={editGoal} />
         </div>
       ) : activeTab === 'settings' ? (
-        <main className="flex-1 w-full min-w-0 px-4 py-8 max-w-2xl mx-auto relative pb-24 pt-14">
+        <main className="flex-1 w-full min-w-0 px-3 sm:px-4 py-6 sm:py-8 max-w-2xl mx-auto relative pb-28 sm:pb-24 pt-14 safe-area-pb">
           <SettingsView onReplayTour={() => { setShowTour(true); setActiveTab('today'); }} />
         </main>
       ) : (
-      <main className={`flex-1 w-full min-w-0 px-4 py-8 max-w-5xl mx-auto relative pb-24`}>
+      <main className={`flex-1 w-full min-w-0 px-3 sm:px-4 py-6 sm:py-8 max-w-5xl mx-auto relative pb-28 sm:pb-24 safe-area-pb`}>
         {activeTab === 'today' && (
           <>
-            {/* Zen Now: minimal view — only essentials. No compost/overdue widgets here. */}
             {needsMorningCheckIn ? (
               <div className="flex flex-col items-center justify-center min-h-[50vh] px-4">
                 <GuidedEmptyState
@@ -1749,114 +1746,85 @@ function GardenDashboard() {
                   lowStim={getSettings().lowStim}
                 />
               </div>
-            ) : (nextUpItems ?? []).length === 0 ? (
-              <div className="flex flex-col items-center justify-center min-h-[50vh] px-4">
-                <button
-                  type="button"
-                  onClick={handleHelpMeStart}
-                  className="w-full max-w-md py-8 px-8 rounded-2xl border-2 border-moss-500 bg-moss-600 text-stone-50 font-sans font-semibold text-xl hover:bg-moss-700 transition-colors flex flex-col items-center gap-3 shadow-xl shadow-moss-900/20 focus:outline-none focus:ring-4 focus:ring-moss-500/40"
-                  aria-label="Help me start — 5 minute focus on one task"
-                >
-                  <span className="text-4xl" aria-hidden>🆘</span>
-                  <span>Help Me Start</span>
-                  <span className="text-base font-normal text-moss-100 opacity-95">One tiny step. That&apos;s enough.</span>
-                </button>
-              </div>
             ) : (
-              <div className="space-y-6">
-                <div className="flex flex-col items-center gap-4">
-                  <div className="w-full max-w-md p-5 rounded-2xl border-2 border-moss-400 bg-moss-50/80 shadow-lg">
-                    <p className="font-sans text-xs font-semibold text-moss-700 uppercase tracking-wider mb-2">Current / Next</p>
-                    <div className="flex flex-wrap items-center gap-3">
-                      <div className="min-w-0 flex-1">
-                        <span className="font-sans text-lg font-semibold text-stone-900 block truncate">{(nextUpItems[0]?.title ?? nextUpItems[0]?.goal?.title) ?? 'Task'}</span>
-                        <span className="font-sans text-sm text-stone-500">
-                          {(nextUpItems[0]?.estimatedMinutes ?? nextUpItems[0]?.goal?.estimatedMinutes) ?? 0}m
-                          {(nextUpItems[0]?.spoonCost ?? nextUpItems[0]?.goal?.spoonCost) != null && (nextUpItems[0]?.spoonCost ?? nextUpItems[0]?.goal?.spoonCost) > 0
-                            ? ` · ${nextUpItems[0]?.spoonCost ?? nextUpItems[0]?.goal?.spoonCost} spoon${(nextUpItems[0]?.spoonCost ?? nextUpItems[0]?.goal?.spoonCost) !== 1 ? 's' : ''}`
-                            : ''}
-                        </span>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => handleStartNowStart({ goal: nextUpItems[0]?.goal, goalId: nextUpItems[0]?.goalId, subtaskId: nextUpItems[0]?.subtaskId }, 5)}
-                        className="shrink-0 px-5 py-2.5 rounded-xl font-sans text-sm font-medium bg-moss-600 text-stone-50 hover:bg-moss-700 focus:outline-none focus:ring-2 focus:ring-moss-500/50"
-                      >
-                        Start 5 min
-                      </button>
-                    </div>
-                  </div>
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-full">
+                {/* Left: Focus area — Help Me Start + current/next task */}
+                <div className="lg:col-span-5 flex flex-col gap-6">
                   <button
                     type="button"
                     onClick={handleHelpMeStart}
-                    className="w-full max-w-md py-4 px-4 rounded-xl border-2 border-moss-500 bg-moss-600 text-stone-50 font-sans font-medium hover:bg-moss-700 transition-colors flex flex-col items-center gap-1 shadow-sm focus:outline-none focus:ring-2 focus:ring-moss-500 focus:ring-offset-2"
-                    aria-label="Help me start"
+                    className="w-full py-6 px-6 rounded-2xl border-2 border-moss-500 bg-moss-600 text-stone-50 font-sans font-semibold text-lg hover:bg-moss-700 transition-colors flex flex-col items-center gap-2 shadow-xl shadow-moss-900/20 focus:outline-none focus:ring-4 focus:ring-moss-500/40"
+                    aria-label="Help me start — 5 minute focus on one task"
                   >
+                    <span className="text-3xl" aria-hidden>🆘</span>
                     <span>🆘 Help Me Start</span>
-                    <span className="text-sm font-normal text-moss-100">One tiny step.</span>
+                    <span className="text-sm font-normal text-moss-100 opacity-95">One tiny step. That&apos;s enough.</span>
                   </button>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setScheduleExpanded((prev) => !prev)}
-                  className="w-full py-3 px-4 rounded-xl font-sans text-sm font-medium border-2 border-stone-300 bg-stone-100 text-stone-700 hover:bg-stone-200 focus:outline-none focus:ring-2 focus:ring-moss-500/50 flex items-center justify-center gap-2"
-                >
-                  <span aria-hidden>📋</span> View Full Schedule
-                </button>
-                <AnimatePresence>
-                  {scheduleExpanded && (
-                    <motion.div
-                      id="tour-timeline"
-                      initial={{ opacity: 0, height: 0 }}
-                      animate={{ opacity: 1, height: 'auto' }}
-                      exit={{ opacity: 0, height: 0 }}
-                      transition={{ duration: 0.25 }}
-                      className="overflow-hidden"
-                    >
-                      <div className="flex justify-end mb-2">
+                  {(nextUpItems ?? []).length > 0 && (
+                    <div className="w-full p-5 rounded-2xl border-2 border-moss-400 bg-moss-50/80 shadow-lg">
+                      <p className="font-sans text-xs font-semibold text-moss-700 uppercase tracking-wider mb-2">Current / Next</p>
+                      <div className="flex flex-wrap items-center gap-3">
+                        <div className="min-w-0 flex-1">
+                          <span className="font-sans text-lg font-semibold text-stone-900 block truncate">{(nextUpItems[0]?.title ?? nextUpItems[0]?.goal?.title) ?? 'Task'}</span>
+                          <span className="font-sans text-sm text-stone-500">
+                            {(nextUpItems[0]?.estimatedMinutes ?? nextUpItems[0]?.goal?.estimatedMinutes) ?? 0}m
+                            {(nextUpItems[0]?.spoonCost ?? nextUpItems[0]?.goal?.spoonCost) != null && (nextUpItems[0]?.spoonCost ?? nextUpItems[0]?.goal?.spoonCost) > 0
+                              ? ` · ${nextUpItems[0]?.spoonCost ?? nextUpItems[0]?.goal?.spoonCost} spoon${(nextUpItems[0]?.spoonCost ?? nextUpItems[0]?.goal?.spoonCost) !== 1 ? 's' : ''}`
+                              : ''}
+                          </span>
+                        </div>
                         <button
                           type="button"
-                          onClick={() => setScheduleExpanded(false)}
-                          className="px-3 py-1.5 rounded-lg font-sans text-sm text-stone-500 hover:text-stone-700 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/50"
+                          onClick={() => handleStartNowStart({ goal: nextUpItems[0]?.goal, goalId: nextUpItems[0]?.goalId, subtaskId: nextUpItems[0]?.subtaskId }, 5)}
+                          className="shrink-0 px-5 py-2.5 rounded-xl font-sans text-sm font-medium bg-moss-600 text-stone-50 hover:bg-moss-700 focus:outline-none focus:ring-2 focus:ring-moss-500/50"
                         >
-                          Collapse schedule
+                          Start 5 min
                         </button>
                       </div>
-                      <ScheduleErrorBoundary onCollapse={() => setScheduleExpanded(false)}>
-                        <TimeSlicer
-                          zenMode
-                          weather={weather ?? 'sun'}
-                          goals={Array.isArray(goals) ? goals : []}
-                          todayRitualItems={Array.isArray(todayRitualItems) ? todayRitualItems : []}
-                          goalBank={Array.isArray(goalBank) ? goalBank : []}
-                          dailyEnergyModifier={dailyEnergyModifier ?? 0}
-                          dailySpoonCount={todaySpoonCount}
-                          assignments={assignments && typeof assignments === 'object' ? assignments : {}}
-                          onAssignmentsChange={setAssignments}
-                          calendarEvents={Array.isArray(events) ? events : []}
-                          onStartFocus={handleStartSession}
-                          hideCapacityOnMobile={isMobileNav}
-                          onSeedClick={(goal) => setSeedForMilestones(goal)}
-                          onMilestoneCheck={handleMilestoneCheck}
-                          onEditGoal={(goal) => setEditingGoal(goal)}
-                          onCompostGoal={handleCompostGoal}
-                          onAddRoutineTime={handleAddRoutineTime}
-                          onAddSubtask={addSubtask}
-                          onLoadLightened={handleLoadLightened}
-                          onOpenGoalCreator={() => setIsPlanting(true)}
-                          googleToken={googleToken}
-                          onPlanWeek={handlePlanWeek}
-                          onPlanMonth={handlePlanMonth}
-                          planningWeek={planningWeek}
-                          weekPreview={weekPreview}
-                          onConfirmWeekPlan={handleConfirmWeekPlan}
-                          onDiscardWeekPlan={handleDiscardWeekPlan}
-                          monthlyRoadmap={monthlyRoadmap}
-                        />
-                      </ScheduleErrorBoundary>
-                    </motion.div>
+                    </div>
                   )}
-                </AnimatePresence>
+                </div>
+                {/* Right: Day Planner — always visible, scrollable */}
+                <div className="lg:col-span-7">
+                  <div
+                    id="tour-timeline"
+                    className="overflow-y-auto max-h-[80vh] rounded-2xl border border-white/20 bg-white/90 backdrop-blur-md shadow-xl p-4"
+                    style={{ boxShadow: '0 8px 32px -8px rgba(0,0,0,0.15), 0 0 0 1px rgba(255,255,255,0.5)' }}
+                  >
+                    <ScheduleErrorBoundary onCollapse={() => {}}>
+                      <TimeSlicer
+                        zenMode
+                        weather={weather ?? 'sun'}
+                        goals={Array.isArray(goals) ? goals : []}
+                        todayRitualItems={Array.isArray(todayRitualItems) ? todayRitualItems : []}
+                        goalBank={Array.isArray(goalBank) ? goalBank : []}
+                        dailyEnergyModifier={dailyEnergyModifier ?? 0}
+                        dailySpoonCount={todaySpoonCount}
+                        assignments={assignments && typeof assignments === 'object' ? assignments : {}}
+                        onAssignmentsChange={setAssignments}
+                        calendarEvents={Array.isArray(events) ? events : []}
+                        onStartFocus={handleStartSession}
+                        hideCapacityOnMobile={isMobileNav}
+                        onSeedClick={(goal) => setSeedForMilestones(goal)}
+                        onMilestoneCheck={handleMilestoneCheck}
+                        onEditGoal={(goal) => setEditingGoal(goal)}
+                        onCompostGoal={handleCompostGoal}
+                        onAddRoutineTime={handleAddRoutineTime}
+                        onAddSubtask={addSubtask}
+                        onLoadLightened={handleLoadLightened}
+                        onOpenGoalCreator={() => setIsPlanting(true)}
+                        googleToken={googleToken}
+                        onPlanWeek={handlePlanWeek}
+                        onPlanMonth={handlePlanMonth}
+                        planningWeek={planningWeek}
+                        weekPreview={weekPreview}
+                        onConfirmWeekPlan={handleConfirmWeekPlan}
+                        onDiscardWeekPlan={handleDiscardWeekPlan}
+                        monthlyRoadmap={monthlyRoadmap}
+                      />
+                    </ScheduleErrorBoundary>
+                  </div>
+                </div>
               </div>
             )}
           </>
@@ -2033,7 +2001,7 @@ function GardenDashboard() {
 
       {/* Floating glassmorphic bottom nav: Now / Plan / Garden */}
       <nav
-        className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 bg-stone-900/80 backdrop-blur-md px-6 py-3 rounded-full flex gap-6 sm:gap-8 shadow-2xl border border-white/10"
+        className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 bg-stone-900/80 backdrop-blur-md px-4 sm:px-6 py-3 rounded-full flex gap-4 sm:gap-8 shadow-2xl border border-white/10 safe-area-pb"
         aria-label="Main navigation"
       >
         <button
@@ -2098,7 +2066,7 @@ function GardenDashboard() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/40 backdrop-blur-sm"
+            className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-stone-900/40 backdrop-blur-sm overflow-y-auto safe-area-pb"
             onClick={() => setShowSpiritMirror(false)}
             role="dialog"
             aria-modal="true"
@@ -2109,13 +2077,13 @@ function GardenDashboard() {
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.96, opacity: 0 }}
               onClick={(e) => e.stopPropagation()}
-              className="relative max-h-[90vh] overflow-y-auto"
+              className="relative w-full max-w-lg max-h-[90dvh] overflow-y-auto rounded-2xl bg-[#FDFCF5] border border-stone-200 shadow-2xl"
             >
               <button
                 type="button"
                 onClick={() => setShowSpiritMirror(false)}
                 aria-label="Close"
-                className="absolute top-3 right-3 z-10 w-8 h-8 flex items-center justify-center rounded-lg text-stone-400 hover:text-stone-600 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
+                className="absolute top-3 right-3 z-10 w-9 h-9 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg text-stone-400 hover:text-stone-600 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
               >
                 ×
               </button>
