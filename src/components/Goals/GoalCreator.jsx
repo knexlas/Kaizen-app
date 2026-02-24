@@ -859,7 +859,7 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
                       }`}
                     >
                       <span className="text-xl mb-1" aria-hidden>🧊</span>
-                      <span className="font-sans font-medium text-stone-800">Solid Structure</span>
+                      <span className="font-sans font-medium text-stone-800">Fixed Time</span>
                       <span className="font-sans text-xs text-stone-500 mt-0.5">Fixed times & days</span>
                     </button>
                     <button
@@ -872,7 +872,7 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
                       }`}
                     >
                       <span className="text-xl mb-1" aria-hidden>💧</span>
-                      <span className="font-sans font-medium text-stone-800">Liquid Flow</span>
+                      <span className="font-sans font-medium text-stone-800">Flexible</span>
                       <span className="font-sans text-xs text-stone-500 mt-0.5">Flexible target hours</span>
                     </button>
                   </div>
@@ -1311,14 +1311,13 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
               </div>
               )}
 
-              {/* Advanced Settings toggle — above footer */}
+              {/* Toggle: right above Submit */}
               <button
                 type="button"
-                onClick={() => setShowAdvanced((v) => !v)}
-                className="mt-6 w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl font-sans text-sm font-medium text-stone-600 bg-stone-100 hover:bg-stone-200 border border-stone-200 focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors"
+                onClick={() => setShowAdvanced(!showAdvanced)}
+                className="mt-6 text-sm text-stone-500 hover:text-stone-800 flex items-center gap-1"
               >
-                <span>{showAdvanced ? '▼' : '▶'}</span>
-                <span>⚙️ Advanced Settings</span>
+                {showAdvanced ? 'Hide Advanced Options' : '⚙️ Show Advanced Options'}
               </button>
 
               {/* Footer */}

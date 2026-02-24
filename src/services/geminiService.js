@@ -577,6 +577,63 @@ export async function processIncomingCompost(fileOrText) {
   }
 }
 
+/**
+ * Parse free-form "What's on your mind?" text into a single intent for Omni-Add routing.
+ * @param {string} userText - Raw input from the user
+ * @returns {Promise<{ type: 'goal'|'task'|'calendar_event', title: string, startTime?: string, endTime?: string }|null>}
+ */
+export async function parseOmniAddInput(userText) {
+  const apiKey = getApiKey();
+  const text = typeof userText === 'string' ? userText.trim() : '';
+  if (!text) return null;
+  if (!apiKey) return { type: 'goal', title: text.slice(0, 120) };
+
+  const prompt = `Classify this short user input into exactly one type and extract a title. No other text.
+Types: "goal" (something to achieve, a project, habit, or metric), "task" (a concrete to-do or action), "calendar_event" (meeting, appointment, or time-bound event).
+If the user mentions a time (e.g. "tomorrow 3pm", "next Tuesday 9am"), set type to "calendar_event" and include startTime/endTime as ISO 8601 strings (use today's date if no date given).
+Return ONLY valid JSON in this exact shape (no markdown): {"type":"goal"|"task"|"calendar_event","title":"short title","startTime":"ISO string or null","endTime":"ISO string or null"}
+Input: "${text.replace(/"/g, '\\"').slice(0, 500)}"`;
+
+  try {
+    if (apiKey) {
+      const { GoogleGenerativeAI } = await import('@google/generative-ai');
+      const genAI = new GoogleGenerativeAI(apiKey);
+      const result = await tryGenerate(genAI, prompt);
+      const raw = result?.response?.text?.();
+      if (typeof raw !== 'string') return null;
+      const cleaned = sanitizeJsonResponse(raw).replace(/\s+/g, ' ');
+      const match = cleaned.match(/\{[^{}]*\}/);
+      const parsed = JSON.parse(match ? match[0] : cleaned);
+      const type = ['goal', 'task', 'calendar_event'].includes(parsed?.type) ? parsed.type : 'goal';
+      const title = typeof parsed?.title === 'string' ? parsed.title.trim() : text.slice(0, 120);
+      return {
+        type: type === 'task' ? 'goal' : type,
+        title: title || text.slice(0, 120),
+        startTime: parsed?.startTime && parsed.startTime !== 'null' ? parsed.startTime : undefined,
+        endTime: parsed?.endTime && parsed.endTime !== 'null' ? parsed.endTime : undefined,
+      };
+    }
+    const groqKey = typeof import.meta !== 'undefined' && import.meta.env?.VITE_GROQ_API_KEY;
+    if (groqKey) {
+      const groqText = await fetchFromGroq(prompt);
+      const cleaned = sanitizeJsonResponse(groqText).replace(/\s+/g, ' ');
+      const match = cleaned.match(/\{[^{}]*\}/);
+      const parsed = JSON.parse(match ? match[0] : cleaned);
+      const type = ['goal', 'task', 'calendar_event'].includes(parsed?.type) ? parsed.type : 'goal';
+      const title = typeof parsed?.title === 'string' ? parsed.title.trim() : text.slice(0, 120);
+      return {
+        type: type === 'task' ? 'goal' : type,
+        title: title || text.slice(0, 120),
+        startTime: parsed?.startTime && parsed.startTime !== 'null' ? parsed.startTime : undefined,
+        endTime: parsed?.endTime && parsed.endTime !== 'null' ? parsed.endTime : undefined,
+      };
+    }
+  } catch (err) {
+    console.warn('parseOmniAddInput failed:', err?.message || err);
+    return { type: 'goal', title: text.slice(0, 120) };
+  }
+}
+
 export async function suggestGoalStructure(title, type = 'kaizen', currentMetric, targetMetric) {
   const apiKey = getApiKey();
   if (!apiKey) {

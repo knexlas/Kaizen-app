@@ -5,6 +5,8 @@ import { useEnergy } from '../../context/EnergyContext';
 import SpiritShop from './SpiritShop';
 import Garden3D from './Garden3D';
 import VirtualJoystick from './VirtualJoystick';
+import JournalView from '../Dashboard/JournalView';
+import AnalyticsView from '../Dashboard/AnalyticsView';
 
 function clamp(n, min, max) {
   return Math.min(max, Math.max(min, n));
@@ -103,6 +105,7 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
   const [timeLeft, setTimeLeft] = useState(25 * 60); // 25 minutes in seconds
   const [isTimerRunning, setIsTimerRunning] = useState(false);
   const [isShopOpen, setIsShopOpen] = useState(false);
+  const [activeAlmanac, setActiveAlmanac] = useState(null); // 'journal' | 'insights' | null
 
   const formatTime = (seconds) => {
     const m = Math.floor(seconds / 60);
@@ -210,9 +213,21 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
           </div>
         )}
         <div className="m-2 sm:m-3 h-[70vh] w-full rounded-3xl overflow-hidden relative">
+          {/* Top-left: Almanac button */}
+          <button
+            type="button"
+            onClick={() => setActiveAlmanac('journal')}
+            className="absolute top-4 left-4 z-50 p-3 bg-white/80 backdrop-blur rounded-2xl shadow-lg hover:bg-white transition-all text-stone-700 font-bold flex items-center gap-2 focus:outline-none focus:ring-2 focus:ring-moss-500/50 focus:ring-offset-2"
+            aria-label="Open Almanac"
+          >
+            <span aria-hidden>📖</span>
+            Almanac
+          </button>
           <Garden3D
             focusGoal={activeFocusGoal}
             onOpenShop={() => setIsShopOpen(true)}
+            onOpenJournal={() => setActiveAlmanac('journal')}
+            onOpenInsights={() => setActiveAlmanac('insights')}
             onGoalClick={(goal) => {
               if (activeTool?.type === 'water') {
                 waterGoal(goal.id);
@@ -361,6 +376,38 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
                     ×
                   </button>
                   <SpiritShop onClose={() => setIsShopOpen(false)} embedded />
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+
+        {/* Almanac modal — Journal or Insights (triggered by 3D monuments or Almanac button); wrapper is pointer-events-none so canvas stays interactable when closed */}
+        <div className="absolute inset-0 z-50 pointer-events-none rounded-3xl">
+          <AnimatePresence>
+            {activeAlmanac && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                transition={{ duration: 0.2 }}
+                className="absolute inset-4 md:inset-12 z-50 bg-stone-100/95 backdrop-blur-xl rounded-3xl shadow-2xl border border-white overflow-hidden flex flex-col pointer-events-auto"
+              >
+                <div className="flex justify-between items-center p-4 bg-white/50 border-b border-stone-200">
+                  <h2 className="text-xl font-bold text-stone-800">
+                    {activeAlmanac === 'journal' ? "📔 Captain's Log" : '📊 Ancient Insights'}
+                  </h2>
+                  <button
+                    type="button"
+                    onClick={() => setActiveAlmanac(null)}
+                    className="p-2 hover:bg-stone-200 rounded-full font-bold"
+                    aria-label="Close"
+                  >
+                    ✕ Close
+                  </button>
+                </div>
+                <div className="flex-1 overflow-y-auto p-4">
+                  {activeAlmanac === 'journal' ? <JournalView /> : <AnalyticsView />}
                 </div>
               </motion.div>
             )}

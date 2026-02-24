@@ -1,6 +1,6 @@
 import { useMemo, Suspense, useRef, useState, useEffect } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { OrbitControls, Sky, Environment, RoundedBox, useGLTF, Sparkles } from '@react-three/drei';
+import { OrbitControls, Sky, Environment, RoundedBox, useGLTF, Sparkles, Billboard, Text } from '@react-three/drei';
 import * as THREE from 'three';
 import { useGarden } from '../../context/GardenContext';
 import { getGoalProgressPercent } from './GardenWalk';
@@ -280,6 +280,49 @@ function ShopCornerTree() {
   return <primitive object={cloned} position={[10, 0, -8]} scale={1} />;
 }
 
+function JournalMonument({ onClick }) {
+  const { scene } = useGLTF('/models/sign.glb');
+  const clone = useMemo(() => (scene ? scene.clone() : null), [scene]);
+  if (!clone) return null;
+  return (
+    <group
+      position={[-8, 0, -4]}
+      onClick={(e) => { e.stopPropagation(); onClick?.(); }}
+      onPointerOver={() => { document.body.style.cursor = 'pointer'; }}
+      onPointerOut={() => { document.body.style.cursor = 'auto'; }}
+    >
+      <primitive object={clone} scale={1.2} />
+      <Billboard position={[0, 2, 0]}>
+        <Text fontSize={0.4} color="#292524" outlineWidth={0.04} outlineColor="#ffffff">
+          📔 Captain&apos;s Log
+        </Text>
+      </Billboard>
+    </group>
+  );
+}
+
+function InsightMonolith({ onClick }) {
+  const { scene } = useGLTF('/models/statue_obelisk.glb');
+  const clone = useMemo(() => (scene ? scene.clone() : null), [scene]);
+  if (!clone) return null;
+  return (
+    <group
+      position={[8, 0, 4]}
+      onClick={(e) => { e.stopPropagation(); onClick?.(); }}
+      onPointerOver={() => { document.body.style.cursor = 'pointer'; }}
+      onPointerOut={() => { document.body.style.cursor = 'auto'; }}
+    >
+      <primitive object={clone} scale={1} />
+      <Billboard position={[0, 4, 0]}>
+        <Text fontSize={0.4} color="#292524" outlineWidth={0.04} outlineColor="#ffffff">
+          📊 Insights
+        </Text>
+      </Billboard>
+      <pointLight position={[0, 2, 0]} color="#60a5fa" intensity={2} distance={5} />
+    </group>
+  );
+}
+
 function fireToast(message) {
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent('kaizen:toast', { detail: { message } }));
@@ -287,8 +330,10 @@ function fireToast(message) {
 }
 
 useGLTF.preload('/models/tree_pineTallA.glb');
+useGLTF.preload('/models/sign.glb');
+useGLTF.preload('/models/statue_obelisk.glb');
 
-export default function Garden3D({ onGoalClick, onOpenShop, focusGoal }) {
+export default function Garden3D({ onGoalClick, onOpenShop, focusGoal, onOpenJournal, onOpenInsights }) {
   const [timePhase, setTimePhase] = useState('day');
   const { goals, editGoal, activeTool, setActiveTool, paintTerrain, updateDecoration, waterGoal, decorations = [] } = useGarden();
   const placedGoals = goals?.filter((g) => Array.isArray(g.position3D) && g.position3D.length >= 3) ?? [];
@@ -367,6 +412,10 @@ export default function Garden3D({ onGoalClick, onOpenShop, focusGoal }) {
             </Suspense>
           </group>
             )}
+            <Suspense fallback={null}>
+              {onOpenJournal && <JournalMonument onClick={onOpenJournal} />}
+              {onOpenInsights && <InsightMonolith onClick={onOpenInsights} />}
+            </Suspense>
           </SceneErrorBoundary>
         </Canvas>
     </div>

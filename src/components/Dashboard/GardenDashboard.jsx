@@ -19,6 +19,8 @@ import GoalEditor from '../Goals/GoalEditor';
 import TimeSlicer, { HOURS, MAX_SLOTS_BY_WEATHER } from './TimeSlicer';
 import CompassWidget from './CompassWidget';
 import CommandPalette from './CommandPalette';
+import OmniAdd from './OmniAdd';
+import WeeklyMap from './WeeklyMap';
 import MochiSpiritWithDialogue, { DefaultSpiritSvg, getSpiritGreeting, getPlanReaction } from './MochiSpirit';
 import SpiritChat from './SpiritChat';
 import CompostHeap from './CompostHeap';
@@ -38,7 +40,7 @@ import SettingsView from './SettingsView';
 import SpiritBuilder from '../Onboarding/SpiritBuilder';
 import SpiritGuideTour from '../Onboarding/SpiritGuideTour';
 import SpiritOrigins from '../Onboarding/SpiritOrigins';
-import { fetchGoogleEvents } from '../../services/googleCalendarService';
+import { fetchGoogleEvents, createGoogleEvent } from '../../services/googleCalendarService';
 import { findAvailableSlots, generateLiquidSchedule, generateSolidSchedule, getDefaultWeekStart, getStormWarnings, getStormImpactForDay, timeToMinutes, minutesToTime, generateDailyPlan, materializeWeeklyPlan, getSpoonCost } from '../../services/schedulerService';
 import { autoFillWeek } from '../../services/plannerEngine';
 
@@ -78,10 +80,6 @@ const MoonIcon = () => (
 
 /** Mon=0 .. Sun=6 (matches weekdayIndexMon0). */
 const DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-
-/** All tabs available from day one. */
-const TAB_LEVELS = { focus: 1, horizons: 1, garden: 1, settings: 1, journal: 1, insights: 1 };
-const LOCKED_TAB_TOAST = 'Keep growing to unlock this area.';
 
 /** Minutes logged this month for a goal (from logs). */
 function getMinutesThisMonthForGoal(logs, goalId) {
@@ -254,7 +252,10 @@ function GardenDashboard() {
     const interval = setInterval(tick, 60 * 1000);
     return () => clearInterval(interval);
   }, []);
-  const [activeTab, setActiveTab] = useState('focus');
+  const [activeTab, setActiveTab] = useState('today'); // 'today' | 'planner' | 'garden' | 'settings'
+  const [showJournalModal, setShowJournalModal] = useState(false);
+  const [showInsightsModal, setShowInsightsModal] = useState(false);
+  const [planSelectedDayIndex, setPlanSelectedDayIndex] = useState(0);
   const [selectedDate, setSelectedDate] = useState(() => weekdayIndexMon0(new Date())); // mon0: 0=Mon..6=Sun
   const [isPlanting, setIsPlanting] = useState(false);
   const [activeSession, setActiveSession] = useState(null);
@@ -295,6 +296,12 @@ function GardenDashboard() {
   const [showSpiritDialogue, setShowSpiritDialogue] = useState(false);
   const [showChat, setShowChat] = useState(false);
   const [showCompost, setShowCompost] = useState(false);
+  const [showScheduleEventModal, setShowScheduleEventModal] = useState(false);
+  const [scheduleEventPrefill, setScheduleEventPrefill] = useState(null); // { title?, startTime?, endTime? }
+  const [scheduleEventTitle, setScheduleEventTitle] = useState('');
+  const [scheduleEventDate, setScheduleEventDate] = useState(() => localISODate());
+  const [scheduleEventTime, setScheduleEventTime] = useState('09:00');
+  const [scheduleEventSaving, setScheduleEventSaving] = useState(false);
   const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
   const [isMobileNav, setIsMobileNav] = useState(false);
   const [justFinishedSession, setJustFinishedSession] = useState(false);
@@ -410,10 +417,10 @@ function GardenDashboard() {
     setShowEveningModal(true);
   }, [now, today, eveningMode]);
 
-  /** In night-owl mode, keep user on focus-friendly tabs (hide Garden/Settings). */
+  /** In night-owl mode, keep user on Now (hide Garden tab). */
   useEffect(() => {
-    if (eveningMode === 'night-owl' && (activeTab === 'garden' || activeTab === 'settings')) {
-      setActiveTab('focus');
+    if (eveningMode === 'night-owl' && activeTab === 'garden') {
+      setActiveTab('today');
     }
   }, [eveningMode, activeTab]);
   const [spiritInsight, setSpiritInsight] = useState(() => {
@@ -536,9 +543,83 @@ function GardenDashboard() {
     setCommandPaletteOpen(false);
   }, []);
 
+  const handleOmniAddParsedRoute = useCallback((result) => {
+    if (!result || !result.title) return;
+    if (result.type === 'calendar_event') {
+      setScheduleEventPrefill({ title: result.title, startTime: result.startTime, endTime: result.endTime });
+      setShowScheduleEventModal(true);
+    } else {
+      setGoalCreatorInitialTitle(result.title);
+      setGoalCreatorInitialSubtasks([]);
+      setIsPlanting(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (showScheduleEventModal) {
+      if (scheduleEventPrefill?.title) {
+        setScheduleEventTitle(scheduleEventPrefill.title);
+        if (scheduleEventPrefill.startTime) {
+          try {
+            const d = new Date(scheduleEventPrefill.startTime);
+            setScheduleEventDate(localISODate(d));
+            setScheduleEventTime(`${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`);
+          } catch (_) {}
+        } else {
+          setScheduleEventDate(localISODate());
+          setScheduleEventTime('09:00');
+        }
+      } else {
+        setScheduleEventTitle('');
+        setScheduleEventDate(localISODate());
+        setScheduleEventTime('09:00');
+      }
+    }
+  }, [showScheduleEventModal, scheduleEventPrefill]);
+
+  const handleScheduleEventSubmit = useCallback(
+    async (e) => {
+      e?.preventDefault?.();
+      const title = scheduleEventTitle.trim();
+      if (!title) return;
+      setScheduleEventSaving(true);
+      try {
+        const [h, m] = scheduleEventTime.split(':').map((x) => parseInt(x, 10) || 0);
+        const start = new Date(scheduleEventDate + 'T12:00:00');
+        start.setHours(h, m, 0, 0);
+        const end = new Date(start.getTime() + 60 * 60 * 1000);
+        const startTime = start.toISOString();
+        const endTime = end.toISOString();
+        if (googleToken) {
+          const created = await createGoogleEvent(googleToken, { title, startTime, endTime });
+          const evt = {
+            id: created?.id ?? 'local-' + Date.now(),
+            title,
+            start: created?.start?.dateTime ?? startTime,
+            end: created?.end?.dateTime ?? endTime,
+            type: 'leaf',
+            source: 'google',
+          };
+          updateWeeklyEvents([...(Array.isArray(weeklyEvents) ? weeklyEvents : []), evt]);
+          pushReward?.({ message: 'Added to calendar', tone: 'moss', icon: '📅' });
+        } else {
+          pushReward?.({ message: 'Connect Google Calendar in Settings to add events.', tone: 'slate', icon: '📅' });
+        }
+        setShowScheduleEventModal(false);
+        setScheduleEventPrefill(null);
+      } catch (err) {
+        console.warn('Schedule event failed', err);
+        pushReward?.({ message: 'Could not add event. Try again.', tone: 'slate', icon: '⚠️' });
+      } finally {
+        setScheduleEventSaving(false);
+      }
+    },
+    [scheduleEventTitle, scheduleEventDate, scheduleEventTime, googleToken, weeklyEvents, updateWeeklyEvents, pushReward]
+  );
+
   const handlePlantFromPalette = useCallback((nextAssignments) => {
     setAssignments(nextAssignments);
-    setActiveTab('focus');
+    setActiveTab('today');
   }, []);
 
   const handleAddRoutineTime = useCallback(
@@ -574,6 +655,28 @@ function GardenDashboard() {
   const events = Array.isArray(weeklyEvents) ? weeklyEvents : [];
   const selectedDayEvents = events.filter((e) => e.dayIndex === jsDayFromMon0(selectedDate));
   const { weather, forecast } = getWeather(selectedDayEvents);
+
+  /** Week date labels (Mon–Sun) for Plan view WeeklyMap. */
+  const planWeekDateLabels = useMemo(() => {
+    const weekStart = getDefaultWeekStart();
+    return [0, 1, 2, 3, 4, 5, 6].map((i) => {
+      const d = new Date(weekStart);
+      d.setDate(weekStart.getDate() + i);
+      return localISODate(d);
+    });
+  }, []);
+
+  /** Events in shape WeeklyMap expects (date field for normalizeEvents). */
+  const planWeeklyPlanForMap = useMemo(
+    () =>
+      (events || []).map((e) => ({
+        ...e,
+        date: e.start || e.end,
+        type: e.type || 'leaf',
+        title: e.title ?? 'Event',
+      })),
+    [events]
+  );
 
   const filledSpoonTotal = useMemo(() => {
     return HOURS.reduce((sum, h) => {
@@ -629,7 +732,7 @@ function GardenDashboard() {
   }, []);
 
   useEffect(() => {
-    if (isOverloaded && activeTab === 'focus') {
+    if (isOverloaded && activeTab === 'today') {
       setShowSpiritDialogue(true);
     }
   }, [isOverloaded, activeTab]);
@@ -762,21 +865,6 @@ function GardenDashboard() {
       subtaskId,
     }));
   }, [todayPlanItemsWithHour, now]);
-
-  /** Garden Level: 1 = Seedling, 2 = Sprout (first task or 1 log), 3 = Bloom (5 tasks). */
-  const gardenLevel = useMemo(() => {
-    const logList = Array.isArray(logs) ? logs : [];
-    const completedTasks = logList.length;
-    if (completedTasks >= 5) return 3;
-    if (completedTasks >= 1) return 2;
-    return 1;
-  }, [logs]);
-
-  const isTabLocked = useCallback((tabId) => (TAB_LEVELS[tabId] ?? 1) > gardenLevel, [gardenLevel]);
-
-  useEffect(() => {
-    if (isTabLocked(activeTab)) setActiveTab('focus');
-  }, [activeTab, gardenLevel, isTabLocked]);
 
   const LAST_OPEN_DATE_KEY = 'kaizen_last_open_date';
   const GENTLE_RESTART_DISMISSED_KEY = 'kaizen_gentle_restart_dismissed_date';
@@ -1180,6 +1268,7 @@ function GardenDashboard() {
     <div
         className={`min-h-screen flex flex-col transition-colors ${isDark ? 'bg-slate-900 text-slate-100' : 'bg-stone-50'}`}
       >
+      {activeTab !== 'garden' && activeTab !== 'settings' && (
       <header
         className={`border-b transition-colors ${
           isDark ? 'border-slate-700 bg-slate-800/80' : `border-stone-200 ${skyBg}`
@@ -1413,103 +1502,32 @@ function GardenDashboard() {
           </div>
         </div>
       </header>
-
-      {!isMobileNav && (
-        <nav className={`border-b ${isDark ? 'border-slate-700 bg-slate-800/60' : 'border-stone-200 bg-stone-50'}`}>
-          <div className="max-w-4xl mx-auto px-4 flex gap-8">
-            {[
-              { id: 'focus', label: 'Today' },
-              { id: 'horizons', label: 'Horizons' },
-              { id: 'garden', label: 'My Garden' },
-              { id: 'journal', label: 'Journal' },
-              { id: 'insights', label: 'Insights' },
-              { id: 'settings', label: 'Settings' },
-            ]
-              .filter(({ id }) => eveningMode !== 'night-owl' || (id !== 'garden' && id !== 'settings'))
-              .map(({ id, label }) => {
-                const locked = isTabLocked(id);
-                return (
-                  <button
-                    key={id}
-                    id={id === 'garden' ? 'tour-garden-tab' : id === 'journal' ? 'tour-journal-tab' : undefined}
-                    type="button"
-                    onClick={() => {
-                      if (locked) {
-                        setLockedTabToast(LOCKED_TAB_TOAST);
-                        setTimeout(() => setLockedTabToast(null), 3000);
-                      } else {
-                        setActiveTab(id);
-                      }
-                    }}
-                    className={`relative py-4 font-sans font-medium focus:outline-none focus:ring-2 focus:ring-moss-500/30 rounded flex items-center gap-1.5 ${
-                      locked
-                        ? isDark ? 'text-slate-500 cursor-default' : 'text-stone-400 cursor-default'
-                        : isDark
-                          ? activeTab === id ? 'text-slate-100' : 'text-slate-400 hover:text-slate-200'
-                          : activeTab === id ? 'text-stone-900' : 'text-stone-600 hover:text-stone-800'
-                    }`}
-                  >
-                    {locked && <span className="shrink-0 opacity-70" aria-hidden>🔒</span>}
-                    {label}
-                    {activeTab === id && !locked && (
-                      <span className={`absolute bottom-0 left-0 right-0 h-0.5 rounded-full ${isDark ? 'bg-slate-400' : 'bg-stone-400'}`} />
-                    )}
-                  </button>
-                );
-              })}
-          </div>
-        </nav>
       )}
 
-      {isMobileNav && (
-        <nav className={`fixed bottom-0 left-0 right-0 z-50 border-t safe-area-pb ${isDark ? 'border-slate-700 bg-slate-800/95' : 'border-stone-200 bg-stone-50'}`}>
-          <div className="max-w-4xl mx-auto px-2 flex justify-around py-2">
-            {[
-              { id: 'focus', label: 'Today', icon: '🎯' },
-              { id: 'horizons', label: 'Horizons', icon: '🔭' },
-              { id: 'garden', label: 'Garden', icon: '🌱' },
-              { id: 'journal', label: 'Journal', icon: '📔' },
-            ]
-              .filter(({ id }) => eveningMode !== 'night-owl' || (id !== 'garden' && id !== 'settings'))
-              .map(({ id, label, icon }) => {
-                const locked = isTabLocked(id);
-                return (
-                  <button
-                    key={id}
-                    id={id === 'garden' ? 'tour-garden-tab' : id === 'journal' ? 'tour-journal-tab' : undefined}
-                    type="button"
-                    onClick={() => {
-                      if (locked) {
-                        setLockedTabToast(LOCKED_TAB_TOAST);
-                        setTimeout(() => setLockedTabToast(null), 3000);
-                      } else {
-                        setActiveTab(id);
-                      }
-                    }}
-                    className={`flex flex-col items-center justify-center gap-0.5 min-h-[44px] py-2 px-3 rounded-lg font-sans text-xs focus:outline-none focus:ring-2 focus:ring-moss-500/30 relative ${
-                      locked
-                        ? 'text-stone-400 opacity-70 cursor-default'
-                        : isDark
-                          ? activeTab === id ? 'text-indigo-200 bg-slate-700' : 'text-slate-400'
-                          : activeTab === id ? 'text-moss-700 bg-moss-100' : 'text-stone-600'
-                    }`}
-                    aria-label={locked ? `${label} (locked)` : label}
-                  >
-                    {locked ? (
-                      <span className="flex items-center justify-center w-6 h-6" aria-hidden>🔒</span>
-                    ) : (
-                      <span className="text-lg leading-none" aria-hidden>{icon}</span>
-                    )}
-                    <span>{label}</span>
-                  </button>
-                );
-              })}
-          </div>
-        </nav>
-      )}
+      {/* Persistent top header: Settings (fixed top-right) */}
+      <div className="fixed top-4 right-4 z-50 pointer-events-auto">
+        <button
+          type="button"
+          onClick={() => setActiveTab(activeTab === 'settings' ? 'today' : 'settings')}
+          className="p-2.5 rounded-full bg-stone-900/80 backdrop-blur-md border border-white/10 shadow-lg text-stone-200 hover:text-white hover:bg-stone-800/90 transition-colors focus:outline-none focus:ring-2 focus:ring-moss-500/50"
+          aria-label={activeTab === 'settings' ? 'Back' : 'Settings'}
+          title={activeTab === 'settings' ? 'Back' : 'Settings'}
+        >
+          <span className="text-xl" aria-hidden>{activeTab === 'settings' ? '←' : '⚙️'}</span>
+        </button>
+      </div>
 
-      <main className={`flex-1 w-full min-w-0 px-4 py-8 max-w-5xl mx-auto relative ${isMobileNav ? 'pb-20' : ''}`}>
-        {activeTab === 'focus' && (
+      {activeTab === 'garden' ? (
+        <div className="flex-1 min-h-0 relative pt-0 pb-20">
+          <GardenWalk goals={goals} onCompost={handleCompostGoal} onGoalClick={handleGardenGoalClick} onOpenGoalCreator={() => setIsPlanting(true)} onEditGoal={editGoal} />
+        </div>
+      ) : activeTab === 'settings' ? (
+        <main className="flex-1 w-full min-w-0 px-4 py-8 max-w-2xl mx-auto relative pb-24 pt-14">
+          <SettingsView onReplayTour={() => { setShowTour(true); setActiveTab('today'); }} />
+        </main>
+      ) : (
+      <main className={`flex-1 w-full min-w-0 px-4 py-8 max-w-5xl mx-auto relative pb-24`}>
+        {activeTab === 'today' && (
           <>
             <div className="mb-6 flex gap-3">
               <button
@@ -1772,9 +1790,31 @@ function GardenDashboard() {
             )}
           </>
         )}
-        {activeTab === 'horizons' && (
+        {activeTab === 'planner' && (
           <div className="w-full space-y-8 animate-in fade-in slide-in-from-bottom-2 duration-500">
-            {/* View toggle: Project planning | Tracking metrics */}
+            {/* Project Planner + Horizons Gantt stacked */}
+            <div className="rounded-xl border border-amber-200 bg-amber-50/80 p-4 shadow-sm">
+              <h2 className="font-serif text-stone-800 text-lg mb-2">📋 Plan a Project</h2>
+              <p className="font-sans text-sm text-stone-600 mb-4">Slice a big goal into phases and tasks.</p>
+              <button
+                type="button"
+                onClick={() => setShowProjectPlanner(true)}
+                className="w-full py-3 px-4 rounded-xl border-2 border-amber-300 bg-white text-amber-800 font-sans font-medium hover:border-amber-400 hover:bg-amber-50 transition-colors flex items-center justify-center gap-2"
+              >
+                <span className="text-xl">📋</span> Open Project Planner
+              </button>
+            </div>
+            <div className="border-t border-stone-200 pt-6" aria-hidden />
+            <div className="rounded-xl border border-stone-200 bg-white p-4 shadow-sm">
+              <h2 className="font-serif text-stone-800 text-lg mb-3">Week at a glance</h2>
+              <WeeklyMap
+                weeklyPlan={planWeeklyPlanForMap}
+                selectedDate={planSelectedDayIndex}
+                onSelectDate={setPlanSelectedDayIndex}
+                weekDateLabels={planWeekDateLabels}
+                goals={goals}
+              />
+            </div>
             <div className="flex gap-1 p-1 rounded-xl bg-stone-100 border border-stone-200 w-full max-w-sm">
               <button
                 type="button"
@@ -1800,28 +1840,6 @@ function GardenDashboard() {
               />
             ) : (
               <>
-            {/* 1. Planning Actions */}
-            <div>
-              <h2 className="font-serif text-2xl text-stone-800 mb-4">Planting Season</h2>
-              <div className="flex flex-col sm:flex-row gap-3">
-                <button
-                  type="button"
-                  onClick={() => setIsPlanting(true)}
-                  className="flex-1 py-4 px-4 rounded-xl border-2 border-dashed border-moss-300 bg-moss-50 text-moss-700 font-sans font-medium hover:border-moss-500 hover:bg-moss-100 transition-colors flex items-center justify-center gap-2 shadow-sm"
-                >
-                  <span className="text-xl">🌱</span> Plant a New Seed
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowProjectPlanner(true)}
-                  className="flex-1 py-4 px-4 rounded-xl border-2 border-dashed border-amber-300 bg-amber-50 text-amber-700 font-sans font-medium hover:border-amber-500 hover:bg-amber-100 transition-colors flex items-center justify-center gap-2 shadow-sm"
-                >
-                  <span className="text-xl">📋</span> Plan a Project
-                </button>
-              </div>
-            </div>
-
-            {/* Gantt: project timeline */}
             <HorizonsGantt
               goals={goals}
               onGoalClick={(goal) => setEditingGoal(goal)}
@@ -2039,27 +2057,57 @@ function GardenDashboard() {
             )}
           </div>
         )}
-        {activeTab === 'garden' && (
-          <div className="w-full">
-            <GardenWalk goals={goals} onCompost={handleCompostGoal} onGoalClick={handleGardenGoalClick} onOpenGoalCreator={() => setIsPlanting(true)} onEditGoal={editGoal} />
-          </div>
-        )}
-        {activeTab === 'journal' && (
-          <div className="w-full">
-            <JournalView />
-          </div>
-        )}
-        {activeTab === 'insights' && (
-          <div className="w-full">
-            <AnalyticsView />
-          </div>
-        )}
-        {activeTab === 'settings' && (
-          <div className="w-full pb-24 sm:pb-0">
-            <SettingsView onReplayTour={() => setShowTour(true)} />
+        {activeTab === 'today' && (
+          <div className="mt-4 flex flex-wrap gap-4 font-sans text-sm">
+            <button type="button" onClick={() => setShowJournalModal(true)} className="text-stone-500 hover:text-stone-800 underline underline-offset-2 focus:outline-none focus:ring-2 focus:ring-moss-500/40 rounded">
+              📔 Journal
+            </button>
+            <button type="button" onClick={() => setShowInsightsModal(true)} className="text-stone-500 hover:text-stone-800 underline underline-offset-2 focus:outline-none focus:ring-2 focus:ring-moss-500/40 rounded">
+              📊 Insights
+            </button>
           </div>
         )}
       </main>
+      )}
+
+      {/* Floating glassmorphic bottom nav: Now / Plan / Garden */}
+      <nav
+        className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 bg-stone-900/80 backdrop-blur-md px-6 py-3 rounded-full flex gap-6 sm:gap-8 shadow-2xl border border-white/10"
+        aria-label="Main navigation"
+      >
+        <button
+          type="button"
+          onClick={() => setActiveTab('today')}
+          className={`flex items-center gap-2 min-w-[44px] min-h-[44px] justify-center rounded-full px-3 py-2 transition-colors focus:outline-none focus:ring-2 focus:ring-white/30 ${activeTab === 'today' ? 'bg-white/20 text-amber-300' : 'text-stone-400 hover:text-stone-200'}`}
+          aria-current={activeTab === 'today' ? 'page' : undefined}
+          aria-label="Now"
+        >
+          <span className="text-2xl sm:text-xl" aria-hidden>⚡</span>
+          <span className="hidden sm:inline text-sm font-medium">Now</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('planner')}
+          className={`flex items-center gap-2 min-w-[44px] min-h-[44px] justify-center rounded-full px-3 py-2 transition-colors focus:outline-none focus:ring-2 focus:ring-white/30 ${activeTab === 'planner' ? 'bg-white/20 text-amber-300' : 'text-stone-400 hover:text-stone-200'}`}
+          aria-current={activeTab === 'planner' ? 'page' : undefined}
+          aria-label="Plan"
+        >
+          <span className="text-2xl sm:text-xl" aria-hidden>🗺️</span>
+          <span className="hidden sm:inline text-sm font-medium">Plan</span>
+        </button>
+        {eveningMode !== 'night-owl' && (
+          <button
+            type="button"
+            onClick={() => setActiveTab('garden')}
+            className={`flex items-center gap-2 min-w-[44px] min-h-[44px] justify-center rounded-full px-3 py-2 transition-colors focus:outline-none focus:ring-2 focus:ring-white/30 ${activeTab === 'garden' ? 'bg-white/20 text-moss-400' : 'text-stone-400 hover:text-stone-200'}`}
+            aria-current={activeTab === 'garden' ? 'page' : undefined}
+            aria-label="Garden"
+          >
+            <span className="text-2xl sm:text-xl" aria-hidden>🌱</span>
+            <span className="hidden sm:inline text-sm font-medium">Garden</span>
+          </button>
+        )}
+      </nav>
 
       <CommandPalette
         open={commandPaletteOpen}
@@ -2070,6 +2118,17 @@ function GardenDashboard() {
         onAssignmentsChange={handlePlantFromPalette}
         onOpenGoalCreator={handleOpenGoalCreatorFromPalette}
         onOpenSpiritBuilder={() => { setCommandPaletteOpen(false); setShowSpiritMirror(true); }}
+      />
+
+      <OmniAdd
+        onOpenGoalCreator={(title) => {
+          setGoalCreatorInitialTitle(title ?? '');
+          setGoalCreatorInitialSubtasks([]);
+          setIsPlanting(true);
+        }}
+        onOpenScheduleEvent={() => setShowScheduleEventModal(true)}
+        onOpenBrainDump={() => setShowCompost(true)}
+        onParsedRoute={handleOmniAddParsedRoute}
       />
 
       <AnimatePresence>
@@ -2150,6 +2209,34 @@ function GardenDashboard() {
         onClose={() => setShowAccessibilityModal(false)}
       />
 
+      {showJournalModal && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-stone-50 overflow-auto">
+          <div className="sticky top-0 z-10 flex items-center justify-between px-4 py-3 border-b border-stone-200 bg-stone-50/95 backdrop-blur-sm">
+            <h2 className="font-serif text-lg text-stone-900">Journal</h2>
+            <button type="button" onClick={() => setShowJournalModal(false)} aria-label="Close" className="w-10 h-10 flex items-center justify-center rounded-lg text-stone-500 hover:text-stone-800 hover:bg-stone-200">
+              ×
+            </button>
+          </div>
+          <div className="flex-1 px-4 py-6 max-w-2xl mx-auto w-full">
+            <JournalView />
+          </div>
+        </div>
+      )}
+
+      {showInsightsModal && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-stone-50 overflow-auto">
+          <div className="sticky top-0 z-10 flex items-center justify-between px-4 py-3 border-b border-stone-200 bg-stone-50/95 backdrop-blur-sm">
+            <h2 className="font-serif text-lg text-stone-900">Insights</h2>
+            <button type="button" onClick={() => setShowInsightsModal(false)} aria-label="Close" className="w-10 h-10 flex items-center justify-center rounded-lg text-stone-500 hover:text-stone-800 hover:bg-stone-200">
+              ×
+            </button>
+          </div>
+          <div className="flex-1 px-4 py-6 max-w-2xl mx-auto w-full">
+            <AnalyticsView />
+          </div>
+        </div>
+      )}
+
       <GoalEditor
         open={!!editingGoal}
         goal={editingGoal}
@@ -2187,6 +2274,90 @@ function GardenDashboard() {
           setIsPlanting(true);
         }}
       />
+
+      <AnimatePresence>
+        {showScheduleEventModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/40 backdrop-blur-sm"
+            onClick={() => { setShowScheduleEventModal(false); setScheduleEventPrefill(null); }}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="schedule-event-title"
+          >
+            <motion.div
+              initial={{ scale: 0.96, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.96, opacity: 0 }}
+              onClick={(e) => e.stopPropagation()}
+              className="relative w-full max-w-sm rounded-2xl bg-stone-50 border border-stone-200 shadow-xl p-5"
+            >
+              <h2 id="schedule-event-title" className="font-serif text-stone-900 text-lg mb-4">📅 Schedule Event</h2>
+              <form onSubmit={handleScheduleEventSubmit} className="space-y-4">
+                <div>
+                  <label htmlFor="schedule-event-name" className="block font-sans text-sm font-medium text-stone-600 mb-1">Title</label>
+                  <input
+                    id="schedule-event-name"
+                    type="text"
+                    value={scheduleEventTitle}
+                    onChange={(e) => setScheduleEventTitle(e.target.value)}
+                    placeholder="e.g. Team standup"
+                    className="w-full py-2 px-3 rounded-lg border border-stone-200 bg-white font-sans text-sm focus:outline-none focus:ring-2 focus:ring-moss-500/40 focus:border-moss-500"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label htmlFor="schedule-event-date" className="block font-sans text-sm font-medium text-stone-600 mb-1">Date</label>
+                    <input
+                      id="schedule-event-date"
+                      type="date"
+                      value={scheduleEventDate}
+                      onChange={(e) => setScheduleEventDate(e.target.value)}
+                      className="w-full py-2 px-3 rounded-lg border border-stone-200 bg-white font-sans text-sm focus:outline-none focus:ring-2 focus:ring-moss-500/40 focus:border-moss-500"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="schedule-event-time" className="block font-sans text-sm font-medium text-stone-600 mb-1">Time</label>
+                    <input
+                      id="schedule-event-time"
+                      type="time"
+                      value={scheduleEventTime}
+                      onChange={(e) => setScheduleEventTime(e.target.value)}
+                      className="w-full py-2 px-3 rounded-lg border border-stone-200 bg-white font-sans text-sm focus:outline-none focus:ring-2 focus:ring-moss-500/40 focus:border-moss-500"
+                    />
+                  </div>
+                </div>
+                <div className="flex gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => { setShowScheduleEventModal(false); setScheduleEventPrefill(null); }}
+                    className="flex-1 py-2.5 font-sans text-sm text-stone-600 hover:bg-stone-100 rounded-lg transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={!scheduleEventTitle.trim() || scheduleEventSaving}
+                    className="flex-1 py-2.5 font-sans text-sm font-medium text-white bg-moss-600 rounded-lg hover:bg-moss-700 focus:outline-none focus:ring-2 focus:ring-moss-500/50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {scheduleEventSaving ? 'Adding…' : 'Add to Calendar'}
+                  </button>
+                </div>
+              </form>
+              <button
+                type="button"
+                onClick={() => { setShowScheduleEventModal(false); setScheduleEventPrefill(null); }}
+                aria-label="Close"
+                className="absolute top-3 right-3 w-8 h-8 flex items-center justify-center rounded-lg text-stone-400 hover:text-stone-600 hover:bg-stone-100"
+              >
+                ×
+              </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Configure Session modal (pre-flight when clicking Play on a slot) */}
       <AnimatePresence>
