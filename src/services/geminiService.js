@@ -492,6 +492,76 @@ export async function breakDownTask(taskTitle) {
   }
 }
 
+/**
+ * Daily "Help Me Prioritize": pick exactly one task from today's list for the user to focus on.
+ * Uses energy level and respects fixed times (prefers flexible tasks).
+ * @param {Array<{ id: string, title: string, isFixed?: boolean }>} tasks - Today's uncompleted tasks (from assignments)
+ * @param {number} [energyLevel=3] - User's current energy 1-5 (spoons); when >5 we pass 5
+ * @returns {Promise<{ recommendedTaskId: string | null, reason: string | null }>}
+ */
+export async function recommendDailyPriority(tasks, energyLevel = 3) {
+  if (!Array.isArray(tasks) || tasks.length === 0) {
+    return { recommendedTaskId: null, reason: null };
+  }
+  const energy = Math.max(1, Math.min(5, Number(energyLevel) || 3));
+  const flexibleTasks = tasks.filter((t) => !t.isFixed);
+  const fixedTasks = tasks.filter((t) => t.isFixed);
+
+  const formatList = (list) =>
+    list.map((t) => `- id: "${t.id}", title: "${(t.title || '').replace(/"/g, "'")}"`).join('\n');
+
+  const prompt = `You are an executive function assistant. Look at these tasks for today. The user has ${energy}/5 energy. Pick EXACTLY ONE task that they should do first to build momentum or clear a major hurdle.
+
+TASKS FOR TODAY:
+${flexibleTasks.length > 0 ? 'FLEXIBLE (no fixed time):\n' + formatList(flexibleTasks) : ''}
+${fixedTasks.length > 0 ? (flexibleTasks.length > 0 ? '\nFIXED-TIME (scheduled):\n' : '') + formatList(fixedTasks) : ''}
+
+Return ONLY a JSON object: {"recommendedTaskId": "id", "reason": "A 1-sentence encouraging reason why."}
+Example: {"recommendedTaskId":"goal-123","reason":"Starting with this will give you a quick win and clear mental space for the rest."}
+Use the exact task id from the list. Keep the reason warm and brief.`;
+
+  const fallbackId = flexibleTasks[0]?.id ?? tasks[0]?.id ?? null;
+  const fallbackReason = fallbackId ? 'Start here to build momentum.' : null;
+
+  const apiKey = getApiKey();
+  try {
+    if (apiKey) {
+      const { GoogleGenerativeAI } = await import('@google/generative-ai');
+      const genAI = new GoogleGenerativeAI(apiKey);
+      const result = await tryGenerate(genAI, prompt);
+      const text = result?.response?.text?.();
+      if (typeof text !== 'string') return { recommendedTaskId: fallbackId, reason: fallbackReason };
+      const raw = sanitizeJsonResponse(text);
+      const match = raw.match(/\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/) || raw.match(/\{[^{}]*\}/);
+      const parsed = match ? JSON.parse(match[0]) : JSON.parse(raw);
+      const id = parsed?.recommendedTaskId;
+      const reason = typeof parsed?.reason === 'string' ? parsed.reason.trim() : fallbackReason;
+      const valid = typeof id === 'string' && tasks.some((t) => t.id === id);
+      return {
+        recommendedTaskId: valid ? id : fallbackId,
+        reason: valid ? reason : fallbackReason,
+      };
+    }
+    const groqKey = typeof import.meta !== 'undefined' && import.meta.env?.VITE_GROQ_API_KEY;
+    if (groqKey) {
+      const groqText = await fetchFromGroq(prompt);
+      const raw = sanitizeJsonResponse(groqText);
+      const match = raw.match(/\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/) || raw.match(/\{[^{}]*\}/);
+      const parsed = match ? JSON.parse(match[0]) : JSON.parse(raw);
+      const id = parsed?.recommendedTaskId;
+      const reason = typeof parsed?.reason === 'string' ? parsed.reason.trim() : fallbackReason;
+      const valid = typeof id === 'string' && tasks.some((t) => t.id === id);
+      return {
+        recommendedTaskId: valid ? id : fallbackId,
+        reason: valid ? reason : fallbackReason,
+      };
+    }
+  } catch (err) {
+    console.warn('recommendDailyPriority failed:', err?.message || err);
+  }
+  return { recommendedTaskId: fallbackId, reason: fallbackReason };
+}
+
 const TASK_EXTRACT_PROMPT =
   'Extract all distinct, actionable tasks from this input. Ignore pleasantries or fluff. Return a JSON array of strings.';
 
@@ -634,7 +704,32 @@ Input: "${text.replace(/"/g, '\\"').slice(0, 500)}"`;
   }
 }
 
-export async function suggestGoalStructure(title, type = 'kaizen', currentMetric, targetMetric) {
+/**
+ * Iron-clad work hours block: when app is in personal mode (!isWorkScheduler) and work hours are set,
+ * forbid the AI from scheduling any tasks during that window.
+ * @param {{ isWorkScheduler?: boolean, workHours?: { start?: string, end?: string } }|undefined} settings - From GardenContext userSettings
+ * @returns {string} Constraint string for the system prompt, or ''
+ */
+function getWorkBlockConstraint(settings) {
+  if (settings?.isWorkScheduler || !settings?.workHours) return '';
+  const start = settings.workHours.start ?? '09:00';
+  const end = settings.workHours.end ?? '17:00';
+  return `CRITICAL HARD CONSTRAINT: The user works from ${start} to ${end}. You are absolutely FORBIDDEN from scheduling any tasks during this time window. Do not suggest or place any tasks between these hours.`;
+}
+
+/** Skill-level instruction for AI: scales step granularity (Beginner = tiny, Expert = big milestones). */
+function getSkillLevelInstruction(skillLevel) {
+  const level = (skillLevel || 'intermediate').toLowerCase();
+  if (level === 'beginner') {
+    return 'If Skill Level is Beginner: Break tasks into extremely tiny 5-15 minute Kaizen steps.';
+  }
+  if (level === 'expert') {
+    return 'If Skill Level is Expert: Assume deep domain knowledge. Steps should be 1-2 hour milestones.';
+  }
+  return 'If Skill Level is Intermediate: Skip the extreme basics. Steps should be 30-60 minutes of deep work.';
+}
+
+export async function suggestGoalStructure(title, type = 'kaizen', currentMetric, targetMetric, skillLevel) {
   const apiKey = getApiKey();
   if (!apiKey) {
     console.error("Missing API Key");
@@ -642,11 +737,14 @@ export async function suggestGoalStructure(title, type = 'kaizen', currentMetric
   }
 
   const isRoutine = type === 'routine';
+  const skillInstruction = getSkillLevelInstruction(skillLevel);
 
   const prompt = isRoutine
     ? `
       Act as a Kaizen productivity coach for recurring habits.
       User Routine: "${title}".
+
+      ${skillInstruction}
 
       This is a recurring habit/routine (not a project). Suggest a plan in strict JSON (no markdown).
 
@@ -672,6 +770,8 @@ export async function suggestGoalStructure(title, type = 'kaizen', currentMetric
       Act as a Kaizen productivity coach.
       User Goal: "${title}" (${type}).
       ${currentMetric ? `Current: ${currentMetric}, Target: ${targetMetric}` : ''}
+
+      ${skillInstruction}
 
       Create a comprehensive plan in strict JSON format (no markdown).
 
@@ -735,9 +835,10 @@ export async function suggestGoalStructure(title, type = 'kaizen', currentMetric
 
 /**
  * AI Weekly Planner: distributes goals across Mon-Sun based on targets, rituals, and energy.
- * Returns { monday: [{ goalId, hours }], tuesday: [...], ... }
+ * Returns { monday: [{ goalId, hours, priority? }, ...], ... }
+ * @param {Object} options - Optional { northStarTitle } to prioritize that project
  */
-export async function generateWeeklyPlan(goals, calendarEvents = [], energyProfile = {}) {
+export async function generateWeeklyPlan(goals, calendarEvents = [], energyProfile = {}, options = {}) {
   const apiKey = getApiKey();
   if (!apiKey) { console.error("Missing API Key"); return null; }
 
@@ -760,12 +861,23 @@ export async function generateWeeklyPlan(goals, calendarEvents = [], energyProfi
   }).filter(Boolean).join('; ');
 
   const spoons = energyProfile.spoonCount ?? 8;
+  const northStarTitle = options.northStarTitle ?? null;
+
+  const settings = options.userSettings ?? options.settings ?? {};
+  const workBlockConstraint = getWorkBlockConstraint(settings);
 
   const todayString = new Date().toISOString().split('T')[0];
+  const northStarConstraint = northStarTitle
+    ? `
+
+CRITICAL: The user's #1 priority this week is the project/goal named "${northStarTitle}". When distributing tasks, you MUST schedule subtasks belonging to this project earlier in the week, and mark them with "priority": true in your JSON response. All other blocks use "priority": false.`
+    : '';
+
   const prompt = `
 Act as a Kaizen weekly planner. Distribute these goals across Mon-Sun.
+${workBlockConstraint ? `\n${workBlockConstraint}\n` : ''}
 
-CRITICAL CONSTRAINT: Today's date is ${todayString}. You absolutely MUST NOT schedule any tasks on days before this date. Only distribute tasks starting from today and moving forward into the future.
+CRITICAL CONSTRAINT: Today's date is ${todayString}. You absolutely MUST NOT schedule any tasks on days before this date. Only distribute tasks starting from today and moving forward into the future.${northStarConstraint || ''}
 
 Goals (JSON):
 ${JSON.stringify(goalSummaries, null, 2)}
@@ -779,10 +891,11 @@ Rules:
 - Max ${Math.min(spoons, 10)} hours of work per day.
 - High-focus tasks in the morning, lighter tasks in the afternoon.
 - Leave at least 1 day lighter for rest.
+${northStarTitle ? '- Each time block MUST include a boolean "priority" field: true only for tasks belonging to the North Star project above, false otherwise.' : ''}
 
-Return strict JSON (no markdown):
+Return strict JSON (no markdown). Each day array item must have goalId, hours, and priority (boolean):
 {
-  "monday": [{ "goalId": "...", "hours": 2 }],
+  "monday": [{ "goalId": "...", "hours": 2, "priority": false }],
   "tuesday": [...],
   "wednesday": [...],
   "thursday": [...],
@@ -820,10 +933,14 @@ Return strict JSON (no markdown):
 /**
  * AI Monthly Planner: creates a high-level roadmap for the month.
  * Returns { summary, weeks: [{ focus, goals: { goalId: hours } }] }
+ * @param {Object} [options] - Optional { userSettings } from GardenContext (for work-hours block in personal mode)
  */
-export async function generateMonthlyPlan(goals, monthIndex, year) {
+export async function generateMonthlyPlan(goals, monthIndex, year, options = {}) {
   const apiKey = getApiKey();
   if (!apiKey) { console.error("Missing API Key"); return null; }
+
+  const settings = options.userSettings ?? options.settings ?? {};
+  const workBlockConstraint = getWorkBlockConstraint(settings);
 
   const monthName = ['January','February','March','April','May','June','July','August','September','October','November','December'][monthIndex];
   const goalSummaries = goals.filter((g) => g.type === 'routine' || g.type === 'kaizen').map((g) => ({
@@ -840,6 +957,7 @@ export async function generateMonthlyPlan(goals, monthIndex, year) {
   const todayString = new Date().toISOString().split('T')[0];
   const prompt = `
 Act as a Kaizen monthly planner for ${monthName} ${year}.
+${workBlockConstraint ? `\n${workBlockConstraint}\n` : ''}
 
 CRITICAL CONSTRAINT: Today's date is ${todayString}. You absolutely MUST NOT schedule any tasks on days before this date. Only distribute tasks starting from today and moving forward into the future.
 
@@ -887,21 +1005,123 @@ Return strict JSON (no markdown):
 }
 
 /**
+ * Monthly AI Planner (strict JSON): returns an array of tasks for the calendar.
+ * Each item: { title: string, date: "YYYY-MM-DD", durationMinutes: number, priority?: boolean }.
+ * Used with user consent: show pending plan modal, then Apply to Calendar.
+ * @param {Array} goals - Kaizen goals
+ * @param {number} monthIndex - 0-11
+ * @param {number} year
+ * @param {{ userSettings?: object, northStarTitle?: string }} options
+ */
+export async function generateMonthlyPlanTasks(goals, monthIndex, year, options = {}) {
+  const apiKey = getApiKey();
+  if (!apiKey) {
+    console.error('Missing API Key');
+    return null;
+  }
+
+  const settings = options.userSettings ?? {};
+  const workBlockConstraint = getWorkBlockConstraint(settings);
+  const northStarTitle = options.northStarTitle ?? null;
+  const monthName = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'][monthIndex];
+  const todayString = new Date().toISOString().split('T')[0];
+  const goalSummaries = goals.filter((g) => g.type === 'routine' || g.type === 'kaizen').map((g) => ({
+    id: g.id,
+    title: g.title,
+    type: g.type,
+  }));
+
+  if (goalSummaries.length === 0) return null;
+
+  const northStarConstraint = northStarTitle
+    ? `\nCRITICAL: The user's #1 priority this month is the project/goal named "${northStarTitle}". Schedule tasks belonging to this project earlier in the month and set "priority": true for those items; use "priority": false for others.`
+    : '';
+
+  const prompt = `You are a JSON-only API. Do not include markdown formatting, do not include \`\`\`json or \`\`\` text. You must return a raw JSON array of objects with keys: title, date (YYYY-MM-DD), durationMinutes, and priority (boolean).
+${workBlockConstraint ? `\n${workBlockConstraint}\n` : ''}${northStarConstraint}
+
+Act as a Kaizen monthly planner for ${monthName} ${year}. Distribute tasks across the month for these goals:
+${JSON.stringify(goalSummaries, null, 2)}
+
+CRITICAL CONSTRAINT: Today's date is ${todayString}. You absolutely MUST NOT schedule any tasks on days before this date. Only use dates from today onward. Each date must be YYYY-MM-DD.
+
+Return ONLY a raw JSON array. Example: [{"title":"Review goals","date":"2025-02-21","durationMinutes":30,"priority":true},{"title":"Deep work block","date":"2025-02-23","durationMinutes":60,"priority":false}]
+`;
+
+  try {
+    const { GoogleGenerativeAI } = await import('@google/generative-ai');
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const result = await tryGenerate(genAI, prompt);
+    const text = result?.response?.text?.();
+    if (!text) throw new Error('Empty response');
+    let raw = sanitizeJsonResponse(text).trim();
+    const arrMatch = raw.match(/\[[\s\S]*\]/);
+    if (arrMatch) raw = arrMatch[0];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return null;
+    const valid = parsed.filter(
+      (item) =>
+        item &&
+        typeof item.title === 'string' &&
+        typeof item.date === 'string' &&
+        typeof item.durationMinutes === 'number'
+    );
+    return valid.map((item) => ({
+      title: String(item.title).trim(),
+      date: item.date,
+      durationMinutes: Math.max(1, Math.min(480, Math.floor(item.durationMinutes))),
+      priority: item.priority === true,
+    }));
+  } catch (err) {
+    console.warn('Gemini generateMonthlyPlanTasks failed, trying Groq:', err?.message || err);
+    try {
+      const groqText = await fetchFromGroq(prompt);
+      let raw = sanitizeJsonResponse(groqText).trim();
+      const arrMatch = raw.match(/\[[\s\S]*\]/);
+      if (arrMatch) raw = arrMatch[0];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return null;
+      const valid = parsed.filter(
+        (item) =>
+          item &&
+          typeof item.title === 'string' &&
+          typeof item.date === 'string' &&
+          typeof item.durationMinutes === 'number'
+      );
+      return valid.map((item) => ({
+        title: String(item.title).trim(),
+        date: item.date,
+        durationMinutes: Math.max(1, Math.min(480, Math.floor(item.durationMinutes))),
+        priority: item.priority === true,
+      }));
+    } catch (groqErr) {
+      console.error('Groq generateMonthlyPlanTasks fallback failed:', groqErr?.message || groqErr);
+      return null;
+    }
+  }
+}
+
+/**
  * Rebalance month: distribute remainingHours across availableDates, avoiding userEvents.
  * @param {number} remainingHours - Hours to distribute
  * @param {string[]} availableDates - YYYY-MM-DD dates (e.g. remaining days in month excluding Sundays)
  * @param {Array} userEvents - Hard-coded events [{ start, end, date or start }]
+ * @param {{ userSettings?: object }} [options] - Optional; userSettings from GardenContext for work-hours block in personal mode
  * @returns {Promise<Array<{ date: string, startTime: string, endTime: string }>>} Time blocks
  */
-export async function rebalanceMonthQuota(remainingHours, availableDates = [], userEvents = []) {
+export async function rebalanceMonthQuota(remainingHours, availableDates = [], userEvents = [], options = {}) {
   const apiKey = getApiKey();
   if (!apiKey) {
     console.error('Missing API Key');
     return [];
   }
 
+  const settings = options.userSettings ?? options.settings ?? {};
+  const workBlockConstraint = getWorkBlockConstraint(settings);
+
   const todayString = new Date().toISOString().split('T')[0];
   const prompt = `The user needs to distribute ${remainingHours} hours of work across ${availableDates.length} days. Available dates (use ONLY these): ${JSON.stringify(availableDates)}. They have the following hard-coded events: ${JSON.stringify(userEvents)}.
+${workBlockConstraint ? `\n${workBlockConstraint}\n` : ''}
 
 CRITICAL CONSTRAINT: Today's date is ${todayString}. You absolutely MUST NOT schedule any tasks on days before this date. Only distribute tasks starting from today and moving forward into the future.
 
@@ -993,9 +1213,10 @@ Return EXACTLY a JSON array of 3-5 strings representing the new or updated miles
  * @param {string} feedback - optional user feedback for revision (e.g. "Add a testing phase")
  * @param {string} description - optional project description
  * @param {Array} existingGoals - existing goals that could be linked
+ * @param {string} skillLevel - 'beginner' | 'intermediate' | 'expert' (scales task granularity)
  * @returns {{ summary, phases: [{ title, weekRange, tasks: [{ title, estimatedHours, type }], milestone }], suggestedLinks: [{ taskTitle, goalId, goalTitle }], mochiFeedback: string }}
  */
-export async function sliceProject(projectName, deadline, feedback = '', description = '', existingGoals = []) {
+export async function sliceProject(projectName, deadline, feedback = '', description = '', existingGoals = [], skillLevel) {
   const apiKey = getApiKey();
   if (!apiKey) { console.error("Missing API Key"); return null; }
 
@@ -1010,9 +1231,12 @@ export async function sliceProject(projectName, deadline, feedback = '', descrip
   const timeRangeExample = isShortTerm ? '"Day 1-2"' : '"Week 1-2"';
   const taskTimeRangeExample = isShortTerm ? '"Day 1"' : '"Week 1"';
   const goalList = existingGoals.slice(0, 15).map((g) => `${g.id}: "${g.title}" (${g.type})`).join('\n');
+  const skillInstruction = getSkillLevelInstruction(skillLevel);
 
   const prompt = `
 Act as a Kaizen project planner. Break this project into manageable phases.
+
+${skillInstruction}
 
 Project: "${projectName}"
 ${description ? `Description: ${description}` : ''}

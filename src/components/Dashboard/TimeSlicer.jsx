@@ -5,6 +5,7 @@ import confetti from 'canvas-confetti';
 import { createGoogleEvent } from '../../services/googleCalendarService';
 import { downloadICS } from '../../services/calendarSyncService';
 import { suggestLoadLightening, generateDailyPlan, timeToMinutes, getSpoonCost, getGentlePriorities } from '../../services/schedulerService';
+import { recommendDailyPriority } from '../../services/geminiService';
 import { useGarden } from '../../context/GardenContext';
 import { localISODate } from '../../services/dateUtils';
 import { getSettings } from '../../services/userSettings';
@@ -19,6 +20,15 @@ const HOURS = Array.from(
   { length: HOUR_END - HOUR_START + 1 },
   (_, i) => `${String(HOUR_START + i).padStart(2, '0')}:00`
 );
+
+/** Parse "HH:mm" or "H:mm" to hour (0–23). Returns null if invalid. */
+function parseTimeToHour(str) {
+  if (!str || typeof str !== 'string') return null;
+  const parts = str.trim().split(':');
+  const h = parseInt(parts[0], 10);
+  if (Number.isNaN(h)) return null;
+  return Math.max(0, Math.min(23, Math.floor(h)));
+}
 
 /** Flexible capacity: storm=3, leaf=5, sun=6 */
 const MAX_SLOTS_BY_WEATHER = { storm: 3, leaf: 5, sun: 6 };
@@ -39,6 +49,25 @@ function getSubtaskFromAssignment(a) {
 }
 function isRoutineSession(a) {
   return a && typeof a === 'object' && a.type === 'routine' && a.parentGoalId;
+}
+function isPriorityAssignment(a) {
+  return a && typeof a === 'object' && a.priority === true;
+}
+
+/** True if this assignment is a fixed-time event (e.g. meeting); should stay in chronological order. */
+function isAssignmentFixed(a) {
+  if (!a || typeof a !== 'object') return false;
+  return a.isFixed === true || a.type === 'fixed' || a.fixed === true;
+}
+
+/** Resolve assignment for a slot; supports both "14:00" and "14" keys (CalendarView uses getHours()). */
+function getAssignmentForHour(assignments, hour) {
+  if (!assignments || !hour) return null;
+  const a = assignments[hour];
+  if (a != null) return a;
+  const hourNum = parseInt(String(hour).replace(/:.*$/, ''), 10);
+  if (!Number.isNaN(hourNum)) return assignments[String(hourNum)] ?? null;
+  return null;
 }
 
 /** Parse duration in minutes from a title string (e.g. "5 mins", "10-minute stretch"). */
@@ -194,21 +223,27 @@ function TimeSlot({
   isMobile = false,
   onEmptySlotClick,
   disableConfetti = false,
+  hourStart = HOUR_START,
+  hourEnd = HOUR_END,
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: hour });
   const goalId = getGoalIdFromAssignment(assignment);
   const slotRitualTitle = getRitualTitleFromAssignment(assignment);
   const subtask = getSubtaskFromAssignment(assignment);
   const routineSession = isRoutineSession(assignment);
+  const isRoutineTemplate = assignment && typeof assignment === 'object' && assignment.type === 'routineTemplate';
   const isRecovery = assignment && typeof assignment === 'object' && assignment.type === 'recovery';
+  const isPriority = isPriorityAssignment(assignment);
+  const isFixed = isAssignmentFixed(assignment);
+  const isFixedAndPriority = isPriority && isFixed;
   const goal = goalId ? goals?.find((g) => g.id === goalId) : null;
-  const isEmpty = !goal && !routineSession && !isRecovery;
+  const isEmpty = !goal && !routineSession && !isRoutineTemplate && !isRecovery;
   const thisSlotOverLimit = goal && filledCount > maxSlots;
   const firstUncompleted = goal?.milestones?.find((m) => !m.completed);
   const milestoneTitle = firstUncompleted?.title ?? firstUncompleted?.text;
 
   const slotHourNum = parseInt(hour.slice(0, 2), 10);
-  const isCurrentHour = now && slotHourNum === now.getHours() && slotHourNum >= HOUR_START && slotHourNum <= HOUR_END;
+  const isCurrentHour = now && slotHourNum === now.getHours() && slotHourNum >= hourStart && slotHourNum <= hourEnd;
   const currentMinutePercent = isCurrentHour ? (now.getMinutes() / 60) * 100 : 0;
   const timeLabel = isCurrentHour ? `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}` : '';
 
@@ -216,7 +251,7 @@ function TimeSlot({
     ? 'bg-stone-100 border-2 border-dashed border-stone-300'
     : isRecovery
       ? 'bg-stone-100 border border-stone-300 text-stone-600'
-      : routineSession
+      : routineSession || isRoutineTemplate
         ? 'bg-slate-200 border border-slate-300 text-stone-800'
         : thisSlotOverLimit
           ? 'bg-orange-200 border border-orange-300 text-orange-900'
@@ -278,7 +313,9 @@ function TimeSlot({
         onKeyDown={isEmpty && onEmptySlotClick ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onEmptySlotClick(hour); } } : undefined}
         className={`flex-1 min-h-[52px] rounded-lg flex flex-col justify-center px-3 py-2 transition-colors relative overflow-hidden ${slotBg} ${
           isOver && isEmpty ? 'ring-2 ring-moss-500/50 ring-offset-1' : ''
-        } ${isFullyHarvested && !routineSession ? 'border-moss-600/60' : ''} ${isEmpty && onEmptySlotClick ? 'cursor-pointer hover:bg-stone-200/80 active:bg-stone-300/80' : ''}`}
+        } ${isFullyHarvested && !routineSession ? 'border-moss-600/60' : ''} ${isEmpty && onEmptySlotClick ? 'cursor-pointer hover:bg-stone-200/80 active:bg-stone-300/80' : ''} ${
+          isFixedAndPriority ? 'ring-2 ring-amber-400/70 bg-amber-50/90 border-amber-300/80' : ''
+        }`}
       >
         {/* Blocked overlay: striped + stone texture when over capacity or empty at capacity */}
         {thisSlotOverLimit && (
@@ -291,9 +328,13 @@ function TimeSlot({
             aria-hidden
           />
         )}
+        {/* North Star priority: Golden Star highlight */}
+        {isPriority && (
+          <span className="absolute top-2 left-2 text-amber-400 drop-shadow-sm" title="North Star priority" aria-hidden>⭐</span>
+        )}
         {routineSession ? (
           <>
-            <div className={`flex items-center justify-between gap-2 ${isFullyHarvested ? 'line-through text-stone-400 opacity-60 transition-all duration-500' : ''}`}>
+            <div className={`flex items-center justify-between gap-2 ${isFullyHarvested ? 'line-through text-stone-400 opacity-60 transition-all duration-500' : ''} ${isPriority ? 'pl-5' : ''}`}>
               <div className="flex items-center gap-2 min-w-0">
                 <RepeatIcon />
                 <span className="font-sans text-sm font-medium truncate">{assignment.title ?? goal?.title ?? 'Routine'}</span>
@@ -316,6 +357,16 @@ function TimeSlot({
               <span className="font-sans text-xs text-moss-700 mt-0.5 truncate block" title={subtask.title}>🌱 {subtask.title}</span>
             )}
           </>
+        ) : isRoutineTemplate ? (
+          <>
+            <div className="flex items-center gap-2 min-w-0">
+              <RepeatIcon />
+              <span className="font-sans text-sm font-medium truncate">{assignment.title ?? 'Routine'}</span>
+            </div>
+            {(assignment.duration > 0) && (
+              <span className="font-sans text-xs text-stone-500 mt-0.5">{assignment.duration}m</span>
+            )}
+          </>
         ) : isRecovery ? (
           <span className="font-sans text-sm font-medium text-stone-600">{assignment.title ?? 'Rest'}</span>
         ) : goal ? (
@@ -325,7 +376,7 @@ function TimeSlot({
                 {durationLabel}
               </span>
             )}
-            <div className={`flex items-center justify-between gap-2 pr-24 ${isFullyHarvested ? 'line-through text-stone-400 opacity-60 transition-all duration-500' : ''}`}>
+            <div className={`flex items-center justify-between gap-2 pr-24 ${isFullyHarvested ? 'line-through text-stone-400 opacity-60 transition-all duration-500' : ''} ${isPriority ? 'pl-5' : ''}`}>
               <span className="font-sans text-sm font-medium truncate">{goal.title}</span>
               {cloudSaved && (
                 <motion.span
@@ -433,13 +484,19 @@ function AnytimePoolSection({
   const { setNodeRef, isOver } = useDroppable({ id: 'anytime-pool' });
   const rawList = assignments?.anytime ?? [];
   const listWithIndex = rawList.map((assignment, originalIndex) => ({ assignment, originalIndex }));
+  // Group B (Flexible): uncompleted first (priority true to top), then completed at bottom.
   const list = [...listWithIndex].sort((a, b) => {
     const goalA = goals?.find((g) => g.id === getGoalIdFromAssignment(a.assignment));
     const goalB = goals?.find((g) => g.id === getGoalIdFromAssignment(b.assignment));
     const doneA = isGoalCompleted(goalA);
     const doneB = isGoalCompleted(goalB);
-    if (doneA === doneB) return 0;
-    return doneA ? 1 : -1;
+    if (doneA !== doneB) return doneA ? 1 : -1; // uncompleted first
+    if (!doneA) {
+      const prioA = isPriorityAssignment(a.assignment);
+      const prioB = isPriorityAssignment(b.assignment);
+      if (prioA !== prioB) return prioA ? -1 : 1; // priority true to top
+    }
+    return 0;
   });
   return (
     <div className="mb-4">
@@ -559,20 +616,21 @@ function GoalMenu({ goal, onEdit, onCompost, onClose, anchorRef }) {
   );
 }
 
-/** Planned minutes for this goal from current week assignments (kaizen: by goalId; routine: by routine sessions) */
-function getPlannedMinutesForGoal(goalId, assignments, goalEstimatedMinutes = 60) {
+/** Planned minutes for this goal from current week assignments (kaizen: by goalId; routine: by routine sessions). hours defaults to HOURS if not provided. */
+function getPlannedMinutesForGoal(goalId, assignments, goalEstimatedMinutes = 60, hours = HOURS) {
   if (!assignments || !goalId) return 0;
-  return HOURS.reduce((sum, hour) => {
-    const gid = getGoalIdFromAssignment(assignments[hour]);
+  return hours.reduce((sum, hour) => {
+    const a = getAssignmentForHour(assignments, hour);
+    const gid = getGoalIdFromAssignment(a);
     return gid === goalId ? sum + goalEstimatedMinutes : sum;
   }, 0);
 }
 
-/** Planned minutes for a routine goal: sum duration of all slots with parentGoalId === goalId */
-function getPlannedMinutesForRoutine(goalId, assignments) {
+/** Planned minutes for a routine goal: sum duration of all slots with parentGoalId === goalId. hours defaults to HOURS if not provided. */
+function getPlannedMinutesForRoutine(goalId, assignments, hours = HOURS) {
   if (!assignments || !goalId) return 0;
-  return HOURS.reduce((sum, hour) => {
-    const a = assignments[hour];
+  return hours.reduce((sum, hour) => {
+    const a = getAssignmentForHour(assignments, hour);
     if (!isRoutineSession(a) || a.parentGoalId !== goalId) return sum;
     return sum + (a.duration ?? 60);
   }, 0);
@@ -592,7 +650,7 @@ function subtaskStatus(st) {
   return est > 0 && done >= est ? 'bloom' : 'bud';
 }
 
-function SeedChip({ goal, item, isRitual = false, assignments = {}, onSeedClick, onMilestoneCheck, onEditGoal, onCompostGoal, onAddRoutineTime, onPlantRoutineBlock, onAddSubtask, onStartFocus, onTap, compact = false }) {
+function SeedChip({ goal, item, isRitual = false, assignments = {}, hours = HOURS, onSeedClick, onMilestoneCheck, onEditGoal, onCompostGoal, onAddRoutineTime, onPlantRoutineBlock, onAddSubtask, onStartFocus, onTap, compact = false }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuAnchorRef = useRef(null);
   const dragId = isRitual && item?.id ? `ritual-${goal?.id}-${item.id}` : goal?.id;
@@ -609,8 +667,8 @@ function SeedChip({ goal, item, isRitual = false, assignments = {}, onSeedClick,
   const firstUncompleted = milestones.find((m) => !m.completed);
   const milestoneTitle = firstUncompleted?.title ?? firstUncompleted?.text;
   const targetHours = goal?.targetHours ?? 5;
-  const plannedMinutes = getPlannedMinutesForGoal(goal?.id, assignments, goal?.estimatedMinutes ?? 60);
-  const plannedMinutesRoutine = getPlannedMinutesForRoutine(goal?.id, assignments);
+  const plannedMinutes = getPlannedMinutesForGoal(goal?.id, assignments, goal?.estimatedMinutes ?? 60, hours);
+  const plannedMinutesRoutine = getPlannedMinutesForRoutine(goal?.id, assignments, hours);
   const plannedHours = Math.round((plannedMinutes / 60) * 10) / 10;
   const filledHours = Math.round(((goal?.totalMinutes ?? 0) / 60) * 10) / 10;
   const plannedHoursFromSlots = Math.round((plannedMinutesRoutine / 60) * 10) / 10;
@@ -857,7 +915,7 @@ function SeedChip({ goal, item, isRitual = false, assignments = {}, onSeedClick,
 }
 
 /** Ritual seed: goal + ritual title for today; drag stores ritualTitle so session config shows ritual name */
-function RitualSeedChip({ goal, ritualTitle, assignments = {}, onSeedClick, onMilestoneCheck, onEditGoal, onCompostGoal, onAddRoutineTime, onPlantRoutineBlock, onStartFocus }) {
+function RitualSeedChip({ goal, ritualTitle, assignments = {}, hours = HOURS, onSeedClick, onMilestoneCheck, onEditGoal, onCompostGoal, onAddRoutineTime, onPlantRoutineBlock, onStartFocus }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuAnchorRef = useRef(null);
   const dragId = `ritual-${goal.id}`;
@@ -869,9 +927,9 @@ function RitualSeedChip({ goal, ritualTitle, assignments = {}, onSeedClick, onMi
   const firstUncompleted = milestones.find((m) => !m.completed);
   const milestoneTitle = firstUncompleted?.title ?? firstUncompleted?.text;
   const targetHours = goal?.targetHours ?? 5;
-  const plannedMinutes = getPlannedMinutesForGoal(goal?.id, assignments, goal?.estimatedMinutes ?? 60);
+  const plannedMinutes = getPlannedMinutesForGoal(goal?.id, assignments, goal?.estimatedMinutes ?? 60, hours);
   const plannedHours = Math.round((plannedMinutes / 60) * 10) / 10;
-  const plannedMinutesRoutine = getPlannedMinutesForRoutine(goal?.id, assignments);
+  const plannedMinutesRoutine = getPlannedMinutesForRoutine(goal?.id, assignments, hours);
   const plannedHoursFromSlots = Math.round((plannedMinutesRoutine / 60) * 10) / 10;
   const filledHours = Math.round(((goal?.totalMinutes ?? 0) / 60) * 10) / 10;
   const displayHours = isRoutine ? filledHours : plannedHours;
@@ -1259,7 +1317,7 @@ function MonthPlanView({ weekAssignments, goals, onDayClick, monthlyRoadmap, onP
             disabled={planningMonth}
             className="px-3 py-1.5 rounded-lg border border-moss-300 bg-moss-50 font-sans text-sm text-moss-800 hover:bg-moss-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40 disabled:opacity-60 transition-colors"
           >
-            {planningMonth ? 'Planning...' : '✨ Plan My Month'}
+            {planningMonth ? '✨ Mochi is looking at your calendar...' : '✨ Plan My Month'}
           </button>
         )}
       </div>
@@ -1355,13 +1413,13 @@ function MonthPlanView({ weekAssignments, goals, onDayClick, monthlyRoadmap, onP
   );
 }
 
-function DayDetailModal({ dateStr, dayAssignments, goals, onClose, onSwitchToDay, calendarEvents = [] }) {
+function DayDetailModal({ dateStr, dayAssignments, goals, onClose, onSwitchToDay, calendarEvents = [], hours = HOURS }) {
   if (!dateStr) return null;
   const dateObj = new Date(dateStr + 'T12:00:00');
   const label = dateObj.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
   const summary = summarizeDayAssignments(dayAssignments, goals);
   const totalHours = summary.reduce((s, x) => s + x.hours, 0);
-  const filledHours = HOURS.filter((h) => dayAssignments[h]);
+  const filledHours = hours.filter((h) => dayAssignments[h]);
   const dayCalEvents = (calendarEvents ?? []).filter((e) => {
     const d = e.start ? new Date(e.start) : e.date ? new Date(e.date) : null;
     return d && localISODate(d) === dateStr;
@@ -1420,7 +1478,7 @@ function DayDetailModal({ dateStr, dayAssignments, goals, onClose, onSwitchToDay
                 {filledHours.length > 0 && dayCalEvents.length > 0 && (
                   <p className="font-sans text-[10px] font-semibold text-moss-600 uppercase tracking-wider mb-1.5">Kaizen Schedule</p>
                 )}
-                {HOURS.map((hour) => {
+                {hours.map((hour) => {
                   const a = dayAssignments[hour];
                   if (!a) return null;
                   const gid = getGoalIdFromAssignment(a);
@@ -1547,14 +1605,32 @@ function TimeSlicer({
   const [lightenedTasksFeedback, setLightenedTasksFeedback] = useState([]);
   const [showPrioritize, setShowPrioritize] = useState(false);
   const [priorities, setPriorities] = useState(null);
+  const [recommendedTaskId, setRecommendedTaskId] = useState(null);
+  const [recommendedReason, setRecommendedReason] = useState(null);
+  const [prioritizeSuccess, setPrioritizeSuccess] = useState(false);
+  const [prioritizeLoading, setPrioritizeLoading] = useState(false);
   const [now, setNow] = useState(() => new Date());
   const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < MOBILE_BREAKPOINT);
   const [showFullSchedule, setShowFullSchedule] = useState(!zenMode);
   const garden = useGarden();
+  const userSettings = garden?.userSettings ?? {};
+  const dayStartStr = userSettings.dayStart ?? '08:00';
+  const dayEndStr = userSettings.dayEnd ?? '22:00';
+  const hourStart = useMemo(() => parseTimeToHour(dayStartStr) ?? 8, [dayStartStr]);
+  const hourEnd = useMemo(() => parseTimeToHour(dayEndStr) ?? 22, [dayEndStr]);
+  const hoursArray = useMemo(
+    () =>
+      Array.from(
+        { length: Math.max(0, hourEnd - hourStart + 1) },
+        (_, i) => `${String(hourStart + i).padStart(2, '0')}:00`
+      ),
+    [hourStart, hourEnd]
+  );
   const weekAssignments = garden?.weekAssignments ?? {};
   const loadWeekPlans = typeof garden?.loadWeekPlans === 'function' ? garden.loadWeekPlans : () => {};
   const loadDayPlan = typeof garden?.loadDayPlan === 'function' ? garden.loadDayPlan : async () => ({});
   const saveDayPlanForDate = typeof garden?.saveDayPlanForDate === 'function' ? garden.saveDayPlanForDate : async () => {};
+  const routineTemplates = Array.isArray(garden?.routines) ? garden.routines : [];
   const isControlled = typeof onAssignmentsChange === 'function';
   const assignments = isControlled ? (controlledAssignments ?? {}) : internalAssignments;
   const safeOnAssignmentsChange = typeof onAssignmentsChange === 'function' ? onAssignmentsChange : () => {};
@@ -1567,10 +1643,10 @@ function TimeSlicer({
   const currentDay = viewedDate.getDay();
   const dayOfMonth = viewedDate.getDate();
   const isEvenWeek = Math.floor((viewedDate.getTime() - new Date(viewedDate.getFullYear(), 0, 1).getTime()) / (7 * 24 * 60 * 60 * 1000)) % 2 === 0;
-  const routines = safeGoals.filter((g) => g && g.type === 'routine');
+  const routineGoals = safeGoals.filter((g) => g && g.type === 'routine');
   const todayRitualEntries = useMemo(
     () =>
-      routines.flatMap((goal) =>
+      routineGoals.flatMap((goal) =>
         (goal?.rituals || [])
           .filter((r) => {
             if (r.frequency === 'monthly') return Number(r.monthDay) === dayOfMonth;
@@ -1646,19 +1722,112 @@ function TimeSlicer({
         : Math.max(1, baseCapacity + dailyEnergyModifier);
   const isLowEnergy =
     (typeof dailySpoonCount === 'number' && dailySpoonCount <= 2) || dailyEnergyModifier === -2;
-  const filledTimes = HOURS.filter((h) => assignments[h] != null);
+  const filledTimes = hoursArray.filter((h) => getAssignmentForHour(assignments, h) != null);
+  /** Fixed vs Flexible: order for timeline = Group C (fixed uncompleted, chronological), Group B (flexible uncompleted, priority first), Group A (completed at bottom). */
+  const sortedFilledHours = useMemo(() => {
+    const withMeta = hoursArray
+      .map((hour) => ({
+        hour,
+        assignment: getAssignmentForHour(assignments, hour),
+      }))
+      .filter(({ assignment }) => assignment != null);
+    const hourToMins = (h) => {
+      const n = parseInt(String(h).replace(/:.*$/, ''), 10);
+      return Number.isNaN(n) ? 0 : n * 60;
+    };
+    return withMeta
+      .map(({ hour, assignment }) => {
+        const goalId = getGoalIdFromAssignment(assignment);
+        const goal = safeGoals?.find((g) => g.id === goalId);
+        const completed = isGoalCompleted(goal);
+        const fixed = isAssignmentFixed(assignment);
+        const priority = isPriorityAssignment(assignment);
+        return { hour, assignment, completed, fixed, priority, startMins: hourToMins(hour) };
+      })
+      .sort((a, b) => {
+        if (a.completed !== b.completed) return a.completed ? 1 : -1;
+        if (!a.completed) {
+          if (a.fixed !== b.fixed) return a.fixed ? 1 : -1;
+          if (a.fixed) return a.startMins - b.startMins;
+          if (a.priority !== b.priority) return a.priority ? -1 : 1;
+          return a.startMins - b.startMins;
+        }
+        return a.startMins - b.startMins;
+      })
+      .map(({ hour }) => hour);
+  }, [assignments, hoursArray, safeGoals]);
+  const emptyHours = useMemo(
+    () => hoursArray.filter((h) => getAssignmentForHour(assignments, h) == null),
+    [assignments, hoursArray]
+  );
+  /** Today's tasks for "Help Me Prioritize" AI: one entry per goal (id, title, isFixed). */
+  const todayTasks = useMemo(() => {
+    const seen = new Set();
+    const list = [];
+    for (const hour of hoursArray) {
+      const a = getAssignmentForHour(assignments, hour);
+      if (!a) continue;
+      const id = getGoalIdFromAssignment(a);
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      const goal = safeGoals?.find((g) => g.id === id);
+      list.push({
+        id,
+        title: goal?.title ?? (a && typeof a === 'object' && a.title) ?? 'Task',
+        isFixed: isAssignmentFixed(a),
+      });
+    }
+    for (const a of assignments?.anytime ?? []) {
+      const id = getGoalIdFromAssignment(a);
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      const goal = safeGoals?.find((g) => g.id === id);
+      list.push({
+        id,
+        title: goal?.title ?? (a && typeof a === 'object' && a.title) ?? 'Task',
+        isFixed: false,
+      });
+    }
+    return list;
+  }, [assignments, hoursArray, safeGoals]);
+  /** Today's tasks that are not yet completed (for AI: pick one to prioritize). */
+  const todayUncompletedTasks = useMemo(() => {
+    return todayTasks.filter((t) => {
+      const goal = safeGoals?.find((g) => g.id === t.id);
+      return !isGoalCompleted(goal);
+    });
+  }, [todayTasks, safeGoals]);
+  /** True if any assignment today has priority (starred). */
+  const hasAnyPrioritizedToday = useMemo(() => {
+    for (const key of Object.keys(assignments)) {
+      if (key === 'anytime') continue;
+      const a = assignments[key];
+      if (a && typeof a === 'object' && a.priority === true) return true;
+    }
+    for (const a of assignments?.anytime ?? []) {
+      if (a && typeof a === 'object' && a.priority === true) return true;
+    }
+    return false;
+  }, [assignments]);
+  /** Energy 1-5 for AI (spoons: 1-5 as-is, 6-12 → 5). */
+  const energyLevelForAi = useMemo(() => {
+    const n = dailySpoonCount;
+    if (typeof n === 'number' && n >= 1 && n <= 5) return n;
+    if (typeof n === 'number' && n >= 6 && n <= 12) return 5;
+    return 3;
+  }, [dailySpoonCount]);
   const anytimeCount = (assignments?.anytime ?? []).length;
   const hasNoAssignments = filledTimes.length === 0 && anytimeCount === 0;
   const filledSpoonTotal = useMemo(() => {
-    return HOURS.reduce((sum, h) => {
-      const a = assignments[h];
+    return hoursArray.reduce((sum, h) => {
+      const a = getAssignmentForHour(assignments, h);
       if (!a) return sum;
       if (a && typeof a === 'object' && (a.type === 'recovery' || a.spoonCost === 0)) return sum;
       const gid = getGoalIdFromAssignment(a);
       const goal = safeGoals.find((g) => g.id === gid);
       return sum + getSpoonCost(goal ?? a);
     }, 0);
-  }, [assignments, safeGoals]);
+  }, [assignments, safeGoals, hoursArray]);
   const isOverCapacity = filledSpoonTotal > maxSlots;
 
   const handleLightenLoad = () => {
@@ -1678,11 +1847,75 @@ function TimeSlicer({
   const handleOpenPrioritize = () => {
     setPriorities(getGentlePriorities(safeGoals, maxSlots));
     setShowPrioritize(true);
+    setRecommendedTaskId(null);
+    setRecommendedReason(null);
+    setPrioritizeSuccess(false);
+    setPrioritizeLoading(true);
+    const tasksForAi = todayUncompletedTasks.length > 0 ? todayUncompletedTasks : todayTasks;
+    if (tasksForAi.length > 0) {
+      recommendDailyPriority(tasksForAi, energyLevelForAi)
+        .then(({ recommendedTaskId: id, reason }) => {
+          setRecommendedTaskId(id);
+          setRecommendedReason(reason ?? null);
+          if (id) {
+            handleApplyPriority(id, { closeModal: false });
+            setPrioritizeSuccess(true);
+          }
+        })
+        .catch(() => {})
+        .finally(() => setPrioritizeLoading(false));
+    } else {
+      setPrioritizeLoading(false);
+    }
   };
+
+  /** Set priority true on the chosen goal and false on all others; do NOT change date, startTime, or isFixed. */
+  const handleApplyPriority = useCallback(
+    (goalId, options = {}) => {
+      if (!goalId) return;
+      const { closeModal = true } = options;
+      const next = { ...assignments };
+      let changed = false;
+      const setPriority = (a, value) => {
+        if (a == null) return a;
+        const obj = typeof a === 'object' ? { ...a } : { goalId: a };
+        obj.priority = value;
+        return obj;
+      };
+      for (const key of Object.keys(next)) {
+        if (key === 'anytime') continue;
+        const a = next[key];
+        if (a == null) continue;
+        const gid = getGoalIdFromAssignment(a);
+        next[key] = setPriority(a, gid === goalId);
+        changed = true;
+      }
+      if (next.anytime && Array.isArray(next.anytime)) {
+        next.anytime = next.anytime.map((a) => {
+          const gid = getGoalIdFromAssignment(a);
+          changed = true;
+          return setPriority(a, gid === goalId);
+        });
+      }
+      if (changed) {
+        if (isControlled) safeOnAssignmentsChange(next);
+        else setInternalAssignments(next);
+      }
+      onEditGoal?.(goalId, { priority: true });
+      if (closeModal) {
+        setShowPrioritize(false);
+        setRecommendedTaskId(null);
+        setRecommendedReason(null);
+        setPrioritizeSuccess(false);
+        window.dispatchEvent(new CustomEvent('kaizen:toast', { detail: { message: 'Focus set 🌟' } }));
+      }
+    },
+    [assignments, isControlled, safeOnAssignmentsChange, onEditGoal]
+  );
 
   const handlePrioritizeSelectTask = (goal) => {
     if (!goal?.id) return;
-    const firstEmpty = HOURS.find((h) => !assignments[h]);
+    const firstEmpty = hoursArray.find((h) => !getAssignmentForHour(assignments, h));
     if (!firstEmpty) {
       window.dispatchEvent(new CustomEvent('kaizen:toast', { detail: { message: "Your day is full. Lighten your load or pick another day." } }));
       return;
@@ -1723,26 +1956,34 @@ function TimeSlicer({
   }, []);
 
   const handleTapAddToNextHour = useCallback(() => {
-    const { goal, item } = seedBagTapTarget || {};
-    if (!goal?.id) return;
-    const firstEmpty = HOURS.find((h) => !assignments[h]);
+    const { goal, item, routine } = seedBagTapTarget || {};
+    const firstEmpty = hoursArray.find((h) => !getAssignmentForHour(assignments, h));
     if (!firstEmpty) {
       window.dispatchEvent(new CustomEvent('kaizen:toast', { detail: { message: "Your day is full. Lighten your load or pick another day." } }));
       setSeedBagTapTarget(null);
       return;
     }
-    const value = getTapAssignmentValue(goal, item);
+    let value = null;
+    if (routine) {
+      value = { type: 'routineTemplate', routineId: routine.id, title: routine.title, duration: Math.max(1, Math.min(120, Number(routine.duration) || 5)) };
+    } else if (goal?.id) {
+      value = getTapAssignmentValue(goal, item);
+    }
     if (value != null) {
       applyAssignment(firstEmpty, value);
       window.dispatchEvent(new CustomEvent('kaizen:toast', { detail: { message: 'Added to your day 🌱' } }));
     }
     setSeedBagTapTarget(null);
-  }, [seedBagTapTarget, assignments, getTapAssignmentValue, applyAssignment]);
+  }, [seedBagTapTarget, assignments, getTapAssignmentValue, applyAssignment, hoursArray]);
 
   const handleTapAddToAnytime = useCallback(() => {
-    const { goal, item } = seedBagTapTarget || {};
-    if (!goal?.id) return;
-    const value = getTapAssignmentValue(goal, item);
+    const { goal, item, routine } = seedBagTapTarget || {};
+    let value = null;
+    if (routine) {
+      value = { type: 'routineTemplate', routineId: routine.id, title: routine.title, duration: Math.max(1, Math.min(120, Number(routine.duration) || 5)) };
+    } else if (goal?.id) {
+      value = getTapAssignmentValue(goal, item);
+    }
     if (value != null) {
       applyAssignment('anytime', value);
       window.dispatchEvent(new CustomEvent('kaizen:toast', { detail: { message: 'Added to Anytime Today 💧' } }));
@@ -1753,7 +1994,7 @@ function TimeSlicer({
   /** Plant one 1h routine block in the first empty slot. Used by [+1h] on routine cards. */
   const handlePlantRoutineBlock = (goal) => {
     if (!goal?.id || goal?.type !== 'routine') return;
-    const firstEmpty = HOURS.find((h) => !assignments[h]);
+    const firstEmpty = hoursArray.find((h) => !getAssignmentForHour(assignments, h));
     if (!firstEmpty) return;
     const value = {
       id: crypto.randomUUID?.() ?? `s-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
@@ -1817,8 +2058,8 @@ function TimeSlicer({
       return;
     }
 
-    if (!HOURS.includes(time)) return;
-    const targetWasEmpty = !assignments[time];
+    if (!hoursArray.includes(time)) return;
+    const targetWasEmpty = !getAssignmentForHour(assignments, time);
 
     let value;
     if (goal?.type === 'routine') {
@@ -1882,7 +2123,7 @@ function TimeSlicer({
 
   /** Assign a goal/ritual to the given hour (used by Seed Picker modal on mobile). */
   const handleSelectSeedForSlot = (time, goal, ritualTitle = null) => {
-    if (!time || !HOURS.includes(time) || !goal?.id) return;
+    if (!time || !hoursArray.includes(time) || !goal?.id) return;
     let value;
     if (goal.type === 'routine') {
       value = {
@@ -1948,8 +2189,8 @@ function TimeSlicer({
   const currentNextItem = useMemo(() => {
     if (!zenMode) return null;
     const nowMins = now.getHours() * 60 + now.getMinutes();
-    const items = HOURS.filter((h) => assignments[h]).map((hour) => {
-      const a = assignments[hour];
+    const items = hoursArray.filter((h) => getAssignmentForHour(assignments, h)).map((hour) => {
+      const a = getAssignmentForHour(assignments, hour);
       const goalId = getGoalIdFromAssignment(a);
       const goal = safeGoals.find((g) => g.id === goalId);
       const [h] = hour.split(':').map(Number);
@@ -1962,7 +2203,7 @@ function TimeSlicer({
     const first = upcoming.length > 0 ? upcoming[0] : sorted[0];
     const title = first.ritualTitle || first.goal?.title;
     return { ...first, title: title ?? 'Task', estimatedMinutes: first.goal?.estimatedMinutes ?? 60, spoonCost: getSpoonCost(first.goal ?? {}) };
-  }, [zenMode, assignments, safeGoals, now]);
+  }, [zenMode, assignments, safeGoals, now, hoursArray]);
 
   return (
     <div className="bg-stone-50 rounded-xl border border-stone-200 p-6 min-w-0">
@@ -1999,10 +2240,10 @@ function TimeSlicer({
               onClick={(e) => {
                 e.stopPropagation();
                 const dateStr = editingDate || localISODate();
-                const dayEvents = HOURS
-                  .filter((h) => assignments[h])
+                const dayEvents = hoursArray
+                  .filter((h) => getAssignmentForHour(assignments, h))
                   .map((h) => {
-                    const gid = getGoalIdFromAssignment(assignments[h]);
+                    const gid = getGoalIdFromAssignment(getAssignmentForHour(assignments, h));
                     const goal = safeGoals.find((g) => g.id === gid);
                     const hourNum = parseInt(h);
                     const startTime = new Date(dateStr + 'T' + h + ':00');
@@ -2103,6 +2344,19 @@ function TimeSlicer({
             </button>
           </div>
         )}
+        {viewMode === 'day' && todayUncompletedTasks.length > 0 && !hasAnyPrioritizedToday && (
+          <div className="mb-4">
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); handleOpenPrioritize(); }}
+              className="w-full py-3 px-4 rounded-xl font-sans text-sm font-medium bg-amber-50 border-2 border-amber-200 text-amber-800 hover:bg-amber-100 hover:border-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-400/50 focus:ring-offset-2 transition-all shadow-sm hover:shadow"
+              style={{ boxShadow: '0 0 20px rgba(251, 191, 36, 0.25)' }}
+              aria-label="Mochi, pick one task for me"
+            >
+              ✨ Mochi, pick one for me
+            </button>
+          </div>
+        )}
         {editingDate && editingDate !== todayStr && (
           <div className="mb-3 px-4 py-2.5 rounded-xl bg-sky-50 border border-sky-200 flex items-center justify-between">
             <div>
@@ -2180,13 +2434,13 @@ function TimeSlicer({
                 </div>
               )}
               <div className="space-y-0">
-                {HOURS.map((hour) => (
+                {sortedFilledHours.map((hour) => (
                   <TimeSlot
                     key={hour}
                     hour={hour}
-                    assignment={assignments[hour] ?? null}
+                    assignment={getAssignmentForHour(assignments, hour)}
                     goals={goals}
-                    filledOrderIndex={assignments[hour] ? filledTimes.indexOf(hour) : -1}
+                    filledOrderIndex={filledTimes.indexOf(hour)}
                     filledCount={filledSpoonTotal}
                     maxSlots={maxSlots}
                     onStartFocus={onStartFocus}
@@ -2197,6 +2451,29 @@ function TimeSlicer({
                     isMobile={isMobile}
                     onEmptySlotClick={(h) => setSeedPickerTargetHour(h)}
                     disableConfetti={getSettings().lowStim || shouldReduceMotion(getSettings())}
+                    hourStart={hourStart}
+                    hourEnd={hourEnd}
+                  />
+                ))}
+                {emptyHours.map((hour) => (
+                  <TimeSlot
+                    key={`empty-${hour}`}
+                    hour={hour}
+                    assignment={null}
+                    goals={goals}
+                    filledOrderIndex={-1}
+                    filledCount={filledSpoonTotal}
+                    maxSlots={maxSlots}
+                    onStartFocus={onStartFocus}
+                    onMilestoneCheck={handleMilestoneCheck}
+                    onHarvestedClick={handleHarvestedClick}
+                    cloudSaved={false}
+                    now={now}
+                    isMobile={isMobile}
+                    onEmptySlotClick={(h) => setSeedPickerTargetHour(h)}
+                    disableConfetti={getSettings().lowStim || shouldReduceMotion(getSettings())}
+                    hourStart={hourStart}
+                    hourEnd={hourEnd}
                   />
                 ))}
               </div>
@@ -2220,18 +2497,16 @@ function TimeSlicer({
             <div className="flex flex-col min-h-0 max-h-[50vh] overflow-y-auto rounded-xl border border-stone-100 bg-white/80">
               {(() => {
                 const searchLower = (seedBagSearch || '').trim().toLowerCase();
-                const ritualRows = todayRitualEntries.map(({ goal, ritual }) => {
-                  const durationMin = (parseDurationFromTitle(ritual.title) ?? Number(goal.estimatedMinutes)) || 5;
-                  return {
-                    key: `ritual-${ritual.id}`,
-                    goal,
-                    item: { ...ritual, goalId: goal.id, _type: 'routine' },
-                    title: ritual.title || goal.title,
-                    typeLabel: 'Ritual',
-                    category: goal.category || goal.title || 'Other',
-                    durationMinutes: durationMin,
-                  };
-                });
+                const routineRows = (routineTemplates ?? []).map((r) => ({
+                  key: `routine-${r.id}`,
+                  goal: null,
+                  item: null,
+                  routine: r,
+                  title: r.title ?? 'Routine',
+                  typeLabel: 'Micro-habit',
+                  category: r.category ?? '📋 Other',
+                  durationMinutes: Math.max(1, Math.min(120, Number(r.duration) || 5)),
+                }));
                 const bankRows = safeGoalBank.map((goal) => {
                   const durationMin = Number(goal.estimatedMinutes) || 15;
                   return {
@@ -2244,7 +2519,7 @@ function TimeSlicer({
                     durationMinutes: durationMin,
                   };
                 });
-                const allRows = [...ritualRows, ...bankRows];
+                const allRows = [...routineRows, ...bankRows];
                 const filtered = searchLower
                   ? allRows.filter((r) => (r.title || '').toLowerCase().includes(searchLower) || (r.typeLabel || '').toLowerCase().includes(searchLower) || (r.category || '').toLowerCase().includes(searchLower))
                   : allRows;
@@ -2288,7 +2563,7 @@ function TimeSlicer({
                           </h4>
                         </div>
                         <ul className="divide-y divide-stone-100" role="list">
-                          {(byCategory[cat] || []).map(({ key, goal, item, title, typeLabel, durationMinutes }) => {
+                          {(byCategory[cat] || []).map(({ key, goal, item, routine, title, typeLabel, durationMinutes }) => {
                             const isKaizen = durationMinutes <= 15;
                             return (
                               <li key={key}>
@@ -2307,7 +2582,7 @@ function TimeSlicer({
                                   </div>
                                   <button
                                     type="button"
-                                    onClick={() => setSeedBagTapTarget({ goal, item })}
+                                    onClick={() => setSeedBagTapTarget(routine ? { routine } : { goal, item })}
                                     className="p-2 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-lg font-bold text-sm shrink-0 focus:outline-none focus:ring-2 focus:ring-indigo-400"
                                     aria-label={`Add ${title || 'item'} to day`}
                                   >
@@ -2392,6 +2667,7 @@ function TimeSlicer({
           calendarEvents={safeCalendarEvents}
           onClose={() => setInspectedDate(null)}
           onSwitchToDay={handleSwitchToInspectedDay}
+          hours={hoursArray}
         />
       )}
 
@@ -2604,9 +2880,20 @@ function TimeSlicer({
       </AnimatePresence>
       <PrioritizeModal
         open={showPrioritize}
-        onClose={() => setShowPrioritize(false)}
+        onClose={() => {
+          setShowPrioritize(false);
+          setRecommendedTaskId(null);
+          setRecommendedReason(null);
+          setPrioritizeSuccess(false);
+        }}
         priorities={priorities ?? {}}
         onSelectTask={handlePrioritizeSelectTask}
+        todayTasks={todayTasks}
+        recommendedTaskId={recommendedTaskId}
+        recommendedReason={recommendedReason}
+        onApplyPriority={todayTasks.length > 0 ? handleApplyPriority : undefined}
+        prioritizeLoading={prioritizeLoading}
+        prioritizeSuccess={prioritizeSuccess}
       />
     </div>
   );

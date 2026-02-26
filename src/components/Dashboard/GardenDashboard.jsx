@@ -26,7 +26,7 @@ import MochiSpiritWithDialogue, { DefaultSpiritSvg, getSpiritGreeting, getPlanRe
 import SpiritChat from './SpiritChat';
 import CompostHeap from './CompostHeap';
 import NextTinyStep from './NextTinyStep';
-import { generateSpiritInsight, generateWeeklyPlan, generateMonthlyPlan, rebalanceMonthQuota } from '../../services/geminiService';
+import { generateSpiritInsight, generateWeeklyPlan, generateMonthlyPlan, generateMonthlyPlanTasks, rebalanceMonthQuota } from '../../services/geminiService';
 import { importICSFile, downloadICS, CALENDAR_PROVIDERS } from '../../services/calendarSyncService';
 import { fetchOutlookEvents } from '../../services/microsoftCalendarService';
 import { getStoredBriefing, setStoredBriefing } from '../../services/spiritBriefingStorage';
@@ -38,11 +38,13 @@ import GardenWalk from '../Garden/GardenWalk';
 import JournalView from './JournalView';
 import AnalyticsView from './AnalyticsView';
 import SettingsView from './SettingsView';
+import RoutinesManager from './RoutinesManager';
+import CalendarView from './CalendarView';
 import SpiritBuilder from '../Onboarding/SpiritBuilder';
 import SpiritGuideTour from '../Onboarding/SpiritGuideTour';
 import SpiritOrigins from '../Onboarding/SpiritOrigins';
 import { fetchGoogleEvents, createGoogleEvent } from '../../services/googleCalendarService';
-import { findAvailableSlots, generateLiquidSchedule, generateSolidSchedule, getDefaultWeekStart, getStormWarnings, getStormImpactForDay, timeToMinutes, minutesToTime, generateDailyPlan, materializeWeeklyPlan, getSpoonCost } from '../../services/schedulerService';
+import { findAvailableSlots, generateLiquidSchedule, generateSolidSchedule, getDefaultWeekStart, getStormWarnings, getStormImpactForDay, timeToMinutes, minutesToTime, generateDailyPlan, materializeWeeklyPlan, getSpoonCost, hourFromTimeStr } from '../../services/schedulerService';
 import { autoFillWeek } from '../../services/plannerEngine';
 
 // --- Icons ---
@@ -215,7 +217,7 @@ class ScheduleErrorBoundary extends Component {
 }
 
 function GardenDashboard() {
-  const { goals, weeklyEvents, logs, addGoal, updateGoalProgress, updateGoalMilestone, editGoal, deleteGoal, addSubtask, updateSubtask, deleteSubtask, updateSubtaskProgress, toggleMilestone, lastCheckInDate, completeMorningCheckIn, dailyEnergyModifier, dailySpoonCount, addLog, logMetric, googleUser, connectCalendar, disconnectCalendar, googleToken, updateWeeklyEvents, cloudSaveStatus, spiritConfig, setSpiritConfig, compost, addToCompost, removeFromCompost, soilNutrients, consumeSoilNutrients, earnEmbers, addWater, assignments, setAssignments, gentleResetToToday, archiveStalePlanItems, eveningMode, setEveningMode, userSettings, addRitualCategory, saveDayPlanForDate, loadDayPlan, weekAssignments, monthlyQuotas, addMonthlyQuota, updateMonthlyQuota, msUser, msToken, connectOutlook, disconnectOutlook, refreshOutlookToken } = useGarden();
+  const { goals, weeklyEvents, logs, addGoal, updateGoalProgress, updateGoalMilestone, editGoal, deleteGoal, addSubtask, updateSubtask, deleteSubtask, updateSubtaskProgress, toggleMilestone, lastCheckInDate, completeMorningCheckIn, dailyEnergyModifier, dailySpoonCount, addLog, logMetric, googleUser, connectCalendar, disconnectCalendar, googleToken, updateWeeklyEvents, weeklyNorthStarId, cloudSaveStatus, spiritConfig, setSpiritConfig, compost, addToCompost, removeFromCompost, soilNutrients, consumeSoilNutrients, earnEmbers, addWater, assignments, setAssignments, gentleResetToToday, archiveStalePlanItems, eveningMode, setEveningMode, userSettings, addRitualCategory, saveDayPlanForDate, loadDayPlan, weekAssignments, monthlyQuotas, addMonthlyQuota, updateMonthlyQuota, msUser, msToken, connectOutlook, disconnectOutlook, refreshOutlookToken } = useGarden();
   const { pushReward } = useReward();
   const { darkMode: themeDarkMode, setDarkModeOverride } = useTheme();
   const { dailyEnergy, setEnergyLevel } = useEnergy();
@@ -279,11 +281,13 @@ function GardenDashboard() {
   const [planningWeek, setPlanningWeek] = useState(false);
   const [weekPreview, setWeekPreview] = useState(null); // { [dateStr]: { [hour]: assignment } } for review before saving
   const [monthlyRoadmap, setMonthlyRoadmap] = useState(null);
+  const [isGeneratingMonthPlan, setIsGeneratingMonthPlan] = useState(false);
+  const [pendingMonthPlan, setPendingMonthPlan] = useState(null); // array of { title, date, durationMinutes } for review before applying
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [showSpiritMirror, setShowSpiritMirror] = useState(false);
   const [showProjectPlanner, setShowProjectPlanner] = useState(false);
   const [horizonsView, setHorizonsView] = useState('planning'); // 'planning' | 'metrics'
-  const [planView, setPlanView] = useState('week'); // 'week' | 'projects' | 'horizons' | 'month'
+  const [planView, setPlanView] = useState('calendar'); // 'calendar' | 'projects' | 'routines'
   const [rebalanceQuotaId, setRebalanceQuotaId] = useState(null); // id of quota being rebalanced
   const [pendingPlan, setPendingPlan] = useState(null); // { quota, blocks } for Monthly Rebalance review
   const [newQuotaName, setNewQuotaName] = useState('');
@@ -506,7 +510,8 @@ function GardenDashboard() {
     try {
       const evts = Array.isArray(weeklyEvents) ? weeklyEvents : [];
       const energyProfile = { spoonCount: dailySpoonCount ?? 8 };
-      const weekPlan = await generateWeeklyPlan(goals, evts, energyProfile);
+      const northStarTitle = weeklyNorthStarId ? goals?.find((g) => g.id === weeklyNorthStarId)?.title : null;
+      const weekPlan = await generateWeeklyPlan(goals, evts, energyProfile, { northStarTitle, userSettings });
       if (!weekPlan) {
         if (typeof pushReward === 'function') {
           pushReward({ message: 'Planning failed. Check API key (VITE_GEMINI_API_KEY) or try again later.', tone: 'slate', icon: '🔌', sound: null });
@@ -524,7 +529,7 @@ function GardenDashboard() {
     } finally {
       setPlanningWeek(false);
     }
-  }, [goals, weeklyEvents, dailySpoonCount, pushReward]);
+  }, [goals, weeklyEvents, dailySpoonCount, weeklyNorthStarId, userSettings, pushReward]);
 
   const handleConfirmWeekPlan = useCallback(async () => {
     if (!weekPreview) return;
@@ -540,14 +545,58 @@ function GardenDashboard() {
   }, []);
 
   const handlePlanMonth = useCallback(async () => {
-    const now = new Date();
-    const roadmap = await generateMonthlyPlan(goals, now.getMonth(), now.getFullYear());
-    if (roadmap) {
-      setMonthlyRoadmap(roadmap);
-    } else if (typeof pushReward === 'function') {
-      pushReward({ message: 'Monthly planning failed. Check API key (VITE_GEMINI_API_KEY) or try again later.', tone: 'slate', icon: '🔌', sound: null });
+    setIsGeneratingMonthPlan(true);
+    setPendingMonthPlan(null);
+    try {
+      const now = new Date();
+      const northStarTitle = weeklyNorthStarId ? goals?.find((g) => g.id === weeklyNorthStarId)?.title : null;
+      const tasks = await generateMonthlyPlanTasks(goals, now.getMonth(), now.getFullYear(), { userSettings, northStarTitle });
+      if (Array.isArray(tasks) && tasks.length > 0) {
+        setPendingMonthPlan(tasks);
+      } else if (typeof pushReward === 'function') {
+        pushReward({ message: 'Monthly planning failed or returned no tasks. Check API key (VITE_GEMINI_API_KEY) or try again later.', tone: 'slate', icon: '🔌', sound: null });
+      }
+    } catch (e) {
+      console.warn('Plan month failed', e);
+      if (typeof pushReward === 'function') {
+        pushReward({ message: 'Monthly planning failed. Try again later.', tone: 'slate', icon: '⚠️', sound: null });
+      }
+    } finally {
+      setIsGeneratingMonthPlan(false);
     }
-  }, [goals, pushReward]);
+  }, [goals, userSettings, weeklyNorthStarId, pushReward]);
+
+  const handleApplyMonthPlan = useCallback(() => {
+    if (!Array.isArray(pendingMonthPlan) || pendingMonthPlan.length === 0 || typeof updateWeeklyEvents !== 'function') {
+      setPendingMonthPlan(null);
+      return;
+    }
+    const dayStart = userSettings?.dayStart ?? '09:00';
+    const existing = Array.isArray(weeklyEvents) ? weeklyEvents : [];
+    const cursorByDate = {};
+    const newEvents = pendingMonthPlan.map((item) => {
+      const base = new Date(`${item.date}T${dayStart}:00`);
+      const cursor = cursorByDate[item.date];
+      const start = cursor ? new Date(cursor.getTime()) : base;
+      const end = new Date(start.getTime() + item.durationMinutes * 60 * 1000);
+      cursorByDate[item.date] = end;
+      return {
+        title: item.title,
+        start: start.toISOString(),
+        end: end.toISOString(),
+        ...(item.priority === true && { priority: true }),
+      };
+    });
+    updateWeeklyEvents([...existing, ...newEvents]);
+    setPendingMonthPlan(null);
+    if (typeof pushReward === 'function') {
+      pushReward({ message: '✨ Month plan applied to calendar!', tone: 'moss', icon: '✨', durationMs: 2000 });
+    }
+  }, [pendingMonthPlan, userSettings?.dayStart, weeklyEvents, updateWeeklyEvents, pushReward]);
+
+  const handleDiscardMonthPlan = useCallback(() => {
+    setPendingMonthPlan(null);
+  }, []);
 
   const handleRebalance = useCallback(async (quota) => {
     if (!quota?.id || typeof saveDayPlanForDate !== 'function' || typeof loadDayPlan !== 'function') return;
@@ -578,7 +627,7 @@ function GardenDashboard() {
       };
     }).filter(Boolean);
     try {
-      const blocks = await rebalanceMonthQuota(remainingHours, availableDates, userEvents);
+      const blocks = await rebalanceMonthQuota(remainingHours, availableDates, userEvents, { userSettings });
       setPendingPlan({ quota, blocks });
     } catch (e) {
       console.warn('Rebalance failed', e);
@@ -586,7 +635,7 @@ function GardenDashboard() {
     } finally {
       setRebalanceQuotaId(null);
     }
-  }, [weeklyEvents, saveDayPlanForDate, loadDayPlan, pushReward]);
+  }, [weeklyEvents, userSettings, saveDayPlanForDate, loadDayPlan, pushReward]);
 
   const handleApproveRebalance = useCallback(async () => {
     if (!pendingPlan?.quota || !Array.isArray(pendingPlan.blocks) || pendingPlan.blocks.length === 0) {
@@ -1267,6 +1316,73 @@ function GardenDashboard() {
     setActiveSession(null);
   };
 
+  /** Momentum chain: complete current session and start next subtask with 5m timer. */
+  const handleStartNextStep = useCallback(
+    (nextStep, payload) => {
+      const timeSpentMinutes =
+        payload?.timeSpentMinutes ?? Math.max(1, activeSession?.sessionDurationMinutes ?? 25);
+      const taskId = activeSession?.id;
+      const goalTitle = activeSession?.title ?? goals?.find((g) => g.id === taskId)?.title ?? 'Goal';
+
+      addWater(1);
+      earnEmbers(5);
+      pushReward({ message: 'Ritual complete. Energy restored.', tone: 'moss', icon: '🍵', durationMs: 2800 });
+      if (taskId) {
+        updateGoalProgress(taskId, timeSpentMinutes);
+        if (activeSession?.subtaskId) {
+          updateSubtaskProgress(taskId, activeSession.subtaskId, timeSpentMinutes / 60);
+        }
+        setGrowthToast(`Your ${goalTitle} has grown.`);
+      }
+      addLog({
+        taskId,
+        taskTitle: goalTitle,
+        rating: null,
+        note: '',
+        date: new Date(),
+        minutes: timeSpentMinutes,
+      });
+      if (soilNutrients > 0 && consumeSoilNutrients(1)) {
+        earnEmbers(2);
+        pushReward({ message: 'Compost paid off: +2 Embers', tone: 'moss', icon: '♻️✨', durationMs: 2800 });
+      }
+      const focusReward = buildReward({
+        type: 'FOCUS_COMPLETE',
+        payload: { goalTitle, minutes: timeSpentMinutes, spoonCount: todaySpoonCount ?? dailySpoonCount },
+      });
+      if (focusReward) {
+        if (focusReward.variableBonus?.embers) earnEmbers(focusReward.variableBonus.embers);
+        pushReward(focusReward);
+      }
+
+      const parentGoal = goals?.find((g) => g.id === nextStep.goalId);
+      if (parentGoal) {
+        setActiveSession({
+          ...parentGoal,
+          title: nextStep.title,
+          subtaskId: nextStep.id,
+          sessionDurationMinutes: 5,
+        });
+      }
+    },
+    [
+      activeSession,
+      goals,
+      addWater,
+      earnEmbers,
+      pushReward,
+      updateGoalProgress,
+      updateSubtaskProgress,
+      setGrowthToast,
+      addLog,
+      soilNutrients,
+      consumeSoilNutrients,
+      buildReward,
+      todaySpoonCount,
+      dailySpoonCount,
+    ]
+  );
+
   const handleTeaComplete = (log) => {
     const durationMinutes = completedTask?.timeSpentMinutes ?? (log?.minutes != null ? Number(log.minutes) : 25);
     const taskId = completedTask?.id ?? log?.taskId;
@@ -1364,10 +1480,13 @@ function GardenDashboard() {
     const durationSeconds = (activeSession.sessionDurationMinutes ?? 25) * 60;
     return (
       <FocusSession
+        key={`focus-${activeSession.id ?? ''}-${activeSession.subtaskId ?? 'g'}`}
         activeTask={activeSession}
         durationSeconds={durationSeconds}
+        goals={goals}
         onComplete={handleSessionComplete}
         onExit={() => setActiveSession(null)}
+        onStartNextStep={handleStartNextStep}
       />
     );
   }
@@ -1413,7 +1532,9 @@ function GardenDashboard() {
               if (!hasAnyAssignment) {
                 const eventsForPlan = Array.isArray(weeklyEvents) ? weeklyEvents : [];
                 const slotCount = level >= 1 && level <= 5 ? (level <= 2 ? 2 + (level - 1) * 2 : level === 3 ? 6 : level === 4 ? 8 : 10) : level;
-                const plan = generateDailyPlan(goals, slotCount, eventsForPlan, { stormBufferMinutes: 30 });
+                const startHour = hourFromTimeStr(userSettings?.dayStart, 8);
+                const endHour = hourFromTimeStr(userSettings?.dayEnd, 22);
+                const plan = generateDailyPlan(goals, slotCount, eventsForPlan, { stormBufferMinutes: 30, startHour, endHour });
                 setAssignments(plan);
                 planSummary = { slotCount: Object.keys(plan).length };
               }
@@ -1836,6 +1957,7 @@ function GardenDashboard() {
                         googleToken={googleToken}
                         onPlanWeek={handlePlanWeek}
                         onPlanMonth={handlePlanMonth}
+                        planningMonth={isGeneratingMonthPlan}
                         planningWeek={planningWeek}
                         weekPreview={weekPreview}
                         onConfirmWeekPlan={handleConfirmWeekPlan}
@@ -1855,10 +1977,10 @@ function GardenDashboard() {
               <div className="flex gap-2 bg-stone-200/50 backdrop-blur-md p-1 rounded-full border border-white/50">
                 <button
                   type="button"
-                  onClick={() => setPlanView('week')}
-                  className={`px-4 py-2 rounded-full font-medium transition-all ${planView === 'week' ? 'bg-white shadow-md text-indigo-600' : 'text-stone-600 hover:text-stone-800'}`}
+                  onClick={() => setPlanView('calendar')}
+                  className={`px-4 py-2 rounded-full font-medium transition-all ${planView === 'calendar' ? 'bg-white shadow-md text-indigo-600' : 'text-stone-600 hover:text-stone-800'}`}
                 >
-                  📅 Week
+                  📅 Calendar
                 </button>
                 <button
                   type="button"
@@ -1869,72 +1991,33 @@ function GardenDashboard() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setPlanView('horizons')}
-                  className={`px-4 py-2 rounded-full font-medium transition-all ${planView === 'horizons' ? 'bg-white shadow-md text-indigo-600' : 'text-stone-600 hover:text-stone-800'}`}
+                  onClick={() => setPlanView('routines')}
+                  className={`px-4 py-2 rounded-full font-medium transition-all ${planView === 'routines' ? 'bg-white shadow-md text-indigo-600' : 'text-stone-600 hover:text-stone-800'}`}
                 >
-                  🔭 Horizons
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPlanView('month')}
-                  className={`px-4 py-2 rounded-full font-medium transition-all ${planView === 'month' ? 'bg-white shadow-md text-indigo-600' : 'text-stone-600 hover:text-stone-800'}`}
-                >
-                  📆 Month
+                  🔁 Routines
                 </button>
               </div>
             </div>
 
-            {planView === 'week' && (
+            {planView === 'calendar' && (
               <div className="space-y-6">
                 <div className="rounded-xl border border-stone-200 bg-white p-4 shadow-sm">
-                  <h2 className="font-serif text-stone-800 text-lg mb-3">Week at a glance</h2>
-                  <WeeklyMap
-                    weeklyPlan={planWeeklyPlanForMap}
-                    selectedDate={planSelectedDayIndex}
-                    onSelectDate={setPlanSelectedDayIndex}
-                    weekDateLabels={planWeekDateLabels}
+                  <CalendarView
                     goals={goals}
+                    weeklyEvents={Array.isArray(weeklyEvents) ? weeklyEvents : []}
+                    weekAssignments={weekAssignments ?? {}}
+                    loadDayPlan={loadDayPlan}
+                    saveDayPlanForDate={saveDayPlanForDate}
                     onAutoPlanWeek={handleAutoPlanWeek}
-                    autoPlanWeekLoading={autoFillLoading}
+                    onRebalance={handleRebalance}
+                    monthlyQuotas={monthlyQuotas ?? []}
+                    rebalanceLoading={rebalanceQuotaId != null}
+                    autoPlanLoading={autoFillLoading}
                   />
                 </div>
-                <div className="rounded-xl border border-stone-200 bg-stone-50 p-4 shadow-sm">
-                  <h3 className="font-serif text-stone-800 text-base mb-2">Compost Heap</h3>
-                  <p className="font-sans text-sm text-stone-600 mb-3">Capture thoughts and move them into your plan when ready.</p>
-                  <button
-                    type="button"
-                    onClick={() => setShowCompost(true)}
-                    className="px-4 py-2 rounded-xl bg-stone-700 text-white font-sans text-sm font-medium hover:bg-stone-800 focus:outline-none focus:ring-2 focus:ring-stone-500/50"
-                  >
-                    Open Compost Heap
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {planView === 'projects' && (
-              <div className="rounded-xl border border-stone-200 bg-stone-50/80 p-4 shadow-sm">
-                <p className="font-sans text-sm text-stone-600 text-center">Project planner opens above. Close it to return to Week view.</p>
-              </div>
-            )}
-
-            {planView === 'horizons' && (
-              <div className="rounded-xl border border-stone-200 bg-white p-4 shadow-sm">
-                <HorizonsGantt
-              goals={goals}
-              onGoalClick={(goal) => setEditingGoal(goal)}
-              onDeleteGoal={deleteGoal}
-              onToggleMilestone={toggleMilestone}
-              onUpdateSubtask={updateSubtask}
-            />
-              </div>
-            )}
-
-            {planView === 'month' && (
-              <div className="space-y-6">
                 <div className="rounded-xl border border-stone-200 bg-white p-4 shadow-sm">
                   <h2 className="font-serif text-stone-800 text-lg mb-2">Monthly Quotas</h2>
-                  <p className="font-sans text-sm text-stone-500 mb-4">Set a target (e.g. 60 hours for a client). Track logged hours. Hit Rebalance to spread remaining hours across the rest of the month.</p>
+                  <p className="font-sans text-sm text-stone-500 mb-4">Set a target (e.g. 60 hours for a client). Track logged hours. Rebalance from the Calendar header spreads remaining hours.</p>
                   <div className="space-y-4">
                     {(Array.isArray(monthlyQuotas) ? monthlyQuotas : []).map((quota) => (
                       <div
@@ -2002,80 +2085,169 @@ function GardenDashboard() {
                     </div>
                   </div>
                 </div>
-
-                <AnimatePresence>
-                  {pendingPlan && (
-                    <motion.div
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      exit={{ opacity: 0 }}
-                      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-stone-900/50 backdrop-blur-sm"
-                      onClick={() => setPendingPlan(null)}
-                      role="dialog"
-                      aria-modal="true"
-                      aria-labelledby="review-plan-heading"
-                    >
-                      <motion.div
-                        initial={{ y: 24, opacity: 0 }}
-                        animate={{ y: 0, opacity: 1 }}
-                        exit={{ y: 24, opacity: 0 }}
-                        transition={{ type: 'spring', damping: 28, stiffness: 300 }}
-                        onClick={(e) => e.stopPropagation()}
-                        className="w-full max-w-lg max-h-[85vh] flex flex-col rounded-t-2xl sm:rounded-2xl bg-white border border-stone-200 shadow-xl overflow-hidden"
-                      >
-                        <h2 id="review-plan-heading" className="font-serif text-stone-900 text-xl font-bold p-4 pb-2 shrink-0">
-                          ✨ AI Plan Generated. Do you agree?
-                        </h2>
-                        <p className="font-sans text-sm text-stone-500 px-4 pb-4 shrink-0">
-                          {pendingPlan.quota?.name ?? 'Quota'} — {pendingPlan.blocks?.length ?? 0} blocks
-                        </p>
-                        <div className="overflow-y-auto flex-1 min-h-0 px-4 pb-4">
-                          <ul className="space-y-2" role="list">
-                            {(pendingPlan.blocks ?? []).map((block, idx) => {
-                              const startH = parseInt(String(block.startTime).slice(0, 2), 10);
-                              const endH = parseInt(String(block.endTime).slice(0, 2), 10);
-                              const hours = Math.max(0, (endH - startH) || 1);
-                              const dateLabel = block.date
-                                ? new Date(block.date + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
-                                : block.date;
-                              return (
-                                <li
-                                  key={idx}
-                                  className="flex justify-between items-center py-3 px-3 rounded-xl bg-stone-50 border border-stone-100"
-                                >
-                                  <div>
-                                    <span className="font-sans font-medium text-stone-800 block">{dateLabel}</span>
-                                    <span className="font-sans text-sm text-stone-500">
-                                      {block.startTime} – {block.endTime} · {hours}h
-                                    </span>
-                                  </div>
-                                </li>
-                              );
-                            })}
-                          </ul>
-                        </div>
-                        <div className="flex gap-3 p-4 pt-2 border-t border-stone-200 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => setPendingPlan(null)}
-                            className="flex-1 py-3.5 px-4 rounded-xl font-sans text-base font-semibold bg-stone-200 text-stone-800 hover:bg-stone-300 focus:outline-none focus:ring-2 focus:ring-stone-400 focus:ring-offset-2 transition-colors"
-                          >
-                            ❌ Discard
-                          </button>
-                          <button
-                            type="button"
-                            onClick={handleApproveRebalance}
-                            className="flex-1 py-3.5 px-4 rounded-xl font-sans text-base font-semibold bg-moss-600 text-white hover:bg-moss-700 focus:outline-none focus:ring-2 focus:ring-moss-500 focus:ring-offset-2 transition-colors"
-                          >
-                            ✅ Approve & Apply
-                          </button>
-                        </div>
-                      </motion.div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
               </div>
             )}
+
+            {planView === 'projects' && (
+              <div className="space-y-6">
+                <div className="rounded-xl border border-stone-200 bg-stone-50/80 p-4 shadow-sm">
+                  <p className="font-sans text-sm text-stone-600 text-center mb-4">Project planner opens above. Use Horizons below to see your roadmap.</p>
+                </div>
+                <div className="rounded-xl border border-stone-200 bg-white p-4 shadow-sm">
+                  <HorizonsGantt
+                    goals={goals}
+                    onGoalClick={(goal) => setEditingGoal(goal)}
+                    onDeleteGoal={deleteGoal}
+                    onToggleMilestone={toggleMilestone}
+                    onUpdateSubtask={updateSubtask}
+                  />
+                </div>
+              </div>
+            )}
+
+            {planView === 'routines' && (
+              <div className="rounded-xl border border-stone-200 bg-white p-4 shadow-sm">
+                <RoutinesManager />
+              </div>
+            )}
+
+            <AnimatePresence>
+              {pendingPlan && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-stone-900/50 backdrop-blur-sm"
+                  onClick={() => setPendingPlan(null)}
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="review-plan-heading"
+                >
+                  <motion.div
+                    initial={{ y: 24, opacity: 0 }}
+                    animate={{ y: 0, opacity: 1 }}
+                    exit={{ y: 24, opacity: 0 }}
+                    transition={{ type: 'spring', damping: 28, stiffness: 300 }}
+                    onClick={(e) => e.stopPropagation()}
+                    className="w-full max-w-lg max-h-[85vh] flex flex-col rounded-t-2xl sm:rounded-2xl bg-white border border-stone-200 shadow-xl overflow-hidden"
+                  >
+                    <h2 id="review-plan-heading" className="font-serif text-stone-900 text-xl font-bold p-4 pb-2 shrink-0">
+                      ✨ AI Plan Generated. Do you agree?
+                    </h2>
+                    <p className="font-sans text-sm text-stone-500 px-4 pb-4 shrink-0">
+                      {pendingPlan.quota?.name ?? 'Quota'} — {pendingPlan.blocks?.length ?? 0} blocks
+                    </p>
+                    <div className="overflow-y-auto flex-1 min-h-0 px-4 pb-4">
+                      <ul className="space-y-2" role="list">
+                        {(pendingPlan.blocks ?? []).map((block, idx) => {
+                          const startH = parseInt(String(block.startTime).slice(0, 2), 10);
+                          const endH = parseInt(String(block.endTime).slice(0, 2), 10);
+                          const hours = Math.max(0, (endH - startH) || 1);
+                          const dateLabel = block.date
+                            ? new Date(block.date + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
+                            : block.date;
+                          return (
+                            <li
+                              key={idx}
+                              className="flex justify-between items-center py-3 px-3 rounded-xl bg-stone-50 border border-stone-100"
+                            >
+                              <div>
+                                <span className="font-sans font-medium text-stone-800 block">{dateLabel}</span>
+                                <span className="font-sans text-sm text-stone-500">
+                                  {block.startTime} – {block.endTime} · {hours}h
+                                </span>
+                              </div>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                    <div className="flex gap-3 p-4 pt-2 border-t border-stone-200 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setPendingPlan(null)}
+                        className="flex-1 py-3.5 px-4 rounded-xl font-sans text-base font-semibold bg-stone-200 text-stone-800 hover:bg-stone-300 focus:outline-none focus:ring-2 focus:ring-stone-400 focus:ring-offset-2 transition-colors"
+                      >
+                        ❌ Discard
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleApproveRebalance}
+                        className="flex-1 py-3.5 px-4 rounded-xl font-sans text-base font-semibold bg-moss-600 text-white hover:bg-moss-700 focus:outline-none focus:ring-2 focus:ring-moss-500 focus:ring-offset-2 transition-colors"
+                      >
+                        ✅ Approve & Apply
+                      </button>
+                    </div>
+                  </motion.div>
+                </motion.div>
+              )}
+              {pendingMonthPlan && Array.isArray(pendingMonthPlan) && pendingMonthPlan.length > 0 && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-stone-900/50 backdrop-blur-sm"
+                  onClick={() => setPendingMonthPlan(null)}
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="review-month-plan-heading"
+                >
+                  <motion.div
+                    initial={{ y: 24, opacity: 0 }}
+                    animate={{ y: 0, opacity: 1 }}
+                    exit={{ y: 24, opacity: 0 }}
+                    transition={{ type: 'spring', damping: 28, stiffness: 300 }}
+                    onClick={(e) => e.stopPropagation()}
+                    className="w-full max-w-lg max-h-[85vh] flex flex-col rounded-t-2xl sm:rounded-2xl bg-white border border-stone-200 shadow-xl overflow-hidden"
+                  >
+                    <h2 id="review-month-plan-heading" className="font-serif text-stone-900 text-xl font-bold p-4 pb-2 shrink-0">
+                      ✨ Monthly plan generated
+                    </h2>
+                    <p className="font-sans text-sm text-stone-500 px-4 pb-4 shrink-0">
+                      Review the tasks below. Apply to add them to your calendar.
+                    </p>
+                    <div className="overflow-y-auto flex-1 min-h-0 px-4 pb-4">
+                      <ul className="space-y-2" role="list">
+                        {pendingMonthPlan.map((item, idx) => {
+                          const dateLabel = item.date
+                            ? new Date(item.date + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
+                            : item.date;
+                          return (
+                            <li
+                              key={idx}
+                              className="flex justify-between items-center py-3 px-3 rounded-xl bg-stone-50 border border-stone-100"
+                            >
+                              <div>
+                                <span className="font-sans font-medium text-stone-800 block">{item.title}</span>
+                                <span className="font-sans text-sm text-stone-500">
+                                  {dateLabel} · {item.durationMinutes} min
+                                </span>
+                              </div>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                    <div className="flex gap-3 p-4 pt-2 border-t border-stone-200 shrink-0">
+                      <button
+                        type="button"
+                        onClick={handleDiscardMonthPlan}
+                        className="flex-1 py-3.5 px-4 rounded-xl font-sans text-base font-semibold bg-stone-200 text-stone-800 hover:bg-stone-300 focus:outline-none focus:ring-2 focus:ring-stone-400 focus:ring-offset-2 transition-colors"
+                      >
+                        ❌ Discard
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleApplyMonthPlan}
+                        className="flex-1 py-3.5 px-4 rounded-xl font-sans text-base font-semibold bg-moss-600 text-white hover:bg-moss-700 focus:outline-none focus:ring-2 focus:ring-moss-500 focus:ring-offset-2 transition-colors"
+                      >
+                        ✅ Apply to Calendar
+                      </button>
+                    </div>
+                  </motion.div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         )}
         {activeTab === 'today' && (
@@ -2206,7 +2378,7 @@ function GardenDashboard() {
         open={showProjectPlanner || (activeTab === 'planner' && planView === 'projects')}
         onClose={() => {
           setShowProjectPlanner(false);
-          if (activeTab === 'planner') setPlanView('week');
+          if (activeTab === 'planner') setPlanView('calendar');
         }}
         onCreateGoals={handleProjectGoals}
       />

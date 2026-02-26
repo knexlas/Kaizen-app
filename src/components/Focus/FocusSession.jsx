@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const DURATION_SECONDS = 25 * 60; // 25 minutes
@@ -114,11 +114,28 @@ function MochiSpirit({ isComplete }) {
   );
 }
 
+/** If the completed task is a subtask, find the parent goal and return the first uncompleted subtask after the current one. */
+function getNextStep(activeTask, goals) {
+  if (!activeTask?.id || !Array.isArray(goals) || goals.length === 0) return null;
+  const goal = goals.find((g) => g.id === activeTask.id);
+  if (!goal?.subtasks?.length) return null;
+  const subs = goal.subtasks;
+  const currentSubId = activeTask.subtaskId ?? null;
+  const first = subs.find(
+    (s) =>
+      (Number(s.completedHours) || 0) < (Number(s.estimatedHours) || 0.01) &&
+      s.id !== currentSubId
+  );
+  return first ? { id: first.id, title: first.title, goalId: goal.id } : null;
+}
+
 export default function FocusSession({
   activeTask,
   onComplete,
   onExit,
   durationSeconds = DURATION_SECONDS,
+  goals = [],
+  onStartNextStep,
 }) {
   const [secondsLeft, setSecondsLeft] = useState(durationSeconds);
   const [sessionMode, setSessionMode] = useState('focus'); // 'focus' | 'break'
@@ -140,6 +157,11 @@ export default function FocusSession({
   const hasAudioInteractionRef = useRef(false);
   const soundMenuRef = useRef(null);
   const wakeLockRef = useRef(null);
+
+  const nextKaizenStep = useMemo(
+    () => getNextStep(activeTask, goals),
+    [activeTask, goals]
+  );
 
   const requestWakeLock = useCallback(async () => {
     try {
@@ -576,6 +598,23 @@ export default function FocusSession({
             transition={{ duration: 0.3 }}
             className="w-full max-w-sm rounded-2xl border border-white/20 bg-stone-100/95 backdrop-blur-md shadow-xl p-6"
           >
+            {nextKaizenStep && (
+              <div className="mb-6 p-4 bg-indigo-500/20 border border-indigo-400/30 rounded-2xl animate-fade-in">
+                <p className="text-indigo-200 text-sm mb-2">🔥 Keep the momentum going?</p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const mins =
+                      completedTimeSpentMinutes ??
+                      Math.max(1, Math.floor(durationSeconds / 60));
+                    onStartNextStep?.(nextKaizenStep, { timeSpentMinutes: mins });
+                  }}
+                  className="w-full py-3 bg-white text-indigo-600 font-bold rounded-xl shadow-lg hover:scale-[1.02] transition-transform flex justify-center items-center gap-2"
+                >
+                  Start Next: {nextKaizenStep.title} (5m)
+                </button>
+              </div>
+            )}
             <h2 className="font-serif text-stone-800 text-xl text-center mb-6">
               Focus Complete. How was your flow?
             </h2>

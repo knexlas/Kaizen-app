@@ -131,6 +131,12 @@ export default function SpiritBuilder({ onComplete, mode = 'create', initialConf
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  setStep(2);
+                }
+              }}
               placeholder="e.g. Mochi"
               className="w-full py-3 px-4 rounded-xl border-2 border-stone-200 bg-white font-sans text-stone-900 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-moss-500/40 focus:border-moss-500 text-center"
               aria-label="Spirit companion name"

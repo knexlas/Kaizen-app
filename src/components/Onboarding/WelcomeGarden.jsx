@@ -88,6 +88,12 @@ export default function WelcomeGarden() {
                 type="text"
                 value={displayName}
                 onChange={(e) => setDisplayName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleHelloNext();
+                  }
+                }}
                 placeholder="Your name"
                 className="w-full py-3 px-4 rounded-xl border border-stone-300 bg-white font-sans text-stone-900 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-moss-500/40 focus:border-moss-500 mb-6"
                 autoFocus
@@ -141,6 +147,12 @@ export default function WelcomeGarden() {
                 type="text"
                 value={firstSeed}
                 onChange={(e) => setFirstSeed(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    if ((firstSeed || '').trim() && !isPlanting) handlePlantSeed();
+                  }
+                }}
                 placeholder="e.g. Read 50 pages"
                 className="w-full py-3 px-4 rounded-xl border border-stone-300 bg-white font-sans text-stone-900 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-moss-500/40 focus:border-moss-500 mb-6"
                 autoFocus

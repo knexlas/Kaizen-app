@@ -3,10 +3,18 @@ import { useGarden } from '../../context/GardenContext';
 import { localISODate } from '../../services/dateUtils';
 import { testMochiConnection } from '../../services/geminiService';
 
+const SCHEDULING_DEFAULTS = {
+  dayStart: '08:00',
+  dayEnd: '22:00',
+  isWorkScheduler: true,
+  workHours: { start: '09:00', end: '17:00' },
+};
+
 export default function SettingsView({ onReplayTour }) {
   const {
     userSettings = {},
     setUserSettings,
+    updateUserSettings,
     goals,
     weeklyEvents,
     logs,
@@ -22,6 +30,11 @@ export default function SettingsView({ onReplayTour }) {
   } = useGarden();
   const [userName, setUserName] = useState(userSettings.userName ?? '');
   const [defaultWeekStart, setDefaultWeekStart] = useState(userSettings.defaultWeekStart ?? 1); // 0 = Sun, 1 = Mon
+  const [dayStart, setDayStart] = useState(userSettings.dayStart ?? SCHEDULING_DEFAULTS.dayStart);
+  const [dayEnd, setDayEnd] = useState(userSettings.dayEnd ?? SCHEDULING_DEFAULTS.dayEnd);
+  const [isWorkScheduler, setIsWorkScheduler] = useState(userSettings.isWorkScheduler ?? SCHEDULING_DEFAULTS.isWorkScheduler);
+  const [workHoursStart, setWorkHoursStart] = useState(userSettings.workHours?.start ?? SCHEDULING_DEFAULTS.workHours.start);
+  const [workHoursEnd, setWorkHoursEnd] = useState(userSettings.workHours?.end ?? SCHEDULING_DEFAULTS.workHours.end);
   const [saved, setSaved] = useState(false);
   const [importError, setImportError] = useState(null);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
@@ -42,10 +55,23 @@ export default function SettingsView({ onReplayTour }) {
   useEffect(() => {
     setUserName(userSettings.userName ?? '');
     setDefaultWeekStart(userSettings.defaultWeekStart ?? 1);
-  }, [userSettings.userName, userSettings.defaultWeekStart]);
+    setDayStart(userSettings.dayStart ?? SCHEDULING_DEFAULTS.dayStart);
+    setDayEnd(userSettings.dayEnd ?? SCHEDULING_DEFAULTS.dayEnd);
+    setIsWorkScheduler(userSettings.isWorkScheduler ?? SCHEDULING_DEFAULTS.isWorkScheduler);
+    setWorkHoursStart(userSettings.workHours?.start ?? SCHEDULING_DEFAULTS.workHours.start);
+    setWorkHoursEnd(userSettings.workHours?.end ?? SCHEDULING_DEFAULTS.workHours.end);
+  }, [userSettings.userName, userSettings.defaultWeekStart, userSettings.dayStart, userSettings.dayEnd, userSettings.isWorkScheduler, userSettings.workHours]);
 
   const handleSave = () => {
-    setUserSettings?.({ ...userSettings, userName: userName.trim() || undefined, defaultWeekStart });
+    setUserSettings?.({
+      ...userSettings,
+      userName: userName.trim() || undefined,
+      defaultWeekStart,
+      dayStart,
+      dayEnd,
+      isWorkScheduler,
+      workHours: { start: workHoursStart, end: workHoursEnd },
+    });
     setSaved(true);
     const t = setTimeout(() => setSaved(false), 2000);
     return () => clearTimeout(t);
@@ -192,6 +218,73 @@ export default function SettingsView({ onReplayTour }) {
               Monday
             </label>
           </div>
+        </div>
+
+        <div className="border-t border-stone-100 pt-6">
+          <h3 className="font-sans text-sm font-semibold text-stone-800 mb-1">Scheduling</h3>
+          <p className="font-sans text-xs text-stone-500 mb-4">Day range and work-hour blocking for the planner and Time Slicer.</p>
+          <p className="font-sans text-xs font-medium text-stone-600 mb-2">Day Schedule</p>
+          <div className="grid grid-cols-2 gap-4 mb-4">
+            <div>
+              <label htmlFor="settings-day-start" className="block font-sans text-xs font-medium text-stone-600 mb-1">Day starts at</label>
+              <input
+                id="settings-day-start"
+                type="time"
+                value={dayStart}
+                onChange={(e) => setDayStart(e.target.value)}
+                className="w-full py-2 px-3 rounded-lg border border-stone-200 bg-white font-sans text-stone-900 focus:outline-none focus:ring-2 focus:ring-moss-500/40 focus:border-moss-500"
+              />
+            </div>
+            <div>
+              <label htmlFor="settings-day-end" className="block font-sans text-xs font-medium text-stone-600 mb-1">Day ends at</label>
+              <input
+                id="settings-day-end"
+                type="time"
+                value={dayEnd}
+                onChange={(e) => setDayEnd(e.target.value)}
+                className="w-full py-2 px-3 rounded-lg border border-stone-200 bg-white font-sans text-stone-900 focus:outline-none focus:ring-2 focus:ring-moss-500/40 focus:border-moss-500"
+              />
+            </div>
+          </div>
+          <div className="mb-4">
+            <label className="flex items-center gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={isWorkScheduler}
+                onChange={(e) => setIsWorkScheduler(e.target.checked)}
+                className="sr-only peer"
+              />
+              <span className="relative inline-flex h-6 w-10 shrink-0 rounded-full bg-stone-200 transition-colors peer-checked:bg-moss-500 focus-within:ring-2 focus-within:ring-moss-500/40 focus-within:ring-offset-2">
+                <span className="pointer-events-none absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform peer-checked:translate-x-4" />
+              </span>
+              <span className="font-sans text-sm font-medium text-stone-700">Use Kaizen for work tasks?</span>
+            </label>
+            <p className="font-sans text-xs text-stone-500 mt-1 ml-12">When off, work hours are blocked and not suggested for tasks.</p>
+          </div>
+          {!isWorkScheduler && (
+            <div className="grid grid-cols-2 gap-4 p-4 rounded-lg bg-stone-50 border border-stone-100">
+              <div>
+                <label htmlFor="settings-work-start" className="block font-sans text-xs font-medium text-stone-600 mb-1">Work hours (blocked off) — start</label>
+                <input
+                  id="settings-work-start"
+                  type="time"
+                  value={workHoursStart}
+                  onChange={(e) => setWorkHoursStart(e.target.value)}
+                  className="w-full py-2 px-3 rounded-lg border border-stone-200 bg-white font-sans text-stone-900 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
+                />
+              </div>
+              <div>
+                <label htmlFor="settings-work-end" className="block font-sans text-xs font-medium text-stone-600 mb-1">Work hours (blocked off) — end</label>
+                <input
+                  id="settings-work-end"
+                  type="time"
+                  value={workHoursEnd}
+                  onChange={(e) => setWorkHoursEnd(e.target.value)}
+                  className="w-full py-2 px-3 rounded-lg border border-stone-200 bg-white font-sans text-stone-900 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
+                />
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="flex gap-3 pt-2">

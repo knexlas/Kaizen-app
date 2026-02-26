@@ -50,9 +50,10 @@ export const PONDS = ['🌊', '💧', '🧊', '🐟', '🐸', '🦆', '🪼', '�
 export const ROCKS = ['🪨', '🗿', '⛰️', '🗻', '🏯', '⛩️', '🪵', '🪷', '🪸', '🏔️'];
 
 export function getHash(str) {
-  if (!str) return 0;
+  const s = String(str ?? '');
+  if (!s) return 0;
   let hash = 0;
-  for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  for (let i = 0; i < s.length; i++) hash = s.charCodeAt(i) + ((hash << 5) - hash);
   return Math.abs(hash);
 }
 

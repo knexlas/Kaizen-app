@@ -37,7 +37,7 @@ export default function ProceduralFlora({ goal, isHovered }) {
       : Date.now() - lastWateredOrCreated > THIRSTY_HOURS * 60 * 60 * 1000;
 
   const isProject = goal?._projectGoal;
-  const hash = getHash(goal?.id ?? '');
+  const hash = getHash(String(goal?.id ?? ''));
   const FLORA_MODELS = isProject ? [...TREES, ...PINES] : [...FLOWERS, ...MUSHROOMS];
   const hashFallback = FLORA_MODELS.length > 0 ? FLORA_MODELS[Math.abs(hash) % FLORA_MODELS.length] : (FLOWERS[0] ?? ALL_PATHS[0]);
   const modelFile = goal?.seedModel ? `/models/${goal.seedModel}` : hashFallback;

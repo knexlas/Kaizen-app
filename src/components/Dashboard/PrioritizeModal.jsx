@@ -1,7 +1,23 @@
 import { motion, AnimatePresence } from 'framer-motion';
 
-export default function PrioritizeModal({ open, onClose, priorities = {}, onSelectTask }) {
+export default function PrioritizeModal({
+  open,
+  onClose,
+  priorities = {},
+  onSelectTask,
+  todayTasks = [],
+  recommendedTaskId = null,
+  recommendedReason = null,
+  onApplyPriority,
+  prioritizeLoading = false,
+  prioritizeSuccess = false,
+}) {
   const { northStar, quickWin, care } = priorities;
+  const recommendedTask = recommendedTaskId
+    ? todayTasks.find((t) => t.id === recommendedTaskId)
+    : null;
+  const showAiRecommendation = todayTasks.length > 0 && typeof onApplyPriority === 'function';
+  const showAiBlock = showAiRecommendation && (recommendedTask || prioritizeLoading || prioritizeSuccess);
 
   const cardClass =
     'rounded-2xl border border-stone-200/80 bg-white/80 shadow-sm p-4 text-left transition-colors hover:border-stone-300/80';
@@ -44,6 +60,55 @@ export default function PrioritizeModal({ open, onClose, priorities = {}, onSele
           </div>
 
           <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+            {/* AI recommendation: loading, then success with reason (priority already applied) */}
+            {showAiBlock && (
+              <div className={`${cardClass} ring-2 ring-amber-300/60 bg-amber-50/80`}>
+                <p className="text-base" aria-hidden>
+                  🎯 {prioritizeSuccess ? 'Your focus today' : 'Mochi, pick one for me'}
+                </p>
+                {prioritizeLoading && !recommendedTask ? (
+                  <>
+                    <p className={descriptionClass}>
+                      Mochi is analyzing your energy and deadlines…
+                    </p>
+                    <p className="font-sans text-sm text-stone-500 mt-2 italic">One moment…</p>
+                  </>
+                ) : prioritizeSuccess && recommendedTask && recommendedReason ? (
+                  <>
+                    <p className={descriptionClass}>
+                      The chosen task is now at the top with the Golden Pin. 🌟
+                    </p>
+                    <p className={taskTitleClass}>{recommendedTask.title}</p>
+                    <p className="font-sans text-sm text-moss-700 mt-2 italic">&ldquo;{recommendedReason}&rdquo;</p>
+                    <button
+                      type="button"
+                      onClick={() => onClose?.()}
+                      className="mt-4 w-full py-2.5 rounded-xl font-sans text-sm font-medium text-stone-50 bg-moss-600 hover:bg-moss-700 focus:outline-none focus:ring-2 focus:ring-moss-500/50 focus:ring-offset-2 transition-colors"
+                    >
+                      Done
+                    </button>
+                  </>
+                ) : recommendedTask && !prioritizeSuccess ? (
+                  <>
+                    <p className={descriptionClass}>
+                      Mochi suggests focusing on this. We only mark it as priority — we won&apos;t move or change your fixed appointments.
+                    </p>
+                    <p className={taskTitleClass}>{recommendedTask.title}</p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onApplyPriority(recommendedTaskId);
+                        onClose?.();
+                      }}
+                      className="mt-4 w-full py-2.5 rounded-xl font-sans text-sm font-medium text-stone-50 bg-moss-600 hover:bg-moss-700 focus:outline-none focus:ring-2 focus:ring-moss-500/50 focus:ring-offset-2 transition-colors"
+                    >
+                      Focus on this
+                    </button>
+                  </>
+                ) : null}
+              </div>
+            )}
+
             {/* The Main Quest */}
             <div className={cardClass}>
               <p className="text-base" aria-hidden>

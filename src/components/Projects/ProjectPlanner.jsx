@@ -18,6 +18,7 @@ export default function ProjectPlanner({ open, onClose, onCreateGoals }) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [deadline, setDeadline] = useState('');
+  const [skillLevel, setSkillLevel] = useState('intermediate'); // 'beginner' | 'intermediate' | 'expert'
   const [isSlicing, setIsSlicing] = useState(false);
   const [plan, setPlan] = useState(null);
   const [sliceError, setSliceError] = useState(null);
@@ -33,7 +34,7 @@ export default function ProjectPlanner({ open, onClose, onCreateGoals }) {
       setSliceError(null);
     }
     try {
-      const result = await sliceProject(name, deadline || null, userFeedback || '', description, goals);
+      const result = await sliceProject(name, deadline || null, userFeedback || '', description, goals, skillLevel);
       if (result && Array.isArray(result.phases) && result.phases.length > 0) {
         setPlan(result);
         setFeedback('');
@@ -56,7 +57,7 @@ export default function ProjectPlanner({ open, onClose, onCreateGoals }) {
     } finally {
       setIsSlicing(false);
     }
-  }, [name, deadline, description, goals]);
+  }, [name, deadline, description, goals, skillLevel]);
 
   const handleCreate = useCallback(() => {
     if (!plan || !onCreateGoals) return;
@@ -122,6 +123,7 @@ export default function ProjectPlanner({ open, onClose, onCreateGoals }) {
     setName('');
     setDescription('');
     setDeadline('');
+    setSkillLevel('intermediate');
     setPlan(null);
     setSliceError(null);
     setSelectedTasks(new Set());
@@ -210,6 +212,19 @@ export default function ProjectPlanner({ open, onClose, onCreateGoals }) {
                     onChange={(e) => setDeadline(e.target.value)}
                     className="w-full py-2.5 px-3 rounded-lg border border-stone-200 bg-stone-50 font-sans text-sm focus:outline-none focus:ring-2 focus:ring-moss-500/40 focus:border-moss-500"
                   />
+                </div>
+                <div>
+                  <label className="block font-sans text-sm font-medium text-stone-600 mb-1">Current Skill Level</label>
+                  <select
+                    value={skillLevel}
+                    onChange={(e) => setSkillLevel(e.target.value)}
+                    className="w-full py-2.5 px-3 rounded-lg border border-stone-200 bg-stone-50 font-sans text-sm focus:outline-none focus:ring-2 focus:ring-moss-500/40 focus:border-moss-500"
+                  >
+                    <option value="beginner">Beginner</option>
+                    <option value="intermediate">Intermediate</option>
+                    <option value="expert">Expert</option>
+                  </select>
+                  <p className="font-sans text-xs text-stone-500 mt-0.5">Mochi will size subtasks to match. Experts get 1–2 hour milestones.</p>
                 </div>
               </>
             ) : (

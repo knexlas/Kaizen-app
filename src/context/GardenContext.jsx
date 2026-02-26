@@ -23,11 +23,17 @@ export function todayString() {
 const defaultData = {
   goals: [],
   weeklyEvents: [],
-  userSettings: {},
+  userSettings: {
+    dayStart: '08:00',
+    dayEnd: '22:00',
+    isWorkScheduler: true,
+    workHours: { start: '09:00', end: '17:00' },
+  }, // scheduling: used by TimeSlicer + schedulerService (startHour/endHour)
   dailyEnergyModifier: 0,
   dailySpoonCount: null, // 0–12 from check-in; 0 = compost-only day, used as maxSlots when set
   lastCheckInDate: null,
   lastSundayRitualDate: null,
+  weeklyNorthStarId: null, // id of the one goal/project chosen as focus for the week (Sunday Ritual)
   logs: [],
   spiritConfig: null, // { name, type: 'mochi'|'ember'|'nimbus' } from Spirit Builder (or legacy { head, body, color, name })
   compost: [], // Inbox: { id, text, createdAt }
@@ -42,6 +48,26 @@ const defaultData = {
   fertilizerCount: 0, // +1 when adding to compost or deleting from compost (visual recycling)
   waterDrops: 5, // earned by completing tasks; spent to water goals
   monthlyQuotas: [], // { id, name, targetHours, loggedHours, blocks?: [] } for freelancer quota tracking
+  routines: [
+    // 🧼 Care & Hygiene
+    { id: 'r_teeth', title: 'Brush Teeth', category: '🧼 Care & Hygiene', duration: 5 },
+    { id: 'r_shower', title: 'Take a Shower', category: '🧼 Care & Hygiene', duration: 15 },
+    { id: 'r_meds', title: 'Take Medication', category: '🧼 Care & Hygiene', duration: 5 },
+    // 🧹 Household
+    { id: 'r_dishes', title: 'Do the Dishes', category: '🧹 Household', duration: 15 },
+    { id: 'r_trash', title: 'Take out Trash', category: '🧹 Household', duration: 5 },
+    { id: 'r_laundry', title: 'Do Laundry', category: '🧹 Household', duration: 30 },
+    { id: 'r_plants', title: 'Water Plants', category: '🧹 Household', duration: 10 },
+    // 📁 Life Admin
+    { id: 'r_desk', title: 'Clean Desk', category: '📁 Life Admin', duration: 15 },
+    { id: 'r_mail', title: 'Check Mail/Email', category: '📁 Life Admin', duration: 10 },
+    { id: 'r_groceries', title: 'Grocery Shopping', category: '📁 Life Admin', duration: 60 },
+    { id: 'r_plan', title: 'Review Daily Plan', category: '📁 Life Admin', duration: 10 },
+    // 💪 Wellness & Rest
+    { id: 'r_exercise', title: 'Quick Workout / Stretch', category: '💪 Wellness', duration: 20 },
+    { id: 'r_walk', title: 'Go for a Walk', category: '💪 Wellness', duration: 30 },
+    { id: 'r_meditate', title: 'Meditate', category: '💪 Wellness', duration: 10 },
+  ], // micro-habit templates: { id, title, category, duration (minutes) }
 };
 
 const GardenContext = createContext(null);
@@ -54,6 +80,7 @@ export function GardenProvider({ children }) {
   const [dailySpoonCount, setDailySpoonCount] = useState(defaultData.dailySpoonCount);
   const [lastCheckInDate, setLastCheckInDate] = useState(defaultData.lastCheckInDate);
   const [lastSundayRitualDate, setLastSundayRitualDate] = useState(defaultData.lastSundayRitualDate);
+  const [weeklyNorthStarId, setWeeklyNorthStarId] = useState(defaultData.weeklyNorthStarId);
   const [logs, setLogs] = useState(defaultData.logs);
   const [spiritConfig, setSpiritConfigState] = useState(defaultData.spiritConfig);
   const [compost, setCompost] = useState(defaultData.compost);
@@ -74,6 +101,7 @@ export function GardenProvider({ children }) {
   const [fertilizerCount, setFertilizerCount] = useState(defaultData.fertilizerCount ?? 0);
   const [waterDrops, setWaterDrops] = useState(defaultData.waterDrops ?? 5);
   const [monthlyQuotas, setMonthlyQuotas] = useState(defaultData.monthlyQuotas ?? []);
+  const [routines, setRoutines] = useState(defaultData.routines ?? []);
   const [smallJoys, setSmallJoys] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem('smallJoys') || '[]');
@@ -147,6 +175,7 @@ export function GardenProvider({ children }) {
         if (typeof data.dailySpoonCount === 'number' && data.dailySpoonCount >= 0 && data.dailySpoonCount <= 12) setDailySpoonCount(data.dailySpoonCount);
         if (data.lastCheckInDate != null) setLastCheckInDate(data.lastCheckInDate);
         if (data.lastSundayRitualDate != null) setLastSundayRitualDate(data.lastSundayRitualDate);
+        if (data.weeklyNorthStarId != null) setWeeklyNorthStarId(data.weeklyNorthStarId);
         if (Array.isArray(data.logs)) setLogs(data.logs);
         if (data.spiritConfig && typeof data.spiritConfig === 'object') setSpiritConfigState(data.spiritConfig);
         if (Array.isArray(data.compost)) setCompost(data.compost);
@@ -160,6 +189,7 @@ export function GardenProvider({ children }) {
         if (typeof data.fertilizerCount === 'number' && data.fertilizerCount >= 0) setFertilizerCount(data.fertilizerCount);
         if (typeof data.waterDrops === 'number' && data.waterDrops >= 0) setWaterDrops(data.waterDrops);
         if (Array.isArray(data.monthlyQuotas)) setMonthlyQuotas(data.monthlyQuotas);
+        if (Array.isArray(data.routines)) setRoutines(data.routines);
       }
     } catch (e) {
       console.warn('GardenContext: failed to load gardenData', e);
@@ -185,6 +215,7 @@ export function GardenProvider({ children }) {
           if (typeof data.dailyEnergyModifier === 'number') setDailyEnergyModifier(data.dailyEnergyModifier);
           if (data.lastCheckInDate != null) setLastCheckInDate(data.lastCheckInDate);
           if (data.lastSundayRitualDate != null) setLastSundayRitualDate(data.lastSundayRitualDate);
+          if (data.weeklyNorthStarId != null) setWeeklyNorthStarId(data.weeklyNorthStarId);
           if (Array.isArray(data.logs)) setLogs(data.logs);
           if (data.spiritConfig && typeof data.spiritConfig === 'object') setSpiritConfigState(data.spiritConfig);
           // Compost is sourced from subscribeToCompost when uid exists; do not overwrite from garden/data
@@ -199,6 +230,7 @@ export function GardenProvider({ children }) {
           if (typeof data.fertilizerCount === 'number' && data.fertilizerCount >= 0) setFertilizerCount(data.fertilizerCount);
           if (typeof data.waterDrops === 'number' && data.waterDrops >= 0) setWaterDrops(data.waterDrops);
           if (Array.isArray(data.monthlyQuotas)) setMonthlyQuotas(data.monthlyQuotas);
+          if (Array.isArray(data.routines)) setRoutines(data.routines);
           skipCloudSaveUntilRef.current = Date.now() + 3000;
         }
       } catch (e) {
@@ -388,12 +420,12 @@ export function GardenProvider({ children }) {
   useEffect(() => {
     if (!hydrated) return;
     try {
-      const data = { goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, logs, spiritConfig, compost, soilNutrients, spiritPoints, embers, decorations, ownedSeeds, terrainMap, unlockedAnimals, metrics, fertilizerCount, waterDrops, monthlyQuotas };
+      const data = { goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, weeklyNorthStarId, logs, spiritConfig, compost, soilNutrients, spiritPoints, embers, decorations, ownedSeeds, terrainMap, unlockedAnimals, metrics, fertilizerCount, waterDrops, monthlyQuotas, routines };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     } catch (e) {
       console.warn('GardenContext: failed to save gardenData', e);
     }
-  }, [hydrated, goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, logs, spiritConfig, compost, soilNutrients, spiritPoints, embers, decorations, ownedSeeds, terrainMap, unlockedAnimals, metrics, fertilizerCount, waterDrops, monthlyQuotas]);
+  }, [hydrated, goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, weeklyNorthStarId, logs, spiritConfig, compost, soilNutrients, spiritPoints, embers, decorations, ownedSeeds, terrainMap, unlockedAnimals, metrics, fertilizerCount, waterDrops, monthlyQuotas, routines]);
 
   // Debounced save to Firestore when goals, logs, weeklyEvents change (and user is logged in)
   useEffect(() => {
@@ -416,6 +448,7 @@ export function GardenProvider({ children }) {
           dailySpoonCount: dailySpoonCount ?? null,
           lastCheckInDate,
           lastSundayRitualDate,
+          weeklyNorthStarId: weeklyNorthStarId ?? null,
           logs,
           spiritConfig: spiritConfig ?? null,
           compost: compost ?? [],
@@ -430,6 +463,7 @@ export function GardenProvider({ children }) {
           fertilizerCount: fertilizerCount ?? 0,
           waterDrops: waterDrops ?? 5,
           monthlyQuotas: Array.isArray(monthlyQuotas) ? monthlyQuotas : [],
+          routines: Array.isArray(routines) ? routines : [],
           updatedAt: new Date().toISOString(),
         }, { merge: true });
         setCloudSaveStatus('saved');
@@ -451,7 +485,7 @@ export function GardenProvider({ children }) {
         savedIdleTimeoutRef.current = null;
       }
     };
-  }, [hydrated, googleUser?.uid, goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, logs, spiritConfig, compost, soilNutrients, spiritPoints, embers, decorations, ownedSeeds, terrainMap, unlockedAnimals, metrics, fertilizerCount, waterDrops, monthlyQuotas]);
+  }, [hydrated, googleUser?.uid, goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, weeklyNorthStarId, logs, spiritConfig, compost, soilNutrients, spiritPoints, embers, decorations, ownedSeeds, terrainMap, unlockedAnimals, metrics, fertilizerCount, waterDrops, monthlyQuotas, routines]);
 
   const addLog = useCallback((log) => {
     const mins = Number(log?.minutes) || 0;
@@ -960,9 +994,16 @@ export function GardenProvider({ children }) {
     setWeeklyEvents(list);
   }, []);
 
+  /** Update a goal by id. Safe merge: existing goal is spread first, then updates. Never overwrites position3D or seedModel with undefined (preserves garden placement when Calendar/Auto-Planner assign time). */
   const editGoal = useCallback((goalId, updates) => {
     setGoals((prev) =>
-      prev.map((g) => (g.id === goalId ? { ...g, ...updates } : g))
+      prev.map((g) => {
+        if (g.id !== goalId) return g;
+        const merged = { ...g, ...updates };
+        if (merged.position3D === undefined && g.position3D != null) merged.position3D = g.position3D;
+        if (merged.seedModel === undefined && g.seedModel != null) merged.seedModel = g.seedModel;
+        return merged;
+      })
     );
   }, []);
 
@@ -1060,6 +1101,18 @@ export function GardenProvider({ children }) {
     });
   }, []);
 
+  /** Update user settings (scheduling, etc.). Merges partial updates; workHours is deep-merged so partial workHours updates do not wipe the rest. */
+  const updateUserSettings = useCallback((updates) => {
+    if (!updates || typeof updates !== 'object') return;
+    setUserSettings((prev) => {
+      const next = { ...prev, ...updates };
+      if (updates.workHours && typeof updates.workHours === 'object') {
+        next.workHours = { ...(prev.workHours || {}), ...updates.workHours };
+      }
+      return next;
+    });
+  }, []);
+
   /** Add a monthly quota (e.g. Freelance Client, targetHours). */
   const addMonthlyQuota = useCallback((quota) => {
     const id = quota?.id ?? crypto.randomUUID?.() ?? `quota-${Date.now()}`;
@@ -1081,6 +1134,35 @@ export function GardenProvider({ children }) {
     );
   }, []);
 
+  /** Add a routine template (micro-habit). */
+  const addRoutine = useCallback((routine) => {
+    const id = routine?.id ?? crypto.randomUUID?.() ?? `r-${Date.now()}`;
+    const entry = {
+      id,
+      title: typeof routine?.title === 'string' ? routine.title : 'Routine',
+      category: typeof routine?.category === 'string' ? routine.category : '📋 Other',
+      duration: Math.max(1, Math.min(120, Number(routine?.duration) || 5)),
+    };
+    setRoutines((prev) => [...prev, entry]);
+    return id;
+  }, []);
+
+  /** Update a routine by id. Safe merge: existing routine spread first, then updates; duration is clamped 1–120. */
+  const updateRoutine = useCallback((id, updates) => {
+    setRoutines((prev) =>
+      prev.map((r) =>
+        r.id === id
+          ? { ...r, ...updates, duration: Math.max(1, Math.min(120, Number(updates.duration ?? r.duration) || 5)) }
+          : r
+      )
+    );
+  }, []);
+
+  /** Delete a routine by id. */
+  const deleteRoutine = useCallback((id) => {
+    setRoutines((prev) => prev.filter((r) => r.id !== id));
+  }, []);
+
   /** Import garden data from JSON (e.g. backup). Merges into state; persist effects will save to localStorage/Firestore. */
   const importGardenData = useCallback((data) => {
     if (!data || typeof data !== 'object') return;
@@ -1091,6 +1173,7 @@ export function GardenProvider({ children }) {
     if (typeof data.dailySpoonCount === 'number' && data.dailySpoonCount >= 0 && data.dailySpoonCount <= 12) setDailySpoonCount(data.dailySpoonCount);
     if (data.lastCheckInDate != null) setLastCheckInDate(data.lastCheckInDate);
     if (data.lastSundayRitualDate != null) setLastSundayRitualDate(data.lastSundayRitualDate);
+    if (data.weeklyNorthStarId != null) setWeeklyNorthStarId(data.weeklyNorthStarId);
     if (Array.isArray(data.logs)) setLogs(data.logs);
     if (data.spiritConfig !== undefined) setSpiritConfigState(data.spiritConfig && typeof data.spiritConfig === 'object' ? data.spiritConfig : null);
     if (Array.isArray(data.compost)) setCompost(data.compost);
@@ -1105,6 +1188,7 @@ export function GardenProvider({ children }) {
     if (typeof data.fertilizerCount === 'number' && data.fertilizerCount >= 0) setFertilizerCount(data.fertilizerCount);
     if (typeof data.waterDrops === 'number' && data.waterDrops >= 0) setWaterDrops(data.waterDrops);
     if (Array.isArray(data.monthlyQuotas)) setMonthlyQuotas(data.monthlyQuotas);
+    if (Array.isArray(data.routines)) setRoutines(data.routines);
   }, []);
 
   /** Clear all garden data (localStorage + in-memory; if logged in, overwrite Firestore with default). */
@@ -1116,6 +1200,7 @@ export function GardenProvider({ children }) {
     setDailySpoonCount(defaultData.dailySpoonCount);
     setLastCheckInDate(defaultData.lastCheckInDate);
     setLastSundayRitualDate(defaultData.lastSundayRitualDate);
+    setWeeklyNorthStarId(defaultData.weeklyNorthStarId);
     setLogs(defaultData.logs);
     setSpiritConfigState(defaultData.spiritConfig);
     setCompost(defaultData.compost);
@@ -1131,6 +1216,7 @@ export function GardenProvider({ children }) {
     setFertilizerCount(defaultData.fertilizerCount ?? 0);
     setWaterDrops(defaultData.waterDrops ?? 5);
     setMonthlyQuotas(defaultData.monthlyQuotas ?? []);
+    setRoutines(defaultData.routines ?? []);
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(defaultData));
     } catch (e) {
@@ -1153,6 +1239,7 @@ export function GardenProvider({ children }) {
     weeklyEvents,
     userSettings,
     setUserSettings,
+    updateUserSettings,
     dailyEnergyModifier,
     dailySpoonCount,
     lastCheckInDate,
@@ -1160,6 +1247,8 @@ export function GardenProvider({ children }) {
     hydrated,
     lastSundayRitualDate,
     markSundayRitualComplete,
+    weeklyNorthStarId,
+    setWeeklyNorthStarId,
     logs,
     addLog,
     logMetric,
@@ -1241,6 +1330,11 @@ export function GardenProvider({ children }) {
     monthlyQuotas,
     addMonthlyQuota,
     updateMonthlyQuota,
+    routines,
+    setRoutines,
+    addRoutine,
+    updateRoutine,
+    deleteRoutine,
   };
 
   return (

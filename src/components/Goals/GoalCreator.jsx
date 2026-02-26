@@ -162,6 +162,7 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
   const [vineTitle, setVineTitle] = useState('');
   const [vineHours, setVineHours] = useState('');
   const [vineDeadline, setVineDeadline] = useState('');
+  const [skillLevel, setSkillLevel] = useState('intermediate'); // 'beginner' | 'intermediate' | 'expert'
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   const availableSeeds = useMemo(
@@ -313,7 +314,8 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
         title,
         goalType,
         metricCurrentValue,
-        metricTargetValue
+        metricTargetValue,
+        skillLevel
       );
 
       if (suggestion) {
@@ -419,6 +421,7 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
         return found ? { name: found.name, unit: found.unit, direction: found.direction } : { name, unit: '', direction: 'higher' };
       }) }),
       seedModel: selectedSeed ? selectedSeed.model : null,
+      ...((goalType === 'kaizen' || goalType === 'routine') && { skillLevel: skillLevel || 'intermediate' }),
     };
 
     // Auto-create vitality goals for linked metrics that don't have an existing tracker
@@ -487,6 +490,7 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
     setVineDeadline('');
     setLinkedVitalityId('');
     setSelectedSeed(null);
+    setSkillLevel('intermediate');
   };
 
   const showTypeChoice = open && goalType == null;
@@ -618,6 +622,23 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
                 placeholder="e.g., Learn to play piano, Drink more water, or Read a book..."
                 className="w-full py-2 bg-transparent border-0 border-b-2 border-stone-200 text-stone-900 font-sans placeholder-stone-400 focus:outline-none focus:border-moss-500 focus:ring-0 mb-4"
               />
+
+              {/* Current Skill Level — for Kaizen/Routine so AI scales step size */}
+              {(goalType === 'kaizen' || goalType === 'routine') && (
+                <div className="mb-4">
+                  <label className="block font-sans text-sm font-medium text-stone-600 mb-1">Current Skill Level</label>
+                  <select
+                    value={skillLevel}
+                    onChange={(e) => setSkillLevel(e.target.value)}
+                    className="w-full py-2 px-3 rounded-lg border border-stone-200 bg-white font-sans text-stone-900 focus:outline-none focus:ring-2 focus:ring-moss-500/40 focus:border-moss-500"
+                  >
+                    <option value="beginner">Beginner</option>
+                    <option value="intermediate">Intermediate</option>
+                    <option value="expert">Expert</option>
+                  </select>
+                  <p className="font-sans text-xs text-stone-500 mt-0.5">Mochi will size steps to match. Experts get bigger milestones.</p>
+                </div>
+              )}
 
               {/* Suggest based on Title — always visible for low-friction start */}
               <div className="mb-6 flex flex-wrap items-center gap-2">

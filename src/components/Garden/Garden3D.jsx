@@ -8,6 +8,7 @@ import WanderingCreature from './WanderingCreature';
 import ProceduralFlora from './ProceduralFlora';
 import AnimatedModel from './AnimatedModel';
 import Mochi3D from './Mochi3D';
+import DynamicSpirit3D from './DynamicSpirit3D';
 import Rabbit3D from './Rabbit3D';
 import Frog3D from './Frog3D';
 import Butterfly3D from './Butterfly3D';
@@ -253,7 +254,10 @@ function Scene({ placedGoals, onPlant, onGoalClick, timePhase, activeTool, water
 }
 
 function Ecosystem({ placedGoals, timePhase = 'day' }) {
-  const { unlockedAnimals } = useGarden();
+  const { unlockedAnimals, spiritConfig, userSettings } = useGarden();
+  const rawForm = userSettings?.spirit?.form ?? spiritConfig?.type ?? 'mochi';
+  const effectiveForm = rawForm === 'ember' ? 'flame' : rawForm === 'nimbus' ? 'cloud' : rawForm === 'custom' ? 'guide' : (rawForm || 'mochi');
+  const showBackgroundMochi = effectiveForm !== 'mochi';
   const goalPositions = placedGoals
     ?.map((g) => g.position3D)
     .filter((p) => Array.isArray(p) && p.length >= 3) ?? [];
@@ -281,14 +285,16 @@ function Ecosystem({ placedGoals, timePhase = 'day' }) {
       {phase === 'night' && (
         <Sparkles count={40} scale={[15, 4, 15]} position={[0, 2, 0]} size={4} speed={0.4} opacity={0.8} color="#fef08a" />
       )}
-      <WanderingCreature
-        customComponent={<Mochi3D isWalking={true} />}
-        allowedTerrain="grass"
-        speed={1.2}
-        zOffset={0.5}
-        scale={0.6}
-        goalPositions={goalPositions}
-      />
+      {showBackgroundMochi && (
+        <WanderingCreature
+          customComponent={<Mochi3D isWalking={true} />}
+          allowedTerrain="grass"
+          speed={0.5}
+          zOffset={0.5}
+          scale={0.7}
+          goalPositions={goalPositions}
+        />
+      )}
     </group>
   );
 }
@@ -353,9 +359,20 @@ useGLTF.preload('/models/tree_pineTallA.glb');
 useGLTF.preload('/models/sign.glb');
 useGLTF.preload('/models/statue_obelisk.glb');
 
+/** Map context spirit type to DynamicSpirit3D form (flame, cloud, guide, cat, mochi). */
+function spiritTypeToForm(spiritConfig, userSettings) {
+  const form = userSettings?.spirit?.form ?? spiritConfig?.type ?? 'mochi';
+  const t = String(form).toLowerCase();
+  if (t === 'ember') return 'flame';
+  if (t === 'nimbus') return 'cloud';
+  if (t === 'custom') return 'guide';
+  return t || 'mochi';
+}
+
 export default function Garden3D({ onGoalClick, onOpenShop, focusGoal, onOpenJournal, onOpenInsights, uiBlocksCanvas = false }) {
   const [timePhase, setTimePhase] = useState('day');
-  const { goals, editGoal, activeTool, setActiveTool, paintTerrain, updateDecoration, waterGoal, decorations = [] } = useGarden();
+  const { goals, editGoal, activeTool, setActiveTool, paintTerrain, updateDecoration, waterGoal, decorations = [], spiritConfig, userSettings } = useGarden();
+  const chosenForm = spiritTypeToForm(spiritConfig, userSettings);
   const placedGoals = goals?.filter((g) => Array.isArray(g.position3D) && g.position3D.length >= 3) ?? [];
   const unplacedGoals = goals?.filter((g) => !g.position3D || !Array.isArray(g.position3D)) ?? [];
 
@@ -416,6 +433,7 @@ export default function Garden3D({ onGoalClick, onOpenShop, focusGoal, onOpenJou
             <KeyboardController />
             <OrbitControlsWithFollowTarget enabled={!uiBlocksCanvas} />
             <FocusCamera focusGoal={focusGoal} />
+            <DynamicSpirit3D form={chosenForm} position={[0, 0, 0]} />
             <Scene
               placedGoals={placedGoals}
               onPlant={handlePlant}

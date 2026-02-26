@@ -52,8 +52,93 @@ function getWeekMonday() {
   return monday;
 }
 
+/** Goals that are overarching projects or high-level (have subtasks or are project-type). */
+function northStarCandidates(goals) {
+  if (!Array.isArray(goals)) return [];
+  return goals.filter(
+    (g) =>
+      (Array.isArray(g.subtasks) && g.subtasks.length > 0) ||
+      g._projectGoal === true
+  );
+}
+
+function NorthStarStep({ goals, weeklyNorthStarId, onSelect, onContinue }) {
+  const candidates = northStarCandidates(goals);
+  const selected = weeklyNorthStarId != null;
+
+  return (
+    <div className="w-full max-w-2xl rounded-xl border-2 border-moss-500 bg-stone-50 shadow-sm overflow-hidden">
+      <header className="p-6 pb-4 border-b border-stone-200">
+        <h1 className="font-serif text-stone-900 text-2xl md:text-3xl">
+          The North Star
+        </h1>
+        <p className="font-sans text-stone-600 text-sm mt-1">
+          What is your absolute #1 focus for this week?
+        </p>
+      </header>
+
+      <div className="p-6">
+        {!selected ? (
+          <>
+            {candidates.length === 0 ? (
+              <p className="font-sans text-stone-500 text-sm mb-4">
+                Add a project or goal with steps to choose one as your North Star.
+              </p>
+            ) : (
+              <ul className="space-y-3">
+                {candidates.map((goal) => (
+                  <li key={goal.id}>
+                    <button
+                      type="button"
+                      onClick={() => onSelect(goal.id)}
+                      className="w-full text-left p-4 rounded-xl border-2 border-stone-200 bg-white hover:border-moss-400 hover:bg-moss-50/50 focus:outline-none focus:ring-2 focus:ring-moss-500/50 transition-colors font-sans text-stone-900"
+                    >
+                      <span className="font-medium">{goal.title}</span>
+                      {Array.isArray(goal.subtasks) && goal.subtasks.length > 0 && (
+                        <span className="block text-xs text-stone-500 mt-1">
+                          {goal.subtasks.length} step{goal.subtasks.length !== 1 ? 's' : ''}
+                        </span>
+                      )}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </>
+        ) : (
+          <>
+            <p className="font-sans text-moss-700 text-base mb-6">
+              Got it. Mochi will ensure tasks related to this get VIP treatment.
+            </p>
+          </>
+        )}
+
+        <div className="mt-6 flex justify-end gap-3">
+          {candidates.length > 0 && !selected && (
+            <button
+              type="button"
+              onClick={onContinue}
+              className="py-3 px-6 font-sans font-medium rounded-lg border border-stone-300 text-stone-700 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/50 transition-colors"
+            >
+              Skip for now
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onContinue}
+            disabled={candidates.length > 0 && !selected}
+            className="py-3 px-6 font-sans font-medium rounded-lg bg-moss-500 text-stone-50 hover:bg-moss-600 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-moss-500/50 transition-colors"
+          >
+            {selected ? 'Continue' : candidates.length === 0 ? 'Skip' : 'Continue'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function SundayRitualController({ onComplete }) {
-  const { weeklyEvents, updateWeeklyEvents, googleToken } = useGarden();
+  const { goals, weeklyEvents, updateWeeklyEvents, weeklyNorthStarId, setWeeklyNorthStarId, googleToken } = useGarden();
   const [step, setStep] = useState('harvest');
   const [googleEvents, setGoogleEvents] = useState([]);
   const [importingFromCloud, setImportingFromCloud] = useState(false);
@@ -157,7 +242,18 @@ export default function SundayRitualController({ onComplete }) {
           <motion.div key="intro" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="w-full max-w-2xl">
             <GardenIntro
               weeklyWeather={weeklyWeather}
-              onComplete={() => setStep('pruning')}
+              onComplete={() => setStep('northStar')}
+            />
+          </motion.div>
+        )}
+
+        {step === 'northStar' && (
+          <motion.div key="northStar" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="w-full max-w-2xl">
+            <NorthStarStep
+              goals={goals}
+              weeklyNorthStarId={weeklyNorthStarId}
+              onSelect={setWeeklyNorthStarId}
+              onContinue={() => setStep('pruning')}
             />
           </motion.div>
         )}

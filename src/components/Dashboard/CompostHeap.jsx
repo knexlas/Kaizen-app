@@ -315,7 +315,7 @@ export default function CompostHeap({ open, onClose, onPlant, onPrism }) {
           <div className="flex items-center justify-between px-4 py-3 border-b border-stone-200 bg-amber-50/50 shrink-0">
             <h2 className="font-serif text-stone-900 text-lg flex items-center gap-1">
               Compost Heap
-              <InfoTooltip text="A zero-shame inbox. Dump distractions here to process later." />
+              <InfoTooltip text="Tasks you miss don't get marked &quot;Overdue&quot; in red. They come here to naturally decompose. When you eventually pull them back into your day and complete them, they act as fertilizer, giving you bonus Embers!" />
             </h2>
             <button
               type="button"
@@ -451,7 +451,11 @@ export default function CompostHeap({ open, onClose, onPlant, onPrism }) {
           {/* List: organic pile (paper scraps / leaves) */}
           <div className="flex-1 overflow-y-auto p-4">
             {compost.length === 0 ? (
-              <CompostEmptyNote />
+              <div className="flex flex-col items-center text-center p-8 opacity-70">
+                <span className="text-5xl mb-3" aria-hidden>🍂</span>
+                <h4 className="font-bold text-stone-700">The heap is empty.</h4>
+                <p className="text-sm text-stone-500 mt-2">Missed tasks will safely land here to be composted later. No guilt, no stress.</p>
+              </div>
             ) : (
               <>
                 <div className="mb-4 p-3 bg-moss-50 border border-moss-100 rounded-lg flex items-start gap-3">
