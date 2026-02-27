@@ -69,6 +69,8 @@ function getPlanItemsForDate(weekAssignments, goals, dateStr) {
       if (typeof a === 'string') {
         const g = goalMap.get(a);
         title = g?.title ?? 'Task';
+      } else if (a?.type === 'event') {
+        title = a.title ?? 'Event';
       } else if (a?.title) {
         title = a.title;
       } else if (a?.goalId) {

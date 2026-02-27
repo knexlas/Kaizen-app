@@ -593,10 +593,12 @@ function getScheduleCategory(goal) {
   return 'work';
 }
 
-/** Spoon cost per slot (1–4). Default 1 for backward compat. Exported for capacity UI. */
+/** Task energy cost (0–4). 0 = Zero-Spark (does not deduct from daily capacity). Uses energyCost or spoonCost. */
 export function getSpoonCost(goalOrAssignment) {
-  const n = goalOrAssignment?.spoonCost ?? 1;
-  return Math.max(1, Math.min(4, Number(n) || 1));
+  const raw = goalOrAssignment?.energyCost ?? goalOrAssignment?.spoonCost ?? 1;
+  const n = Number(raw);
+  if (n === 0) return 0;
+  return Math.max(1, Math.min(4, n || 1));
 }
 
 const MAX_CONSECUTIVE_WORK_SLOTS = 4;

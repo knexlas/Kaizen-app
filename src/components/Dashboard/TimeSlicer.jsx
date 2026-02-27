@@ -7,6 +7,7 @@ import { downloadICS } from '../../services/calendarSyncService';
 import { suggestLoadLightening, generateDailyPlan, timeToMinutes, getSpoonCost, getGentlePriorities } from '../../services/schedulerService';
 import { recommendDailyPriority } from '../../services/geminiService';
 import { useGarden } from '../../context/GardenContext';
+import { useReward } from '../../context/RewardContext';
 import { localISODate } from '../../services/dateUtils';
 import { getSettings } from '../../services/userSettings';
 import { shouldReduceMotion } from '../../services/motion';
@@ -237,6 +238,7 @@ function TimeSlot({
   const isFixed = isAssignmentFixed(assignment);
   const isFixedAndPriority = isPriority && isFixed;
   const goal = goalId ? goals?.find((g) => g.id === goalId) : null;
+  const isCriticalMass = goal?.criticalMass === true;
   const isEmpty = !goal && !routineSession && !isRoutineTemplate && !isRecovery;
   const thisSlotOverLimit = goal && filledCount > maxSlots;
   const firstUncompleted = goal?.milestones?.find((m) => !m.completed);
@@ -256,6 +258,9 @@ function TimeSlot({
         : thisSlotOverLimit
           ? 'bg-orange-200 border border-orange-300 text-orange-900'
           : 'bg-moss-200 border border-moss-500/50 text-stone-800';
+  /** When slot has a task, the outer area is neutral; the chip gets the colored slotBg. */
+  const slotBgForChip = slotBg;
+  const slotBgWhenFilled = 'bg-stone-50 border border-stone-200';
 
   const estimatedMins = goal?.estimatedMinutes ?? 0;
   const totalMins = goal?.totalMinutes ?? 0;
@@ -264,8 +269,15 @@ function TimeSlot({
   const isFullyHarvested = estimatedMins > 0 && totalMins >= estimatedMins;
   const progressBarColor =
     progressPercent >= 100 ? 'bg-moss-500' : progressPercent > 0 ? 'bg-amber-500' : 'bg-stone-400';
+  /** Slot is "done" — stays in place with distinct completed styling (opacity, strikethrough, soft grey). */
+  const isSlotCompleted = (goal && isGoalCompleted(goal)) || (routineSession && isFullyHarvested);
 
   const routineDuration = routineSession ? (assignment.duration ?? 60) : 0;
+  /** Duration in minutes for this assignment (for fluid chip height). Default 60 if unknown. */
+  const durationMinutes = routineSession ? routineDuration : ((goal?.estimatedMinutes ?? estimatedMins) || 60);
+  /** Fluid chip: height proportional to duration (min 28px, max 52px) so short tasks don't block the whole hour. */
+  const ROW_MIN_HEIGHT = 52;
+  const chipHeight = isEmpty ? 0 : Math.max(28, Math.min(ROW_MIN_HEIGHT, Math.round((durationMinutes / 60) * ROW_MIN_HEIGHT)));
 
   const triggerHarvestConfetti = (e) => {
     try {
@@ -311,11 +323,11 @@ function TimeSlot({
         tabIndex={isEmpty && onEmptySlotClick ? 0 : undefined}
         onClick={isEmpty && onEmptySlotClick ? () => onEmptySlotClick(hour) : undefined}
         onKeyDown={isEmpty && onEmptySlotClick ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onEmptySlotClick(hour); } } : undefined}
-        className={`flex-1 min-h-[52px] rounded-lg flex flex-col justify-center px-3 py-2 transition-colors relative overflow-hidden ${slotBg} ${
+        className={`flex-1 min-h-[52px] rounded-lg flex flex-col ${isEmpty ? 'justify-center' : 'justify-start'} px-3 py-2 transition-colors relative overflow-hidden ${isEmpty ? slotBg : slotBgWhenFilled} ${
           isOver && isEmpty ? 'ring-2 ring-moss-500/50 ring-offset-1' : ''
         } ${isFullyHarvested && !routineSession ? 'border-moss-600/60' : ''} ${isEmpty && onEmptySlotClick ? 'cursor-pointer hover:bg-stone-200/80 active:bg-stone-300/80' : ''} ${
           isFixedAndPriority ? 'ring-2 ring-amber-400/70 bg-amber-50/90 border-amber-300/80' : ''
-        }`}
+        } ${isSlotCompleted ? 'opacity-75 bg-stone-200/80 border-stone-300 text-stone-500' : ''}`}
       >
         {/* Blocked overlay: striped + stone texture when over capacity or empty at capacity */}
         {thisSlotOverLimit && (
@@ -329,9 +341,19 @@ function TimeSlot({
           />
         )}
         {/* North Star priority: Golden Star highlight */}
-        {isPriority && (
+        {isPriority && !isCriticalMass && (
           <span className="absolute top-2 left-2 text-amber-400 drop-shadow-sm" title="North Star priority" aria-hidden>⭐</span>
         )}
+        {/* Critical Mass: maintenance task overdue — pin with orange dot and empathetic message */}
+        {isCriticalMass && (
+          <span className="absolute top-2 left-2 w-2.5 h-2.5 rounded-full bg-orange-500 shrink-0" title="Critical Mass" aria-hidden />
+        )}
+        {!isEmpty && chipHeight > 0 ? (
+          <>
+            <div
+              className={`rounded-lg flex flex-col justify-center min-w-0 shrink-0 overflow-hidden px-2 py-1.5 border ${slotBgForChip} ${isSlotCompleted ? 'opacity-90 border-stone-300' : ''}`}
+              style={{ minHeight: chipHeight }}
+            >
         {routineSession ? (
           <>
             <div className={`flex items-center justify-between gap-2 ${isFullyHarvested ? 'line-through text-stone-400 opacity-60 transition-all duration-500' : ''} ${isPriority ? 'pl-5' : ''}`}>
@@ -376,7 +398,8 @@ function TimeSlot({
                 {durationLabel}
               </span>
             )}
-            <div className={`flex items-center justify-between gap-2 pr-24 ${isFullyHarvested ? 'line-through text-stone-400 opacity-60 transition-all duration-500' : ''} ${isPriority ? 'pl-5' : ''}`}>
+            <div className={`flex flex-col gap-0.5 ${isCriticalMass ? 'pl-5' : ''} ${isPriority && !isCriticalMass ? 'pl-5' : ''}`}>
+            <div className={`flex items-center justify-between gap-2 pr-24 ${isFullyHarvested ? 'line-through text-stone-400 opacity-60 transition-all duration-500' : ''}`}>
               <span className="font-sans text-sm font-medium truncate">{goal.title}</span>
               {cloudSaved && (
                 <motion.span
@@ -415,6 +438,9 @@ function TimeSlot({
                 </button>
               )}
             </div>
+            {isCriticalMass && (
+              <p className="font-sans text-xs text-orange-700 mt-0.5" role="status">Critical Mass: Let&apos;s tackle this before it becomes overwhelming.</p>
+            )}
             {isFullyHarvested && onStartFocus && (
               <button
                 type="button"
@@ -452,6 +478,11 @@ function TimeSlot({
                 </span>
               </div>
             )}
+            </div>
+          </>
+        ) : null}
+            </div>
+            <div className="flex-1 min-h-[4px]" aria-hidden />
           </>
         ) : (
           <span className="font-sans text-sm relative z-10 text-stone-400">
@@ -1587,7 +1618,8 @@ function TimeSlicer({
   monthlyRoadmap = null,
   zenMode = false,
 }) {
-  const { googleToken: googleTokenContext, spiritConfig } = useGarden();
+  const { googleToken: googleTokenContext, spiritConfig, addLog } = useGarden();
+  const { pushReward } = useReward();
   const googleToken = googleTokenProp ?? googleTokenContext ?? null;
 
   const [viewMode, setViewMode] = useState('day'); // 'day' | 'week' | 'month'
@@ -1600,6 +1632,8 @@ function TimeSlicer({
   const [inspectedDate, setInspectedDate] = useState(null);
   const [activeSeedTab, setActiveSeedTab] = useState('all');
   const [seedBagSearch, setSeedBagSearch] = useState('');
+  /** Seed Bag accordion: Set of category keys that are expanded. Default all collapsed. */
+  const [seedBagExpandedCategories, setSeedBagExpandedCategories] = useState(() => new Set());
   const [spoonsToast, setSpoonsToast] = useState(false);
   const [energyToast, setEnergyToast] = useState(false);
   const [lightenedTasksFeedback, setLightenedTasksFeedback] = useState([]);
@@ -1686,12 +1720,37 @@ function TimeSlicer({
     else setInternalAssignments(next);
   };
 
-  const removeFromAnytime = (index) => {
+  const removeFromAnytime = useCallback((index) => {
     const list = (assignments.anytime || []).filter((_, i) => i !== index);
     const next = { ...assignments, anytime: list };
     if (isControlled) safeOnAssignmentsChange(next);
     else setInternalAssignments(next);
-  };
+  }, [assignments, isControlled, safeOnAssignmentsChange]);
+
+  /** Complete an Anytime item: remove from list and show post-task vibe toast (Energized/Drained). */
+  const handleCompleteAnytimeWithVibe = useCallback((index) => {
+    const list = assignments?.anytime ?? [];
+    const assignment = list[index];
+    if (assignment == null) {
+      removeFromAnytime(index);
+      return;
+    }
+    const goalId = getGoalIdFromAssignment(assignment);
+    const goal = safeGoals?.find((g) => g.id === goalId);
+    const taskTitle = goal?.title ?? (assignment && typeof assignment === 'object' && assignment.title) ?? 'Task';
+    removeFromAnytime(index);
+    pushReward({
+      message: 'Task completed ✨',
+      tone: 'moss',
+      icon: '✓',
+      durationMs: 4000,
+      vibePayload: { goalId, taskTitle },
+      onVibe: (vibe) => {
+        const energyCost = goal?.energyCost ?? goal?.spoonCost ?? undefined;
+        addLog?.({ taskId: goalId, taskTitle, minutes: 0, date: new Date(), vibe, energyCost });
+      },
+    });
+  }, [assignments, safeGoals, removeFromAnytime, pushReward, addLog]);
 
   useEffect(() => {
     if (recentlyExportedSlot == null) return;
@@ -1712,54 +1771,20 @@ function TimeSlicer({
   }, [energyToast]);
 
   const baseCapacity = MAX_SLOTS_BY_WEATHER[weather] ?? 6;
-  /** Energy level 1–5 maps to slot count (Friction Filter); legacy 6–12 is used as-is. */
+  /** Sparks 1–10: use as slot count (1 = minimal, 10 = full). Legacy 1–5 used energyLevelToSlots; we now treat 1–10 as capacity. */
   const energyLevelToSlots = (n) => (n <= 2 ? 2 + (n - 1) * 2 : n === 3 ? 6 : n === 4 ? 8 : 10);
   const maxSlots =
-    typeof dailySpoonCount === 'number' && dailySpoonCount >= 1 && dailySpoonCount <= 5
-      ? energyLevelToSlots(dailySpoonCount)
-      : typeof dailySpoonCount === 'number' && dailySpoonCount >= 0 && dailySpoonCount <= 12
-        ? dailySpoonCount
-        : Math.max(1, baseCapacity + dailyEnergyModifier);
+    typeof dailySpoonCount === 'number' && dailySpoonCount >= 1 && dailySpoonCount <= 10
+      ? dailySpoonCount
+      : typeof dailySpoonCount === 'number' && dailySpoonCount === 0
+        ? 0
+        : typeof dailySpoonCount === 'number' && dailySpoonCount >= 11 && dailySpoonCount <= 12
+          ? dailySpoonCount
+          : Math.max(1, baseCapacity + dailyEnergyModifier);
   const isLowEnergy =
-    (typeof dailySpoonCount === 'number' && dailySpoonCount <= 2) || dailyEnergyModifier === -2;
+    (typeof dailySpoonCount === 'number' && dailySpoonCount <= 3) || dailyEnergyModifier === -2;
   const filledTimes = hoursArray.filter((h) => getAssignmentForHour(assignments, h) != null);
-  /** Fixed vs Flexible: order for timeline = Group C (fixed uncompleted, chronological), Group B (flexible uncompleted, priority first), Group A (completed at bottom). */
-  const sortedFilledHours = useMemo(() => {
-    const withMeta = hoursArray
-      .map((hour) => ({
-        hour,
-        assignment: getAssignmentForHour(assignments, hour),
-      }))
-      .filter(({ assignment }) => assignment != null);
-    const hourToMins = (h) => {
-      const n = parseInt(String(h).replace(/:.*$/, ''), 10);
-      return Number.isNaN(n) ? 0 : n * 60;
-    };
-    return withMeta
-      .map(({ hour, assignment }) => {
-        const goalId = getGoalIdFromAssignment(assignment);
-        const goal = safeGoals?.find((g) => g.id === goalId);
-        const completed = isGoalCompleted(goal);
-        const fixed = isAssignmentFixed(assignment);
-        const priority = isPriorityAssignment(assignment);
-        return { hour, assignment, completed, fixed, priority, startMins: hourToMins(hour) };
-      })
-      .sort((a, b) => {
-        if (a.completed !== b.completed) return a.completed ? 1 : -1;
-        if (!a.completed) {
-          if (a.fixed !== b.fixed) return a.fixed ? 1 : -1;
-          if (a.fixed) return a.startMins - b.startMins;
-          if (a.priority !== b.priority) return a.priority ? -1 : 1;
-          return a.startMins - b.startMins;
-        }
-        return a.startMins - b.startMins;
-      })
-      .map(({ hour }) => hour);
-  }, [assignments, hoursArray, safeGoals]);
-  const emptyHours = useMemo(
-    () => hoursArray.filter((h) => getAssignmentForHour(assignments, h) == null),
-    [assignments, hoursArray]
-  );
+  /** Timeline is always in strict chronological order (hoursArray). No re-sorting — tasks stay in their time slot. */
   /** Today's tasks for "Help Me Prioritize" AI: one entry per goal (id, title, isFixed). */
   const todayTasks = useMemo(() => {
     const seen = new Set();
@@ -1809,11 +1834,11 @@ function TimeSlicer({
     }
     return false;
   }, [assignments]);
-  /** Energy 1-5 for AI (spoons: 1-5 as-is, 6-12 → 5). */
+  /** Energy 1-5 for AI: Sparks 1-10 map to 1-5 (e.g. 1-2→1, 9-10→5). */
   const energyLevelForAi = useMemo(() => {
     const n = dailySpoonCount;
-    if (typeof n === 'number' && n >= 1 && n <= 5) return n;
-    if (typeof n === 'number' && n >= 6 && n <= 12) return 5;
+    if (typeof n === 'number' && n >= 1 && n <= 10) return Math.min(5, Math.ceil(n / 2));
+    if (typeof n === 'number' && n >= 11 && n <= 12) return 5;
     return 3;
   }, [dailySpoonCount]);
   const anytimeCount = (assignments?.anytime ?? []).length;
@@ -1832,8 +1857,8 @@ function TimeSlicer({
 
   const handleLightenLoad = () => {
     const energyModifier =
-      typeof dailySpoonCount === 'number' && dailySpoonCount <= 12
-        ? (dailySpoonCount <= 4 ? -2 : dailySpoonCount >= 9 ? 1 : 0)
+      typeof dailySpoonCount === 'number' && dailySpoonCount <= 10
+        ? (dailySpoonCount <= 3 ? -2 : dailySpoonCount >= 8 ? 1 : 0)
         : dailyEnergyModifier;
     const result = suggestLoadLightening(assignments, safeGoals, maxSlots, energyModifier);
     if (result != null) {
@@ -2392,7 +2417,7 @@ function TimeSlicer({
           assignments={assignments}
           goals={safeGoals}
           onStartFocus={onStartFocus}
-          onRemove={removeFromAnytime}
+          onRemove={handleCompleteAnytimeWithVibe}
           onMilestoneCheck={handleMilestoneCheck}
         />
         <div className="flex flex-col gap-6 min-w-0">
@@ -2434,7 +2459,7 @@ function TimeSlicer({
                 </div>
               )}
               <div className="space-y-0">
-                {sortedFilledHours.map((hour) => (
+                {hoursArray.map((hour) => (
                   <TimeSlot
                     key={hour}
                     hour={hour}
@@ -2447,27 +2472,6 @@ function TimeSlicer({
                     onMilestoneCheck={handleMilestoneCheck}
                     onHarvestedClick={handleHarvestedClick}
                     cloudSaved={recentlyExportedSlot === hour}
-                    now={now}
-                    isMobile={isMobile}
-                    onEmptySlotClick={(h) => setSeedPickerTargetHour(h)}
-                    disableConfetti={getSettings().lowStim || shouldReduceMotion(getSettings())}
-                    hourStart={hourStart}
-                    hourEnd={hourEnd}
-                  />
-                ))}
-                {emptyHours.map((hour) => (
-                  <TimeSlot
-                    key={`empty-${hour}`}
-                    hour={hour}
-                    assignment={null}
-                    goals={goals}
-                    filledOrderIndex={-1}
-                    filledCount={filledSpoonTotal}
-                    maxSlots={maxSlots}
-                    onStartFocus={onStartFocus}
-                    onMilestoneCheck={handleMilestoneCheck}
-                    onHarvestedClick={handleHarvestedClick}
-                    cloudSaved={false}
                     now={now}
                     isMobile={isMobile}
                     onEmptySlotClick={(h) => setSeedPickerTargetHour(h)}
@@ -2555,46 +2559,85 @@ function TimeSlicer({
                 }
                 return (
                   <div className="divide-y divide-stone-100">
-                    {sortedCategories.map((cat) => (
-                      <section key={cat} className="relative">
-                        <div className="sticky top-0 z-10 bg-stone-100/95 backdrop-blur py-2 px-3 border-b border-stone-200">
-                          <h4 className="font-sans text-xs font-bold text-stone-700 uppercase tracking-wide">
-                            {BACKLOG_CATEGORY_LABELS[cat] ?? cat}
-                          </h4>
-                        </div>
-                        <ul className="divide-y divide-stone-100" role="list">
-                          {(byCategory[cat] || []).map(({ key, goal, item, routine, title, typeLabel, durationMinutes }) => {
-                            const isKaizen = durationMinutes <= 15;
-                            return (
-                              <li key={key}>
-                                <div className="flex justify-between items-center p-3 hover:bg-stone-50 transition-colors">
-                                  <div className="min-w-0 flex-1 pr-3">
-                                    <p className="font-sans text-sm font-medium text-stone-900 truncate">
-                                      <span className="font-sans text-xs text-stone-500 font-normal tabular-nums mr-1.5">[{durationMinutes} min]</span>
-                                      {title || 'Untitled'}
-                                      {isKaizen && (
-                                        <span className="ml-1.5 inline-flex items-center rounded-md bg-emerald-50 px-1.5 py-0.5 font-sans text-[10px] font-medium text-emerald-700" title="Low-friction (≤15 min)">
-                                          🌱 Kaizen
-                                        </span>
-                                      )}
-                                    </p>
-                                    <p className="font-sans text-[11px] text-stone-500">{typeLabel}</p>
-                                  </div>
-                                  <button
-                                    type="button"
-                                    onClick={() => setSeedBagTapTarget(routine ? { routine } : { goal, item })}
-                                    className="p-2 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-lg font-bold text-sm shrink-0 focus:outline-none focus:ring-2 focus:ring-indigo-400"
-                                    aria-label={`Add ${title || 'item'} to day`}
-                                  >
-                                    +
-                                  </button>
-                                </div>
-                              </li>
-                            );
-                          })}
-                        </ul>
-                      </section>
-                    ))}
+                    {sortedCategories.map((cat, catIndex) => {
+                      const expanded = seedBagExpandedCategories.has(cat);
+                      const count = (byCategory[cat] || []).length;
+                      const label = BACKLOG_CATEGORY_LABELS[cat] ?? cat;
+                      const panelId = `seedbag-panel-${catIndex}`;
+                      const headerId = `seedbag-header-${catIndex}`;
+                      return (
+                        <section key={cat} className="relative">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSeedBagExpandedCategories((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(cat)) next.delete(cat);
+                                else next.add(cat);
+                                return next;
+                              });
+                            }}
+                            className="sticky top-0 z-10 w-full flex items-center justify-between gap-2 bg-stone-100/95 backdrop-blur py-3 px-3 border-b border-stone-200 text-left hover:bg-stone-200/80 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:ring-inset transition-colors min-h-[44px]"
+                            aria-expanded={expanded}
+                            aria-controls={panelId}
+                            id={headerId}
+                          >
+                            <span className="font-sans text-xs font-bold text-stone-700 uppercase tracking-wide flex-1 truncate">
+                              {label} <span className="font-normal text-stone-500 normal-case">({count})</span>
+                            </span>
+                            <span
+                              className={`shrink-0 w-6 h-6 flex items-center justify-center text-stone-500 transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`}
+                              aria-hidden
+                            >
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <polyline points="9 18 15 12 9 6" />
+                              </svg>
+                            </span>
+                          </button>
+                          <motion.div
+                            id={panelId}
+                            role="region"
+                            aria-labelledby={headerId}
+                            initial={false}
+                            animate={{ height: expanded ? 'auto' : 0, opacity: expanded ? 1 : 0 }}
+                            transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+                            className="overflow-hidden"
+                          >
+                            <ul className="divide-y divide-stone-100" role="list">
+                              {(byCategory[cat] || []).map(({ key, goal, item, routine, title, typeLabel, durationMinutes }) => {
+                                const isKaizen = durationMinutes <= 15;
+                                return (
+                                  <li key={key}>
+                                    <div className="flex justify-between items-center p-3 hover:bg-stone-50 transition-colors">
+                                      <div className="min-w-0 flex-1 pr-3">
+                                        <p className="font-sans text-sm font-medium text-stone-900 truncate">
+                                          <span className="font-sans text-xs text-stone-500 font-normal tabular-nums mr-1.5">[{durationMinutes} min]</span>
+                                          {title || 'Untitled'}
+                                          {isKaizen && (
+                                            <span className="ml-1.5 inline-flex items-center rounded-md bg-emerald-50 px-1.5 py-0.5 font-sans text-[10px] font-medium text-emerald-700" title="Low-friction (≤15 min)">
+                                              🌱 Kaizen
+                                            </span>
+                                          )}
+                                        </p>
+                                        <p className="font-sans text-[11px] text-stone-500">{typeLabel}</p>
+                                      </div>
+                                      <button
+                                        type="button"
+                                        onClick={() => setSeedBagTapTarget(routine ? { routine } : { goal, item })}
+                                        className="p-2 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-lg font-bold text-sm shrink-0 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                                        aria-label={`Add ${title || 'item'} to day`}
+                                      >
+                                        +
+                                      </button>
+                                    </div>
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          </motion.div>
+                        </section>
+                      );
+                    })}
                   </div>
                 );
               })()}

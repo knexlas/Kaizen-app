@@ -18,6 +18,8 @@ const COLOR_PRESETS = [
 
 const DAY_LETTERS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
+const ROUTINE_CATEGORIES = ['💪 Wellness', '📁 Life Admin', '🧹 Household', '🧼 Care & Hygiene'];
+
 export default function GoalEditor({ open, goal, onClose, onSave, addSubtask, updateSubtask, deleteSubtask }) {
   const { metrics = [], addMetric, toggleMilestone } = useGarden();
   const [title, setTitle] = useState('');
@@ -36,6 +38,7 @@ export default function GoalEditor({ open, goal, onClose, onSave, addSubtask, up
   const [projectDeadline, setProjectDeadline] = useState('');
   const [isTweaking, setIsTweaking] = useState(false);
   const [rituals, setRituals] = useState([]);
+  const [category, setCategory] = useState(''); // routine category for Seedbag grouping
   const [expandedPhases, setExpandedPhases] = useState({});
   const togglePhase = (id) => setExpandedPhases((prev) => ({ ...prev, [id]: !prev[id] }));
 
@@ -55,6 +58,7 @@ export default function GoalEditor({ open, goal, onClose, onSave, addSubtask, up
       setActivationEnergy(goal.activationEnergy >= 1 && goal.activationEnergy <= 4 ? goal.activationEnergy : 1);
       setProjectDeadline(goal?._projectDeadline ?? '');
       setRituals((goal.rituals ?? []).map((r) => ({ id: r.id, title: r.title ?? '', days: r.days ?? [], frequency: r.frequency || 'weekly', monthDay: r.monthDay ?? null })));
+      setCategory(goal.type === 'routine' ? (goal.category ?? '') : '');
     }
   }, [goal]);
 
@@ -126,6 +130,8 @@ export default function GoalEditor({ open, goal, onClose, onSave, addSubtask, up
     };
     if (goal?.type === 'routine') {
       updates.rituals = rituals.map((r) => ({ id: r.id, title: r.title.trim(), days: r.days || [], frequency: r.frequency || 'weekly', monthDay: r.monthDay ?? null }));
+      if (ROUTINE_CATEGORIES.includes(category)) updates.category = category;
+      else updates.category = undefined;
     }
     if (metricId) {
       const selectedMetric = metrics.find((m) => m.id === metricId);
@@ -396,6 +402,22 @@ export default function GoalEditor({ open, goal, onClose, onSave, addSubtask, up
             </div>
 
             {goal?.type === 'routine' && (
+              <>
+              <div className="border-t border-stone-200 pt-5 mb-3">
+                <label htmlFor="edit-routine-category" className="block font-sans text-sm font-medium text-stone-600 mb-1">Category</label>
+                <p className="font-sans text-xs text-stone-500 mb-2">Used to group routines in Seedbag (e.g. Wellness, Life Admin). Leave unset to show under Other.</p>
+                <select
+                  id="edit-routine-category"
+                  value={category}
+                  onChange={(e) => setCategory(e.target.value)}
+                  className="w-full py-2 px-3 rounded-lg border border-stone-200 bg-white text-stone-900 font-sans focus:outline-none focus:ring-2 focus:ring-moss-500/40 focus:border-moss-500"
+                >
+                  <option value="">— Other —</option>
+                  {ROUTINE_CATEGORIES.map((c) => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+              </div>
               <div className="border-t border-stone-200 pt-5 mb-5">
                 <h3 className="font-sans text-sm font-medium text-stone-700 mb-3">🪨 Rituals</h3>
                 <div className="space-y-3">
@@ -476,6 +498,7 @@ export default function GoalEditor({ open, goal, onClose, onSave, addSubtask, up
                   + Add ritual
                 </button>
               </div>
+              </>
             )}
 
             {goal?.milestones?.length > 0 && (

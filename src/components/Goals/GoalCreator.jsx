@@ -120,7 +120,7 @@ function newVine(overrides = {}) {
   };
 }
 
-function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks = [], existingRoutineGoals = [], existingVitalityGoals = [], ritualCategories = [], onAddRitualCategory, onOpenProjectPlanner }) {
+function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks = [], initialIsFixed, initialContext, initialRecurrence, initialEnergyCost, existingRoutineGoals = [], existingVitalityGoals = [], ritualCategories = [], onAddRitualCategory, onOpenProjectPlanner }) {
   const { ownedSeeds = [] } = useGarden();
   const [goalType, setGoalType] = useState(null); // null | 'kaizen' | 'routine' | 'vitality'
   const [title, setTitle] = useState('');
@@ -162,7 +162,7 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
   const [vineTitle, setVineTitle] = useState('');
   const [vineHours, setVineHours] = useState('');
   const [vineDeadline, setVineDeadline] = useState('');
-  const [skillLevel, setSkillLevel] = useState('intermediate'); // 'beginner' | 'intermediate' | 'expert'
+  const [skillLevel, setSkillLevel] = useState('intermediate'); // 'beginner' | 'intermediate' | 'advanced' (experience level for AI)
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   const availableSeeds = useMemo(
@@ -421,7 +421,11 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
         return found ? { name: found.name, unit: found.unit, direction: found.direction } : { name, unit: '', direction: 'higher' };
       }) }),
       seedModel: selectedSeed ? selectedSeed.model : null,
-      ...((goalType === 'kaizen' || goalType === 'routine') && { skillLevel: skillLevel || 'intermediate' }),
+      ...((goalType === 'kaizen' || goalType === 'routine') && { skillLevel: (skillLevel === 'expert' ? 'advanced' : skillLevel) || 'intermediate' }),
+      ...(initialIsFixed !== undefined && { isFixed: initialIsFixed }),
+      ...(initialContext && { context: initialContext }),
+      ...(initialRecurrence && { recurrence: initialRecurrence }),
+      ...(initialEnergyCost !== undefined && initialEnergyCost !== null ? { energyCost: initialEnergyCost >= 0 && initialEnergyCost <= 3 ? initialEnergyCost : 1 } : (goalType === 'kaizen' ? { energyCost: 0 } : {})),
     };
 
     // Auto-create vitality goals for linked metrics that don't have an existing tracker
@@ -623,20 +627,21 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
                 className="w-full py-2 bg-transparent border-0 border-b-2 border-stone-200 text-stone-900 font-sans placeholder-stone-400 focus:outline-none focus:border-moss-500 focus:ring-0 mb-4"
               />
 
-              {/* Current Skill Level — for Kaizen/Routine so AI scales step size */}
+              {/* Current Experience Level — for Kaizen/Routine so AI tailors micro-habits */}
               {(goalType === 'kaizen' || goalType === 'routine') && (
                 <div className="mb-4">
-                  <label className="block font-sans text-sm font-medium text-stone-600 mb-1">Current Skill Level</label>
+                  <label className="block font-sans text-sm font-medium text-stone-600 mb-1">Current Experience Level</label>
                   <select
-                    value={skillLevel}
+                    value={skillLevel === 'expert' ? 'advanced' : skillLevel}
                     onChange={(e) => setSkillLevel(e.target.value)}
                     className="w-full py-2 px-3 rounded-lg border border-stone-200 bg-white font-sans text-stone-900 focus:outline-none focus:ring-2 focus:ring-moss-500/40 focus:border-moss-500"
+                    aria-describedby="experience-level-hint"
                   >
-                    <option value="beginner">Beginner</option>
-                    <option value="intermediate">Intermediate</option>
-                    <option value="expert">Expert</option>
+                    <option value="beginner">🌱 Beginner (Starting from scratch)</option>
+                    <option value="intermediate">🌿 Intermediate (Have some experience)</option>
+                    <option value="advanced">🌳 Advanced (Already proficient)</option>
                   </select>
-                  <p className="font-sans text-xs text-stone-500 mt-0.5">Mochi will size steps to match. Experts get bigger milestones.</p>
+                  <p id="experience-level-hint" className="font-sans text-xs text-stone-500 mt-0.5">Mochi will tailor suggested steps: beginners get 5‑min ultra-easy steps; advanced gets 15‑min optimization habits.</p>
                 </div>
               )}
 

@@ -2,9 +2,10 @@ import { createContext, useContext, useState, useEffect, useCallback, useRef } f
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../firebase/firebaseConfig';
 import { subscribeToCompost, addCompostItem, deleteCompostItem, subscribeToDailyPlan, saveDailyPlan, getDailyPlan } from '../firebase/services';
+import { recordVibe } from '../services/energyDictionaryService';
 import { loginWithGoogle, logoutUser } from '../services/authService';
 import { loginWithMicrosoft, logoutMicrosoft, fetchOutlookEvents, getAccessTokenSilently } from '../services/microsoftCalendarService';
-import { localISODate, getThisWeekSundayLocal } from '../services/dateUtils';
+import { localISODate, getThisWeekSundayLocal, getLogicalToday, getDayStartsAtHour } from '../services/dateUtils';
 
 const STORAGE_KEY = 'gardenData';
 const LAST_OPEN_DATE_KEY = 'gardenLastOpenDate';
@@ -16,6 +17,7 @@ function yesterdayString() {
   return localISODate(d);
 }
 
+/** Calendar today (midnight-based). For logical "today" with custom day start, use useGarden().today. */
 export function todayString() {
   return localISODate();
 }
@@ -26,6 +28,7 @@ const defaultData = {
   userSettings: {
     dayStart: '08:00',
     dayEnd: '22:00',
+    dayStartsAt: '00:00', // midnight reset: '00:00' | '01:00' ... '05:00' — when the "day" flips (e.g. 3 AM = 1:30 AM Tue is still "Monday")
     isWorkScheduler: true,
     workHours: { start: '09:00', end: '17:00' },
   }, // scheduling: used by TimeSlicer + schedulerService (startHour/endHour)
@@ -40,7 +43,7 @@ const defaultData = {
   soilNutrients: 0, // 0–20; +1 per compost item added; consumed on focus complete for bonus
   spiritPoints: 0, // 1 per minute of focus
   embers: 100, // currency for decorations; new users start with 100 (enough for a bench)
-  decorations: [], // { id, type, x, y, variant? }
+  decorations: [{ id: 'dec-default-campfire', name: 'Log Campfire', type: 'decoration', model: 'campfire_logs.glb', position3D: [-2, 0, -2] }],
   ownedSeeds: [], // seed ids from shop (e.g. 'seed_oak', 'seed_pine')
   terrainMap: {}, // grid coords as keys, e.g. { "2,-3": "water" }
   unlockedAnimals: [], // e.g. ['rabbit', 'fish'] — animals bought from shop
@@ -48,6 +51,8 @@ const defaultData = {
   fertilizerCount: 0, // +1 when adding to compost or deleting from compost (visual recycling)
   waterDrops: 5, // earned by completing tasks; spent to water goals
   monthlyQuotas: [], // { id, name, targetHours, loggedHours, blocks?: [] } for freelancer quota tracking
+  pausedDays: {}, // { [dateStr]: true } — days user marked as Pause/Sick
+  needsRescheduling: [], // { id, sourceDate, hour, assignment, title }[] — fixed tasks pulled from a paused day
   routines: [
     // 🧼 Care & Hygiene
     { id: 'r_teeth', title: 'Brush Teeth', category: '🧼 Care & Hygiene', duration: 5 },
@@ -72,6 +77,56 @@ const defaultData = {
 
 const GardenContext = createContext(null);
 
+/** Ensure routine templates are represented as routine-type goals.
+ * For now we keep one goal per template (each appears as its own seed),
+ * but this is the central place to later collapse templates into grouped
+ * routine seeds (e.g. one Life Admin seed with multiple subtasks).
+ */
+function ensureRoutineGoalsFromTemplates(routines, goals) {
+  if (!Array.isArray(routines) || routines.length === 0) return goals;
+  const nextGoals = Array.isArray(goals) ? [...goals] : [];
+  let changed = false;
+  const existingByTemplateId = new Set(
+    nextGoals
+      .filter((g) => g && g.type === 'routine' && g._routineTemplateId)
+      .map((g) => g._routineTemplateId)
+  );
+  const existingById = new Set(nextGoals.map((g) => g.id));
+
+  routines.forEach((r) => {
+    if (!r || !r.id) return;
+    if (existingByTemplateId.has(r.id)) return;
+    const goalId = `routine-${r.id}`;
+    if (existingById.has(goalId)) return;
+    const estimatedHours = typeof r.duration === 'number' && r.duration > 0 ? r.duration / 60 : 0.25;
+    const subtaskId = `st-${r.id}`;
+    nextGoals.push({
+      id: goalId,
+      title: r.title || 'Routine',
+      type: 'routine',
+      category: r.category || '📋 Other',
+      estimatedMinutes: r.duration ?? undefined,
+      _routineTemplateId: r.id,
+      subtasks: [
+        {
+          id: subtaskId,
+          title: r.title || 'Routine',
+          estimatedHours,
+          completedHours: 0,
+          deadline: null,
+          color: null,
+          phaseId: null,
+          weekRange: null,
+          // Per-task recurrence days can be set later via TaskDetailModal
+        },
+      ],
+    });
+    changed = true;
+  });
+
+  return changed ? nextGoals : goals;
+}
+
 export function GardenProvider({ children }) {
   const [goals, setGoals] = useState(defaultData.goals);
   const [weeklyEvents, setWeeklyEvents] = useState(defaultData.weeklyEvents);
@@ -86,7 +141,7 @@ export function GardenProvider({ children }) {
   const [compost, setCompost] = useState(defaultData.compost);
   const [soilNutrients, setSoilNutrients] = useState(defaultData.soilNutrients ?? 0);
   const [assignments, setAssignments] = useState({}); // daily schedule { [hour]: goalId | assignmentObject }
-  const [planDate, setPlanDate] = useState(() => todayString()); // current date for plan subscription (updates so we re-sub at midnight)
+  const [planDate, setPlanDate] = useState(() => getLogicalToday(new Date(), 0)); // logical "today" for plan subscription (respects userSettings.dayStartsAt)
   const [weekAssignments, setWeekAssignments] = useState({}); // cache: { [dateStr]: { [hour]: assignment } }
   const weekAssignmentsRef = useRef({});
   const [eveningMode, setEveningMode] = useState('none'); // 'none' | 'sleep' | 'night-owl'
@@ -102,6 +157,10 @@ export function GardenProvider({ children }) {
   const [waterDrops, setWaterDrops] = useState(defaultData.waterDrops ?? 5);
   const [monthlyQuotas, setMonthlyQuotas] = useState(defaultData.monthlyQuotas ?? []);
   const [routines, setRoutines] = useState(defaultData.routines ?? []);
+  const [pausedDays, setPausedDays] = useState(defaultData.pausedDays ?? {});
+  const [needsRescheduling, setNeedsRescheduling] = useState(defaultData.needsRescheduling ?? []);
+  const [spawnedVolumeBlocks, setSpawnedVolumeBlocks] = useState([]); // { id, goalId, goalTitle, blockValue, targetMetric }[] — from Sunday Ritual Pacer
+  const [stagingTaskStatus, setStagingTaskStatus] = useState(() => ({})); // { [taskId]: 'active' | 'someday' } — override for backlog tab; e.g. from Next Step prompter
   const [smallJoys, setSmallJoys] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem('smallJoys') || '[]');
@@ -231,6 +290,8 @@ export function GardenProvider({ children }) {
           if (typeof data.waterDrops === 'number' && data.waterDrops >= 0) setWaterDrops(data.waterDrops);
           if (Array.isArray(data.monthlyQuotas)) setMonthlyQuotas(data.monthlyQuotas);
           if (Array.isArray(data.routines)) setRoutines(data.routines);
+          if (data.pausedDays && typeof data.pausedDays === 'object') setPausedDays(data.pausedDays);
+          if (Array.isArray(data.needsRescheduling)) setNeedsRescheduling(data.needsRescheduling);
           skipCloudSaveUntilRef.current = Date.now() + 3000;
         }
       } catch (e) {
@@ -240,6 +301,12 @@ export function GardenProvider({ children }) {
     return () => { cancelled = true; };
   }, [googleUser?.uid]);
 
+  // Mirror micro-habit routines into routine-type goals so they appear in Seedbag Routines.
+  useEffect(() => {
+    if (!hydrated) return;
+    setGoals((prev) => ensureRoutineGoalsFromTemplates(routines, prev));
+  }, [hydrated, routines]);
+
   // Persist compost to Firebase: subscribe when logged in
   useEffect(() => {
     const uid = googleUser?.uid;
@@ -248,11 +315,14 @@ export function GardenProvider({ children }) {
     return () => unsubscribe();
   }, [googleUser?.uid]);
 
-  // Keep plan date in sync so we re-subscribe at midnight
+  // Keep logical "today" in sync (respects "My Day Starts At" — e.g. 3 AM means 1:30 AM Tue is still Monday)
   useEffect(() => {
-    const interval = setInterval(() => setPlanDate(todayString()), 60 * 1000);
+    const hour = getDayStartsAtHour(userSettings?.dayStartsAt);
+    const tick = () => setPlanDate(getLogicalToday(new Date(), hour));
+    tick();
+    const interval = setInterval(tick, 60 * 1000);
     return () => clearInterval(interval);
-  }, []);
+  }, [userSettings?.dayStartsAt]);
 
   // Subscribe to today's daily plan when logged in
   useEffect(() => {
@@ -345,6 +415,93 @@ export function GardenProvider({ children }) {
     return results;
   }, [googleUser?.uid]);
 
+  /** Whether an assignment is fixed (must be rescheduled if day is cleared). Events are never fixed. */
+  const isAssignmentFixed = useCallback((a) => {
+    if (!a || typeof a !== 'object') return false;
+    if (a.type === 'event') return false;
+    return a.isFixed === true || a.type === 'fixed' || a.fixed === true;
+  }, []);
+
+  /**
+   * Pause Day / Sick Day: clear the day's schedule. Flexible tasks are dropped; fixed tasks go to needsRescheduling.
+   * @param {string} targetDate - YYYY-MM-DD
+   */
+  const clearDaySchedule = useCallback(async (targetDate) => {
+    if (!targetDate || !loadDayPlan || !saveDayPlanForDate) return;
+    const dayPlan = await loadDayPlan(targetDate);
+    if (!dayPlan || typeof dayPlan !== 'object') return;
+    const goalMap = new Map((goals ?? []).map((g) => [g.id, g]));
+    const toReschedule = [];
+    Object.entries(dayPlan).forEach(([hour, a]) => {
+      if (a == null) return;
+      if (!isAssignmentFixed(a)) return; // flexible: just clear (don't add to list)
+      const goalId = typeof a === 'string' ? a : a.goalId;
+      const goal = goalMap.get(goalId);
+      const title = goal?.title ?? a.title ?? a.ritualTitle ?? 'Task';
+      toReschedule.push({
+        id: `pause-${targetDate}-${hour}-${Date.now()}`,
+        sourceDate: targetDate,
+        hour,
+        assignment: typeof a === 'object' ? { ...a } : { goalId: a },
+        title,
+      });
+    });
+    await saveDayPlanForDate(targetDate, {});
+    setPausedDays((prev) => ({ ...prev, [targetDate]: true }));
+    if (toReschedule.length > 0) {
+      setNeedsRescheduling((prev) => [...prev, ...toReschedule]);
+    }
+  }, [loadDayPlan, saveDayPlanForDate, goals, isAssignmentFixed]);
+
+  /** Move a needs-rescheduling item onto a new day (same hour) and remove from list. */
+  const rescheduleNeedsReschedulingItem = useCallback(async (item, targetDateStr) => {
+    if (!item?.id || !saveDayPlanForDate || !loadDayPlan) return;
+    const existing = await loadDayPlan(targetDateStr);
+    const next = { ...(existing && typeof existing === 'object' ? existing : {}) };
+    next[String(item.hour)] = item.assignment;
+    await saveDayPlanForDate(targetDateStr, next);
+    setNeedsRescheduling((prev) => prev.filter((r) => r.id !== item.id));
+  }, [saveDayPlanForDate, loadDayPlan]);
+
+  /** Remove a single item from needsRescheduling (e.g. user cancelled or moved to backlog). */
+  const removeFromNeedsRescheduling = useCallback((itemId) => {
+    setNeedsRescheduling((prev) => prev.filter((r) => r.id !== itemId));
+  }, []);
+
+  /** Add volume blocks spawned by Sunday Ritual Pacer (shown in Staging Area until placed or dismissed). */
+  const addSpawnedVolumeBlocks = useCallback((blocks) => {
+    if (!Array.isArray(blocks) || blocks.length === 0) return;
+    setSpawnedVolumeBlocks((prev) => [...prev, ...blocks]);
+  }, []);
+
+  /** Remove a spawned volume block (e.g. dropped onto a day or dismissed). */
+  const removeSpawnedVolumeBlock = useCallback((blockId) => {
+    setSpawnedVolumeBlocks((prev) => prev.filter((b) => b.id !== blockId));
+  }, []);
+
+  /** Promote a backlog task to "This Week" (active) so it appears in the Staging Area's This Week tab. taskId = e.g. subtask-{goalId}-{subtaskId}. */
+  const promoteTaskToThisWeek = useCallback((taskId) => {
+    if (!taskId) return;
+    setStagingTaskStatus((prev) => ({ ...prev, [taskId]: 'active' }));
+  }, []);
+
+  /** Update a goal by id. Safe merge: existing goal is spread first, then updates. Never overwrites position3D or seedModel with undefined. */
+  const editGoal = useCallback((goalId, updates) => {
+    setGoals((prev) =>
+      prev.map((g) => {
+        if (g.id !== goalId) return g;
+        const merged = { ...g, ...updates };
+        if (merged.position3D === undefined && g.position3D != null) merged.position3D = g.position3D;
+        if (merged.seedModel === undefined && g.seedModel != null) merged.seedModel = g.seedModel;
+        return merged;
+      })
+    );
+  }, []);
+
+  const deleteGoal = useCallback((goalId) => {
+    setGoals((prev) => prev.filter((g) => g.id !== goalId));
+  }, []);
+
   const addToCompost = useCallback(
     async (text) => {
       const trimmed = (text || '').trim();
@@ -420,12 +577,12 @@ export function GardenProvider({ children }) {
   useEffect(() => {
     if (!hydrated) return;
     try {
-      const data = { goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, weeklyNorthStarId, logs, spiritConfig, compost, soilNutrients, spiritPoints, embers, decorations, ownedSeeds, terrainMap, unlockedAnimals, metrics, fertilizerCount, waterDrops, monthlyQuotas, routines };
+      const data = { goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, weeklyNorthStarId, logs, spiritConfig, compost, soilNutrients, spiritPoints, embers, decorations, ownedSeeds, terrainMap, unlockedAnimals, metrics, fertilizerCount, waterDrops, monthlyQuotas, pausedDays, needsRescheduling, routines };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     } catch (e) {
       console.warn('GardenContext: failed to save gardenData', e);
     }
-  }, [hydrated, goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, weeklyNorthStarId, logs, spiritConfig, compost, soilNutrients, spiritPoints, embers, decorations, ownedSeeds, terrainMap, unlockedAnimals, metrics, fertilizerCount, waterDrops, monthlyQuotas, routines]);
+  }, [hydrated, goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, weeklyNorthStarId, logs, spiritConfig, compost, soilNutrients, spiritPoints, embers, decorations, ownedSeeds, terrainMap, unlockedAnimals, metrics, fertilizerCount, waterDrops, monthlyQuotas, pausedDays, needsRescheduling, routines]);
 
   // Debounced save to Firestore when goals, logs, weeklyEvents change (and user is logged in)
   useEffect(() => {
@@ -463,6 +620,8 @@ export function GardenProvider({ children }) {
           fertilizerCount: fertilizerCount ?? 0,
           waterDrops: waterDrops ?? 5,
           monthlyQuotas: Array.isArray(monthlyQuotas) ? monthlyQuotas : [],
+          pausedDays: pausedDays && typeof pausedDays === 'object' ? pausedDays : {},
+          needsRescheduling: Array.isArray(needsRescheduling) ? needsRescheduling : [],
           routines: Array.isArray(routines) ? routines : [],
           updatedAt: new Date().toISOString(),
         }, { merge: true });
@@ -485,13 +644,16 @@ export function GardenProvider({ children }) {
         savedIdleTimeoutRef.current = null;
       }
     };
-  }, [hydrated, googleUser?.uid, goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, weeklyNorthStarId, logs, spiritConfig, compost, soilNutrients, spiritPoints, embers, decorations, ownedSeeds, terrainMap, unlockedAnimals, metrics, fertilizerCount, waterDrops, monthlyQuotas, routines]);
+  }, [hydrated, googleUser?.uid, goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, weeklyNorthStarId, logs, spiritConfig, compost, soilNutrients, spiritPoints, embers, decorations, ownedSeeds, terrainMap, unlockedAnimals, metrics, fertilizerCount, waterDrops, monthlyQuotas, pausedDays, needsRescheduling, routines]);
 
   const addLog = useCallback((log) => {
     const mins = Number(log?.minutes) || 0;
     if (mins > 0) setSpiritPoints((p) => p + mins);
     setLogs((prev) => [...prev, { ...log, date: log.date instanceof Date ? log.date.toISOString() : log.date }]);
-  }, []);
+    if (log?.vibe && (log.vibe === 'energizer' || log.vibe === 'drainer') && googleUser?.uid && log?.taskTitle) {
+      recordVibe(googleUser.uid, log.taskTitle, log.vibe, log.energyCost).catch(() => {});
+    }
+  }, [googleUser?.uid]);
 
   const DECORATION_COSTS = { lantern: 15, bench: 25, pond: 40, path: 10, bush: 20 };
 
@@ -613,7 +775,7 @@ export function GardenProvider({ children }) {
   const gardenerArchivedRef = useRef(false);
   useEffect(() => {
     if (!hydrated) return;
-    const today = todayString();
+    const today = planDate;
     const lastOpen = typeof localStorage !== 'undefined' ? localStorage.getItem(LAST_OPEN_DATE_KEY) : null;
     const isNewDay = !lastOpen || lastOpen < today;
 
@@ -638,7 +800,9 @@ export function GardenProvider({ children }) {
     const archiveYesterday = async () => {
       if (!uid || gardenerArchivedRef.current) return;
       gardenerArchivedRef.current = true;
-      const yesterday = yesterdayString();
+      const yesterdayD = new Date(today + 'T12:00:00');
+      yesterdayD.setDate(yesterdayD.getDate() - 1);
+      const yesterday = localISODate(yesterdayD);
       try {
         const { assignments: yesterdayAssignments } = await getDailyPlan(uid, yesterday);
         if (yesterdayAssignments && typeof yesterdayAssignments === 'object' && Object.keys(yesterdayAssignments).length > 0) {
@@ -668,7 +832,7 @@ export function GardenProvider({ children }) {
     };
 
     archiveYesterday();
-  }, [hydrated, googleUser?.uid, goals, addToCompost]);
+  }, [hydrated, googleUser?.uid, goals, addToCompost, planDate]);
 
   /** Archive current plan into compost and clear assignments (no lastCheckInDate change). Used for missed-day flow before choosing 1/3/0 spoons. */
   const archivePlanToCompost = useCallback(() => {
@@ -720,7 +884,7 @@ export function GardenProvider({ children }) {
     }
     setAssignments({});
     setLastCheckInDate(yesterdayString());
-    const today = todayString();
+    const today = planDate;
     const uid = googleUser?.uid;
     if (uid) {
       saveDailyPlan(uid, today, {}).catch((e) => console.warn('gentleResetToToday: saveDailyPlan failed', e));
@@ -731,7 +895,7 @@ export function GardenProvider({ children }) {
   const archiveStalePlanItems = useCallback(async ({ olderThanDays = 1 } = {}) => {
     const uid = googleUser?.uid;
     if (!uid || olderThanDays < 1) return 0;
-    const today = todayString();
+    const today = planDate;
     const getGoalId = (a) => {
       if (a == null) return null;
       if (typeof a === 'string') return a;
@@ -768,14 +932,83 @@ export function GardenProvider({ children }) {
     return totalArchived;
   }, [googleUser?.uid, goals, addToCompost]);
 
+  /** Critical Mass: soft tasks pushed 3+ days → compost; maintenance (maxDelay 1–2) exceeded → escalate to fixed with warning. */
+  const runCriticalMassCheck = useCallback(async () => {
+    const uid = googleUser?.uid;
+    if (!uid || !planDate) return { composted: 0, escalated: 0 };
+    const getGoalId = (a) => {
+      if (a == null) return null;
+      if (typeof a === 'string') return a;
+      return a?.goalId ?? a?.parentGoalId ?? null;
+    };
+    const earliestByGoal = new Map();
+    for (let d = 1; d <= 5; d++) {
+      const past = new Date(planDate + 'T12:00:00');
+      past.setDate(past.getDate() - d);
+      const dateStr = localISODate(past);
+      try {
+        const { assignments: dayAssignments } = await getDailyPlan(uid, dateStr);
+        if (!dayAssignments || typeof dayAssignments !== 'object') continue;
+        Object.values(dayAssignments).forEach((val) => {
+          const goalId = getGoalId(val);
+          if (goalId) {
+            const cur = earliestByGoal.get(goalId);
+            if (!cur || dateStr < cur) earliestByGoal.set(goalId, dateStr);
+          }
+        });
+      } catch (_) {}
+    }
+    let composted = 0;
+    let escalated = 0;
+    const goalsList = goals ?? [];
+    for (const goal of goalsList) {
+      const earliest = earliestByGoal.get(goal.id);
+      if (!earliest) continue;
+      const daysAgo = Math.floor((new Date(planDate + 'T12:00:00') - new Date(earliest + 'T12:00:00')) / 864e5);
+      const maxD = goal.maxDelay != null ? goal.maxDelay : null;
+      const isSoft = maxD == null || maxD >= 3;
+      const isMaintenance = maxD === 1 || maxD === 2;
+      if (isSoft && daysAgo >= 3) {
+        addToCompost(goal.title ?? 'Task');
+        deleteGoal(goal.id);
+        setAssignments((prev) => {
+          const next = { ...prev };
+          let changed = false;
+          ['anytime', ...(Object.keys(prev).filter((k) => k !== 'anytime'))].forEach((key) => {
+            if (key === 'anytime') {
+              const list = (prev.anytime ?? []).filter((a) => getGoalId(a) !== goal.id);
+              if (list.length !== (prev.anytime ?? []).length) {
+                next.anytime = list;
+                changed = true;
+              }
+              return;
+            }
+            const a = prev[key];
+            if (getGoalId(a) === goal.id) {
+              delete next[key];
+              changed = true;
+            }
+          });
+          return changed ? next : prev;
+        });
+        composted++;
+      } else if (isMaintenance && daysAgo > maxD) {
+        editGoal(goal.id, { isFixed: true, criticalMass: true });
+        escalated++;
+      }
+    }
+    return { composted, escalated };
+  }, [googleUser?.uid, planDate, goals, addToCompost, deleteGoal, editGoal, setAssignments]);
+
   const FERTILIZER_BONUS_MINUTES = 15;
 
   const addGoal = useCallback((goal) => {
-    const type = goal.type === 'routine' ? 'routine' : goal.type === 'vitality' ? 'vitality' : 'kaizen';
-    const milestones = type === 'routine' || type === 'vitality'
+    const type = goal.type === 'routine' ? 'routine' : goal.type === 'vitality' ? 'vitality' : goal.type === 'volume' ? 'volume' : 'kaizen';
+    const milestones = type === 'routine' || type === 'vitality' || type === 'volume'
       ? []
       : (Array.isArray(goal.milestones) ? goal.milestones : (goal.milestones ? [goal.milestones] : []));
     const subtasks = Array.isArray(goal.subtasks) ? goal.subtasks : [];
+    const maxDelay = goal.maxDelay != null ? goal.maxDelay : (type === 'routine' && goal.category === '🧹 Household' ? 2 : null);
     setGoals((prev) => [...prev, {
       ...goal,
       type,
@@ -783,9 +1016,16 @@ export function GardenProvider({ children }) {
       createdAt: goal.createdAt ?? new Date().toISOString(),
       estimatedMinutes: goal.estimatedMinutes ?? 15,
       category: goal.category ?? null,
+      maxDelay: maxDelay ?? goal.maxDelay,
       milestones,
       subtasks,
       ...(type === 'vitality' && { metrics: Array.isArray(goal.metrics) ? goal.metrics : [] }),
+      ...(type === 'volume' && {
+        targetMetric: goal.targetMetric ?? 'Hours',
+        targetValue: goal.targetValue ?? 0,
+        currentProgress: goal.currentProgress ?? 0,
+        deadline: goal.deadline ?? null,
+      }),
     }]);
   }, []);
 
@@ -862,15 +1102,18 @@ export function GardenProvider({ children }) {
     });
   }, [goals.length, addGoal]);
 
-  /** Add a subtask (project) to a goal. Schema: { id, title, estimatedHours, completedHours, deadline, color } */
+  /** Add a subtask (project) to a goal. Schema: { id, title, estimatedHours, completedHours, deadline, color, phaseId?, weekRange?, days? } — days = [0..6] for per-task recurrence (routines). */
   const addSubtask = useCallback((goalId, subtask) => {
     const sub = {
       id: subtask.id ?? `st-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-      title: subtask.title ?? 'Project',
-      estimatedHours: Number(subtask.estimatedHours) || 0,
-      completedHours: Number(subtask.completedHours) || 0,
+      title: subtask.title ?? 'Task',
+      estimatedHours: Number(subtask.estimatedHours) ?? 1,
+      completedHours: Number(subtask.completedHours) ?? 0,
       deadline: subtask.deadline ?? null,
       color: subtask.color ?? null,
+      phaseId: subtask.phaseId ?? null,
+      weekRange: subtask.weekRange ?? null,
+      ...(Array.isArray(subtask.days) && subtask.days.length > 0 ? { days: subtask.days } : {}),
     };
     setGoals((prev) =>
       prev.map((g) =>
@@ -979,12 +1222,67 @@ export function GardenProvider({ children }) {
         // If we just checked it -> Add bonus. If unchecked -> Remove bonus.
         const modifier = isNowCompleted ? FERTILIZER_BONUS_MINUTES : -FERTILIZER_BONUS_MINUTES;
 
-        return { 
-          ...g, 
-          milestones, 
-          // Ensure we don't drop below 0 minutes
-          totalMinutes: Math.max(0, (g.totalMinutes || 0) + modifier) 
+        return {
+          ...g,
+          milestones,
+          totalMinutes: Math.max(0, (g.totalMinutes || 0) + modifier)
         };
+      })
+    );
+  }, []);
+
+  /** Update a single milestone (phase) on a project goal. */
+  const updateMilestone = useCallback((goalId, milestoneId, updates) => {
+    setGoals((prev) =>
+      prev.map((g) => {
+        if (g.id !== goalId || !Array.isArray(g.milestones)) return g;
+        return {
+          ...g,
+          milestones: g.milestones.map((m) => (m.id === milestoneId ? { ...m, ...updates } : m)),
+        };
+      })
+    );
+  }, []);
+
+  /** Add a milestone (phase) to a project goal. */
+  const addMilestone = useCallback((goalId, milestone) => {
+    const uid = () => crypto.randomUUID?.() ?? `ms-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    const m = {
+      id: milestone?.id ?? uid(),
+      title: milestone?.title ?? 'New phase',
+      weekRange: milestone?.weekRange ?? 'Week 1',
+      completed: milestone?.completed ?? false,
+    };
+    setGoals((prev) =>
+      prev.map((g) => (g.id === goalId ? { ...g, milestones: [...(g.milestones ?? []), m] } : g))
+    );
+  }, []);
+
+  /** Delete a milestone and any subtasks linked to it. */
+  const deleteMilestone = useCallback((goalId, milestoneId) => {
+    setGoals((prev) =>
+      prev.map((g) => {
+        if (g.id !== goalId) return g;
+        const milestones = (g.milestones ?? []).filter((m) => m.id !== milestoneId);
+        const subtasks = (g.subtasks ?? []).filter((s) => s.phaseId !== milestoneId);
+        return { ...g, milestones, subtasks };
+      })
+    );
+  }, []);
+
+  /** Update a single task inside narrativeBreakdown.milestones[mi].tasks[ti] (notes, subTasks, title, etc.). */
+  const updateNarrativeTask = useCallback((goalId, milestoneIndex, taskIndex, updates) => {
+    setGoals((prev) =>
+      prev.map((g) => {
+        if (g.id !== goalId || !g.narrativeBreakdown?.milestones) return g;
+        const milestones = g.narrativeBreakdown.milestones.map((m, mi) => {
+          if (mi !== milestoneIndex || !Array.isArray(m.tasks)) return m;
+          return {
+            ...m,
+            tasks: m.tasks.map((t, ti) => (ti !== taskIndex ? t : { ...t, ...updates })),
+          };
+        });
+        return { ...g, narrativeBreakdown: { ...g.narrativeBreakdown, milestones } };
       })
     );
   }, []);
@@ -992,19 +1290,6 @@ export function GardenProvider({ children }) {
   const updateWeeklyEvents = useCallback((events) => {
     const list = Array.isArray(events) ? events : events?.events ?? [];
     setWeeklyEvents(list);
-  }, []);
-
-  /** Update a goal by id. Safe merge: existing goal is spread first, then updates. Never overwrites position3D or seedModel with undefined (preserves garden placement when Calendar/Auto-Planner assign time). */
-  const editGoal = useCallback((goalId, updates) => {
-    setGoals((prev) =>
-      prev.map((g) => {
-        if (g.id !== goalId) return g;
-        const merged = { ...g, ...updates };
-        if (merged.position3D === undefined && g.position3D != null) merged.position3D = g.position3D;
-        if (merged.seedModel === undefined && g.seedModel != null) merged.seedModel = g.seedModel;
-        return merged;
-      })
-    );
   }, []);
 
   /** Spend one fertilizer bag on a goal: reduce its target by 10% so progress bar jumps forward. Returns true if applied. */
@@ -1024,10 +1309,6 @@ export function GardenProvider({ children }) {
     }
     return true;
   }, [goals, fertilizerCount, editGoal]);
-
-  const deleteGoal = useCallback((goalId) => {
-    setGoals((prev) => prev.filter((g) => g.id !== goalId));
-  }, []);
 
   /** Add water drops (e.g. when a task is completed in TimeSlicer). */
   const addWater = useCallback((amount) => {
@@ -1061,7 +1342,7 @@ export function GardenProvider({ children }) {
 
   const completeMorningCheckIn = useCallback((energyLevelOrModifier) => {
     const n = Number(energyLevelOrModifier);
-    if (n >= 1 && n <= 5) {
+    if (n >= 1 && n <= 10) {
       setDailySpoonCount(n);
       setDailyEnergyModifier(0);
     } else if (n === 0) {
@@ -1070,7 +1351,7 @@ export function GardenProvider({ children }) {
     } else {
       setDailyEnergyModifier(n);
     }
-    setLastCheckInDate(todayString());
+    setLastCheckInDate(planDate);
   }, []);
 
   const markSundayRitualComplete = useCallback(() => {
@@ -1189,6 +1470,8 @@ export function GardenProvider({ children }) {
     if (typeof data.waterDrops === 'number' && data.waterDrops >= 0) setWaterDrops(data.waterDrops);
     if (Array.isArray(data.monthlyQuotas)) setMonthlyQuotas(data.monthlyQuotas);
     if (Array.isArray(data.routines)) setRoutines(data.routines);
+    if (data.pausedDays && typeof data.pausedDays === 'object') setPausedDays(data.pausedDays);
+    if (Array.isArray(data.needsRescheduling)) setNeedsRescheduling(data.needsRescheduling);
   }, []);
 
   /** Clear all garden data (localStorage + in-memory; if logged in, overwrite Firestore with default). */
@@ -1216,6 +1499,8 @@ export function GardenProvider({ children }) {
     setFertilizerCount(defaultData.fertilizerCount ?? 0);
     setWaterDrops(defaultData.waterDrops ?? 5);
     setMonthlyQuotas(defaultData.monthlyQuotas ?? []);
+    setPausedDays(defaultData.pausedDays ?? {});
+    setNeedsRescheduling(defaultData.needsRescheduling ?? []);
     setRoutines(defaultData.routines ?? []);
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(defaultData));
@@ -1227,7 +1512,7 @@ export function GardenProvider({ children }) {
       try {
         const ref = doc(db, 'users', uid, 'garden', 'data');
         await setDoc(ref, { ...defaultData, updatedAt: new Date().toISOString() }, { merge: true });
-        await saveDailyPlan(uid, todayString(), {});
+        await saveDailyPlan(uid, planDate, {});
       } catch (e) {
         console.warn('GardenContext: failed to clear cloud data', e);
       }
@@ -1258,6 +1543,10 @@ export function GardenProvider({ children }) {
     updateGoalProgress,
     updateGoalMilestone,
     toggleMilestone,
+    updateMilestone,
+    addMilestone,
+    deleteMilestone,
+    updateNarrativeTask,
     updateWeeklyEvents,
     editGoal,
     deleteGoal,
@@ -1290,16 +1579,29 @@ export function GardenProvider({ children }) {
     addSmallJoy,
     soilNutrients,
     consumeSoilNutrients,
+    today: planDate,
     assignments,
     setAssignments,
     gentleResetToToday,
     archivePlanToCompost,
     archiveStalePlanItems,
+    runCriticalMassCheck,
     weekAssignments,
     setWeekAssignments,
     loadDayPlan,
     saveDayPlanForDate,
     loadWeekPlans,
+    clearDaySchedule,
+    rescheduleNeedsReschedulingItem,
+    removeFromNeedsRescheduling,
+    spawnedVolumeBlocks,
+    addSpawnedVolumeBlocks,
+    removeSpawnedVolumeBlock,
+    stagingTaskStatus,
+    setStagingTaskStatus,
+    promoteTaskToThisWeek,
+    pausedDays,
+    needsRescheduling,
     eveningMode,
     setEveningMode,
     spiritPoints,

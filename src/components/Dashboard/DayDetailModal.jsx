@@ -50,7 +50,7 @@ function WeatherIcon({ type }) {
   return <LeafIcon />;
 }
 
-export default function DayDetailModal({ day, open, onClose, dateLabel = '', events: eventsProp = [] }) {
+export default function DayDetailModal({ day, open, onClose, dateLabel = '', events: eventsProp = [], onAddTask }) {
   const isOpen = day != null ? !!day : !!open;
   const dateLabelResolved = day != null ? (day.date ?? '') : dateLabel;
   const events = day != null ? (day.events ?? []) : eventsProp;
@@ -125,7 +125,16 @@ export default function DayDetailModal({ day, open, onClose, dateLabel = '', eve
               )}
             </div>
 
-            <footer className="shrink-0 px-6 py-4 border-t border-stone-200">
+            <footer className="shrink-0 px-6 py-4 border-t border-stone-200 flex flex-col gap-2">
+              {onAddTask && (
+                <button
+                  type="button"
+                  onClick={onAddTask}
+                  className="w-full py-2.5 font-sans text-sm font-medium text-moss-700 border border-moss-300 rounded-lg hover:bg-moss-50 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
+                >
+                  Add task for this day
+                </button>
+              )}
               <button
                 type="button"
                 onClick={onClose}

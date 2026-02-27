@@ -163,7 +163,13 @@ export default function SpiritGuideTour({ open = true, onComplete }) {
           >
             ×
           </button>
-          <p className="font-serif text-lg text-moss-800 mb-6 text-center">{msg}</p>
+          <p className="font-sans text-[10px] uppercase tracking-[0.2em] text-stone-400 mb-2 text-center">
+            Garden tour
+          </p>
+          <p className="font-serif text-lg text-moss-800 mb-1 text-center">{msg}</p>
+          <p className="font-sans text-xs text-stone-400 mb-6 text-center">
+            You can replay this tour anytime from Settings → \"Replay tour\".
+          </p>
           <div className="flex justify-between items-center">
             <button
               type="button"

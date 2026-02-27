@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useGarden } from '../../context/GardenContext';
 import { fetchGoogleEvents } from '../../services/googleCalendarService';
+import { getVolumePacing } from '../../services/plannerEngine';
 import WeeklyReview from './WeeklyReview';
 import GardenIntro from './GardenIntro';
 import EventPruner from './EventPruner';
@@ -59,6 +60,83 @@ function northStarCandidates(goals) {
     (g) =>
       (Array.isArray(g.subtasks) && g.subtasks.length > 0) ||
       g._projectGoal === true
+  );
+}
+
+/** Build blocks for spawning: e.g. 10 hrs -> five 2-hr blocks. */
+function buildSpawnBlocks(goal, totalValue, blockSize = 2) {
+  const blocks = [];
+  let remaining = totalValue;
+  const metric = goal.targetMetric ?? 'Hours';
+  const uid = () => `spawned-${goal.id}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+  while (remaining > 0) {
+    const value = Math.min(blockSize, remaining);
+    blocks.push({
+      id: uid(),
+      goalId: goal.id,
+      goalTitle: goal.title,
+      blockValue: value,
+      targetMetric: metric,
+    });
+    remaining -= value;
+  }
+  return blocks;
+}
+
+function PacingStep({ goals, addSpawnedVolumeBlocks, onContinue }) {
+  const pacing = useMemo(() => getVolumePacing(goals), [goals]);
+  const handleSpawn = useCallback(
+    (pacingItem) => {
+      const { goal, valuePerWeek } = pacingItem;
+      const total = Math.max(0.5, Math.round(valuePerWeek * 10) / 10);
+      const blocks = buildSpawnBlocks(goal, total);
+      if (blocks.length > 0) addSpawnedVolumeBlocks(blocks);
+      window.dispatchEvent(new CustomEvent('kaizen:toast', { detail: { message: `Added ${blocks.length} block(s) to your Staging Area. Drag them onto days in the Command Center.` } }));
+    },
+    [addSpawnedVolumeBlocks]
+  );
+
+  return (
+    <div className="w-full max-w-2xl rounded-xl border-2 border-moss-500 bg-stone-50 shadow-sm overflow-hidden">
+      <header className="p-6 pb-4 border-b border-stone-200">
+        <h1 className="font-serif text-stone-900 text-2xl md:text-3xl">Pacing Guide</h1>
+        <p className="font-sans text-stone-600 text-sm mt-1">
+          Volume goals: how much to aim for this week to stay on track.
+        </p>
+      </header>
+      <div className="p-6">
+        {pacing.length === 0 ? (
+          <p className="font-sans text-stone-500 text-sm mb-6">No active volume goals. Add a Quota/Volume goal to see pacing here.</p>
+        ) : (
+          <ul className="space-y-4 mb-6">
+            {pacing.map(({ goal, remaining, remainingWeeks, valuePerWeek, deadlineStr }) => (
+              <li key={goal.id} className="p-4 rounded-xl border border-stone-200 bg-white">
+                <p className="font-sans text-stone-800 font-medium mb-1">{goal.title}</p>
+                <p className="font-sans text-sm text-stone-600 mb-3">
+                  To hit your {goal.targetValue} { (goal.targetMetric || 'Hours').toLowerCase() } goal{deadlineStr ? ` by the ${deadlineStr}` : ''}, you need to average <strong>{valuePerWeek}</strong> {(goal.targetMetric || 'Hours').toLowerCase()} this week.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => handleSpawn({ goal, remaining, remainingWeeks, valuePerWeek, deadlineStr })}
+                  className="py-2 px-4 rounded-lg font-sans text-sm font-medium bg-moss-500 text-white hover:bg-moss-600 focus:outline-none focus:ring-2 focus:ring-moss-500/50"
+                >
+                  Spawn {valuePerWeek} {(goal.targetMetric || 'Hours').toLowerCase()} into Staging Area
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={onContinue}
+            className="py-3 px-6 font-sans font-medium rounded-lg bg-moss-500 text-stone-50 hover:bg-moss-600 focus:outline-none focus:ring-2 focus:ring-moss-500/50"
+          >
+            Continue
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -138,7 +216,7 @@ function NorthStarStep({ goals, weeklyNorthStarId, onSelect, onContinue }) {
 }
 
 export default function SundayRitualController({ onComplete }) {
-  const { goals, weeklyEvents, updateWeeklyEvents, weeklyNorthStarId, setWeeklyNorthStarId, googleToken } = useGarden();
+  const { goals, weeklyEvents, updateWeeklyEvents, weeklyNorthStarId, setWeeklyNorthStarId, googleToken, addSpawnedVolumeBlocks } = useGarden();
   const [step, setStep] = useState('harvest');
   const [googleEvents, setGoogleEvents] = useState([]);
   const [importingFromCloud, setImportingFromCloud] = useState(false);
@@ -253,8 +331,14 @@ export default function SundayRitualController({ onComplete }) {
               goals={goals}
               weeklyNorthStarId={weeklyNorthStarId}
               onSelect={setWeeklyNorthStarId}
-              onContinue={() => setStep('pruning')}
+              onContinue={() => setStep('pacing')}
             />
+          </motion.div>
+        )}
+
+        {step === 'pacing' && (
+          <motion.div key="pacing" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="w-full max-w-2xl">
+            <PacingStep goals={goals} addSpawnedVolumeBlocks={addSpawnedVolumeBlocks} onContinue={() => setStep('pruning')} />
           </motion.div>
         )}
 

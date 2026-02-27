@@ -29,6 +29,9 @@ const DECORATION_ITEMS = [
   // 🏕️ Campsite & Wilderness
   { id: 'dec_tent', name: 'Cozy Tent', cost: 100, model: 'tent_smallOpen.glb', icon: '⛺', type: 'decoration', category: 'decor', description: 'A small open tent for your garden camp.', tagline: 'Campsite' },
   { id: 'dec_campfire', name: 'Log Campfire', cost: 50, model: 'campfire_logs.glb', icon: '🔥', type: 'decoration', category: 'decor', description: 'Warmth and light for your garden.', tagline: 'Cozy' },
+  { id: 'fire_stones', name: 'Stone Campfire', type: 'decoration', model: 'campfire_stones.glb', cost: 30, icon: '🔥', category: 'decor', description: 'A cozy ring of stones.', tagline: 'Cozy' },
+  { id: 'fire_bricks', name: 'Brick Firepit', type: 'decoration', model: 'campfire_bricks.glb', cost: 40, icon: '🔥', category: 'decor', description: 'A structured brick firepit.', tagline: 'Cozy' },
+  { id: 'fire_planks', name: 'Plank Campfire', type: 'decoration', model: 'campfire_planks.glb', cost: 35, icon: '🔥', category: 'decor', description: 'A sturdy plank fire base.', tagline: 'Cozy' },
   { id: 'dec_logstack', name: 'Stack of Logs', cost: 30, model: 'log_stackLarge.glb', icon: '🪵', type: 'decoration', category: 'decor', description: 'A large stack of logs.', tagline: 'Woodland' },
   { id: 'dec_canoe', name: 'Wooden Canoe', cost: 150, model: 'canoe.glb', icon: '🛶', type: 'decoration', category: 'decor', description: 'A wooden canoe by the shore.', tagline: 'Wilderness' },
   // 🌉 Structures & Paths
@@ -136,7 +139,7 @@ export default function SpiritShop({ onClose, embedded = false }) {
       animate={{ opacity: 1, scale: 1, y: 0 }}
       exit={{ opacity: 0, scale: 0.96 }}
       transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
-      className="relative w-full max-w-lg max-h-[90dvh] sm:max-h-[90vh] rounded-2xl sm:rounded-3xl overflow-hidden flex flex-col my-auto"
+      className={`relative w-full max-w-lg rounded-2xl sm:rounded-3xl overflow-hidden flex flex-col my-auto ${embedded ? 'max-h-[85vh]' : 'max-h-[90dvh] sm:max-h-[90vh]'}`}
       style={{
         background: 'linear-gradient(180deg, #FDFCF5 0%, #f5f3eb 50%, #eeece2 100%)',
         boxShadow: '0 32px 64px -12px rgba(0,0,0,0.2), 0 0 0 1px rgba(0,0,0,0.06)',
@@ -156,7 +159,7 @@ export default function SpiritShop({ onClose, embedded = false }) {
         {/* Header: The Ember Exchange + Embers — sticky */}
         <div className="px-6 pt-6 pb-4 shrink-0">
           <div className="flex items-center justify-between gap-4 flex-wrap">
-            <h2 id="spirit-shop-title" className="font-serif text-2xl text-stone-900">
+            <h2 id="spirit-shop-title" className="font-serif text-2xl font-bold text-stone-900 dark:text-white">
               The Ember Exchange
             </h2>
             <div
@@ -223,8 +226,8 @@ export default function SpiritShop({ onClose, embedded = false }) {
         </div>
 
         {/* Scrollable items grid — only this area scrolls */}
-        <div className="overflow-y-auto flex-1 min-h-0 px-4 py-4">
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+        <div className={`overflow-y-auto flex-1 min-h-0 px-4 py-4 ${embedded ? 'min-h-[200px]' : ''}`}>
+          <div className={`grid gap-3 sm:gap-4 ${embedded ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-2 sm:grid-cols-3 md:grid-cols-4'}`}>
             <AnimatePresence mode="wait">
               {itemsForTab.map((item, i) => {
                 const isSeed = item.type === 'seed';
@@ -242,20 +245,15 @@ export default function SpiritShop({ onClose, embedded = false }) {
                     exit={{ opacity: 0 }}
                     transition={{ delay: Math.min(i * 0.04, 0.3), duration: 0.3 }}
                     whileHover={!owned ? { y: -4, transition: { duration: 0.2 } } : {}}
-                    className="rounded-2xl p-4 flex flex-col gap-3 border overflow-hidden"
+                    className="rounded-2xl p-4 flex flex-col gap-3 border overflow-hidden bg-white dark:bg-stone-800"
                     style={{
-                      background: owned
-                        ? 'linear-gradient(145deg, #e8edd8 0%, #d4e4c4 100%)'
-                        : canAfford
-                          ? 'linear-gradient(145deg, #ffffff 0%, #f8f7f2 100%)'
-                          : 'linear-gradient(145deg, #f5f5f4 0%, #e7e5e4 100%)',
                       borderColor: owned ? 'rgba(94, 114, 52, 0.5)' : canAfford ? 'rgba(180, 200, 140, 0.5)' : 'rgba(214, 211, 209, 0.8)',
                       boxShadow: canAfford ? '0 4px 14px -4px rgba(94, 114, 52, 0.2), 0 0 0 1px rgba(0,0,0,0.04)' : '0 2px 8px -2px rgba(0,0,0,0.06)',
                     }}
                   >
-                    <div className="flex items-start gap-4">
+                    <div className="flex items-start gap-3">
                       <div
-                        className="w-14 h-14 rounded-xl flex items-center justify-center text-4xl shrink-0"
+                        className="w-12 h-12 rounded-xl flex items-center justify-center text-3xl shrink-0"
                         style={{
                           background: 'linear-gradient(145deg, #e8edd8 0%, #d4e4c4 100%)',
                           boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.7), 0 2px 8px -2px rgba(94,114,52,0.2)',
@@ -264,14 +262,14 @@ export default function SpiritShop({ onClose, embedded = false }) {
                         {item.icon}
                       </div>
                       <div className="min-w-0 flex-1">
-                        <h3 className="font-serif text-stone-900 text-lg">{item.name}</h3>
+                        <h3 className="font-serif font-semibold text-stone-900 dark:text-white text-base sm:text-lg">{item.name}</h3>
                         {item.tagline && (
                           <p className="font-sans text-xs font-medium text-moss-600 uppercase tracking-wider mt-0.5">{item.tagline}</p>
                         )}
-                        <p className="font-sans text-sm text-stone-500 mt-1.5 leading-snug">{item.description}</p>
+                        <p className="font-sans text-sm sm:text-base text-stone-600 dark:text-stone-300 mt-1 leading-snug">{item.description}</p>
                       </div>
                     </div>
-                    <div className="flex items-center justify-between gap-3 mt-auto pt-3 border-t border-stone-200/80">
+                    <div className="flex items-center justify-between gap-3 mt-auto pt-3 border-t border-stone-300">
                       {owned ? (
                         <span className="font-sans text-sm font-medium text-moss-700">Owned</span>
                       ) : (
@@ -291,7 +289,7 @@ export default function SpiritShop({ onClose, embedded = false }) {
                             type="button"
                             disabled={!canAfford}
                             onClick={onBuy}
-                            className={`font-sans text-sm font-semibold px-5 py-2.5 rounded-xl transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-moss-500/50 ${
+                            className={`font-sans text-sm font-bold px-5 py-2.5 rounded-xl transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-moss-500/50 ${
                               canAfford
                                 ? 'text-[#FDFCF5] hover:shadow-lg active:scale-[0.98]'
                                 : 'bg-stone-200 text-stone-400 cursor-not-allowed'
@@ -310,11 +308,11 @@ export default function SpiritShop({ onClose, embedded = false }) {
           </div>
         </div>
 
-        <div className="px-6 pb-5 pt-3 shrink-0">
+        <div className="px-6 pb-5 pt-3 shrink-0 border-t border-stone-200 bg-white/80 dark:bg-stone-800/80">
           <button
             type="button"
             onClick={onClose}
-            className="w-full font-sans text-sm font-medium text-stone-500 hover:text-stone-700 py-2.5 rounded-xl hover:bg-stone-100 transition-colors focus:outline-none focus:ring-2 focus:ring-stone-300"
+            className="w-full font-sans text-base font-semibold text-stone-700 dark:text-stone-200 hover:text-stone-900 dark:hover:text-white py-3 rounded-xl hover:bg-stone-100 dark:hover:bg-stone-700 transition-colors focus:outline-none focus:ring-2 focus:ring-moss-500/50"
           >
             Close
           </button>
@@ -374,7 +372,7 @@ export default function SpiritShop({ onClose, embedded = false }) {
   );
   return embedded ? card : (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-stone-900/50 backdrop-blur-md overflow-y-auto safe-area-pb"
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-stone-900/70 backdrop-blur-sm overflow-y-auto safe-area-pb"
       onClick={(e) => e.target === e.currentTarget && onClose?.()}
       role="dialog"
       aria-modal="true"

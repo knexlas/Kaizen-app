@@ -26,10 +26,12 @@ import MochiSpiritWithDialogue, { DefaultSpiritSvg, getSpiritGreeting, getPlanRe
 import SpiritChat from './SpiritChat';
 import CompostHeap from './CompostHeap';
 import NextTinyStep from './NextTinyStep';
-import { generateSpiritInsight, generateWeeklyPlan, generateMonthlyPlan, generateMonthlyPlanTasks, rebalanceMonthQuota } from '../../services/geminiService';
+import { generateSpiritInsight, generateMorningBriefing, generateWeeklyPlan, generateMonthlyPlan, generateMonthlyPlanTasks, rebalanceMonthQuota } from '../../services/geminiService';
 import { importICSFile, downloadICS, CALENDAR_PROVIDERS } from '../../services/calendarSyncService';
 import { fetchOutlookEvents } from '../../services/microsoftCalendarService';
 import { getStoredBriefing, setStoredBriefing } from '../../services/spiritBriefingStorage';
+import { getNextTaskInSequence } from '../../services/nextStepService';
+import NextStepPrompt from './NextStepPrompt';
 import MorningCheckIn from './MorningCheckIn';
 import EveningWindDown from './EveningWindDown';
 import FocusSession from '../Focus/FocusSession';
@@ -44,6 +46,7 @@ import SpiritBuilder from '../Onboarding/SpiritBuilder';
 import SpiritGuideTour from '../Onboarding/SpiritGuideTour';
 import SpiritOrigins from '../Onboarding/SpiritOrigins';
 import { fetchGoogleEvents, createGoogleEvent } from '../../services/googleCalendarService';
+import { getTourSeen, setTourSeen, consumeTriggerTourFlag } from '../../services/onboardingStateService';
 import { findAvailableSlots, generateLiquidSchedule, generateSolidSchedule, getDefaultWeekStart, getStormWarnings, getStormImpactForDay, timeToMinutes, minutesToTime, generateDailyPlan, materializeWeeklyPlan, getSpoonCost, hourFromTimeStr } from '../../services/schedulerService';
 import { autoFillWeek } from '../../services/plannerEngine';
 
@@ -216,8 +219,8 @@ class ScheduleErrorBoundary extends Component {
   }
 }
 
-function GardenDashboard() {
-  const { goals, weeklyEvents, logs, addGoal, updateGoalProgress, updateGoalMilestone, editGoal, deleteGoal, addSubtask, updateSubtask, deleteSubtask, updateSubtaskProgress, toggleMilestone, lastCheckInDate, completeMorningCheckIn, dailyEnergyModifier, dailySpoonCount, addLog, logMetric, googleUser, connectCalendar, disconnectCalendar, googleToken, updateWeeklyEvents, weeklyNorthStarId, cloudSaveStatus, spiritConfig, setSpiritConfig, compost, addToCompost, removeFromCompost, soilNutrients, consumeSoilNutrients, earnEmbers, addWater, assignments, setAssignments, gentleResetToToday, archiveStalePlanItems, eveningMode, setEveningMode, userSettings, addRitualCategory, saveDayPlanForDate, loadDayPlan, weekAssignments, monthlyQuotas, addMonthlyQuota, updateMonthlyQuota, msUser, msToken, connectOutlook, disconnectOutlook, refreshOutlookToken } = useGarden();
+function GardenDashboard({ firstDayStep, onFirstDayStepChange } = {}) {
+  const { goals, weeklyEvents, logs, addGoal, updateGoalProgress, updateGoalMilestone, editGoal, deleteGoal, addSubtask, updateSubtask, deleteSubtask, updateSubtaskProgress, toggleMilestone, updateMilestone, addMilestone, deleteMilestone, promoteTaskToThisWeek, lastCheckInDate, completeMorningCheckIn, dailyEnergyModifier, dailySpoonCount, addLog, logMetric, googleUser, connectCalendar, disconnectCalendar, googleToken, updateWeeklyEvents, weeklyNorthStarId, cloudSaveStatus, spiritConfig, setSpiritConfig, compost, addToCompost, removeFromCompost, soilNutrients, consumeSoilNutrients, earnEmbers, addWater, today, assignments, setAssignments, gentleResetToToday, archiveStalePlanItems, runCriticalMassCheck, eveningMode, setEveningMode, userSettings, addRitualCategory, saveDayPlanForDate, loadDayPlan, weekAssignments, monthlyQuotas, addMonthlyQuota, updateMonthlyQuota, msUser, msToken, connectOutlook, disconnectOutlook, refreshOutlookToken } = useGarden();
   const { pushReward } = useReward();
   const { darkMode: themeDarkMode, setDarkModeOverride } = useTheme();
   const { dailyEnergy, setEnergyLevel } = useEnergy();
@@ -234,23 +237,15 @@ function GardenDashboard() {
     const ARCHETYPES = { cat: '🐱', ember: '🔥', nimbus: '☁️', owl: '🦉' };
     return <span className="text-4xl">{ARCHETYPES[spiritConfig.type] || '✨'}</span>;
   };
-  const [today, setToday] = useState(() => localISODate());
   const needsMorningCheckIn = lastCheckInDate !== today;
 
   const yesterdayForPlan = useMemo(() => {
-    const d = new Date();
+    if (!today) return localISODate(new Date(Date.now() - 864e5));
+    const d = new Date(today + 'T12:00:00');
     d.setDate(d.getDate() - 1);
     return localISODate(d);
   }, [today]);
   const yesterdayPlan = lastCheckInDate === yesterdayForPlan ? { modifier: dailyEnergyModifier, spoonCount: dailySpoonCount } : null;
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      const next = localISODate();
-      setToday((d) => (d !== next ? next : d));
-    }, 60 * 1000);
-    return () => clearInterval(interval);
-  }, []);
 
   useEffect(() => {
     const tick = () => setNow(new Date());
@@ -273,6 +268,7 @@ function GardenDashboard() {
   const [metricPromptValue, setMetricPromptValue] = useState('');
   const [seedForMilestones, setSeedForMilestones] = useState(null);
   const [editingGoal, setEditingGoal] = useState(null);
+  const [nextStepPrompt, setNextStepPrompt] = useState(null); // { completedTitle, nextStep } after task complete
   const [fertilizerToast, setFertilizerToast] = useState(false);
   const [growthToast, setGrowthToast] = useState(null);
   const [calendarConnectedToast, setCalendarConnectedToast] = useState(false);
@@ -301,8 +297,13 @@ function GardenDashboard() {
   const [hydrated, setHydrated] = useState(false);
   const [showAccessibilityModal, setShowAccessibilityModal] = useState(false);
   const [showMorningCheckInModal, setShowMorningCheckInModal] = useState(false);
+  const [morningBriefing, setMorningBriefing] = useState([]);
   const [goalCreatorInitialTitle, setGoalCreatorInitialTitle] = useState('');
   const [goalCreatorInitialSubtasks, setGoalCreatorInitialSubtasks] = useState([]);
+  const [goalCreatorInitialIsFixed, setGoalCreatorInitialIsFixed] = useState(undefined);
+  const [goalCreatorInitialContext, setGoalCreatorInitialContext] = useState(undefined);
+  const [goalCreatorInitialRecurrence, setGoalCreatorInitialRecurrence] = useState(undefined);
+  const [goalCreatorInitialEnergyCost, setGoalCreatorInitialEnergyCost] = useState(undefined);
   const [now, setNow] = useState(() => new Date());
   const [showSpiritDialogue, setShowSpiritDialogue] = useState(false);
   const [showChat, setShowChat] = useState(false);
@@ -325,6 +326,7 @@ function GardenDashboard() {
   const [showTour, setShowTour] = useState(false);
   const [showSpiritOrigins, setShowSpiritOrigins] = useState(false);
   // eveningMode and setEveningMode come from GardenContext (Gardener resets on new day)
+  const isFirstDayFlow = firstDayStep && firstDayStep !== 'none' && firstDayStep !== 'done';
 
   useEffect(() => {
     const onOnline = () => setIsOnline(true);
@@ -383,27 +385,40 @@ function GardenDashboard() {
   /** Show Spirit Origins when user data is loaded but no spirit config saved yet. */
   useEffect(() => {
     if (cloudSaveStatus !== 'loading' && !spiritConfig) {
-      setShowSpiritOrigins(true);
+      if (!isFirstDayFlow) {
+        setShowSpiritOrigins(true);
+      } else if (firstDayStep === 'spirit_origins') {
+        setShowSpiritOrigins(true);
+      }
     }
-  }, [cloudSaveStatus, spiritConfig]);
+  }, [cloudSaveStatus, spiritConfig, isFirstDayFlow, firstDayStep]);
 
   /** Trigger tour if fresh account (0 goals, 0 logs) or user clicked Replay Tour in settings. */
   useEffect(() => {
-    if ((goals?.length ?? 0) === 0 && (logs?.length ?? 0) === 0 && !localStorage.getItem('hasSeenTour')) {
+    if (isFirstDayFlow) return;
+    if ((goals?.length ?? 0) === 0 && (logs?.length ?? 0) === 0 && !getTourSeen()) {
       setShowTour(true);
     }
-  }, [goals?.length, logs?.length]);
+  }, [goals?.length, logs?.length, isFirstDayFlow]);
 
-  /** Auto-trigger tour when user just finished onboarding (WelcomeGarden set triggerTour flag). */
+  /** Auto-trigger tour when user just finished onboarding (legacy triggerTour flag). */
   useEffect(() => {
-    if (typeof localStorage !== 'undefined' && localStorage.getItem('triggerTour') === 'true') {
-      const t = setTimeout(() => {
-        setShowTour(true);
-        localStorage.removeItem('triggerTour');
-      }, 1000);
+    if (isFirstDayFlow) return;
+    if (!consumeTriggerTourFlag()) return;
+    const t = setTimeout(() => {
+      setShowTour(true);
+    }, 1000);
+    return () => clearTimeout(t);
+  }, [isFirstDayFlow]);
+
+  /** In first-day flow, start the Spirit tour when orchestrator reaches 'spirit_tour'. */
+  useEffect(() => {
+    if (!isFirstDayFlow) return;
+    if (firstDayStep === 'spirit_tour') {
+      const t = setTimeout(() => setShowTour(true), 600);
       return () => clearTimeout(t);
     }
-  }, []);
+  }, [firstDayStep, isFirstDayFlow]);
 
   useEffect(() => {
     const check = () => setIsMobileNav(window.innerWidth < 640);
@@ -412,19 +427,31 @@ function GardenDashboard() {
     return () => window.removeEventListener('resize', check);
   }, []);
 
-  /** Auto-nudge: after 8 PM, if still in 'none', show gentle "Check in?" toast once per day. */
+  /** Auto-nudge: after 8 PM, if still in 'none', show gentle "Check in?" toast once per day (persisted so it doesn't re-show after navigation). */
   useEffect(() => {
     if (now.getHours() < 20 || eveningMode !== 'none') return;
+    try {
+      if (typeof localStorage !== 'undefined' && localStorage.getItem('kaizen:eveningNudgeDate') === today) return;
+    } catch (_) {}
     if (eveningNudgeShownRef.current === today) return;
     eveningNudgeShownRef.current = today;
+    try {
+      if (typeof localStorage !== 'undefined') localStorage.setItem('kaizen:eveningNudgeDate', today);
+    } catch (_) {}
     setShowEveningNudgeToast(true);
   }, [now, today, eveningMode]);
 
-  /** Auto-open evening modal once per day around 20:00 when still in 'none'. */
+  /** Auto-open evening modal once per day around 20:00 when still in 'none' (persisted so it doesn't re-show after navigation). */
   useEffect(() => {
     if (now.getHours() < 20 || eveningMode !== 'none') return;
+    try {
+      if (typeof localStorage !== 'undefined' && localStorage.getItem('kaizen:eveningModalDate') === today) return;
+    } catch (_) {}
     if (eveningModalAutoOpenedRef.current === today) return;
     eveningModalAutoOpenedRef.current = today;
+    try {
+      if (typeof localStorage !== 'undefined') localStorage.setItem('kaizen:eveningModalDate', today);
+    } catch (_) {}
     setShowEveningModal(true);
   }, [now, today, eveningMode]);
 
@@ -434,6 +461,15 @@ function GardenDashboard() {
       setActiveTab('today');
     }
   }, [eveningMode, activeTab]);
+
+  /** When opening dashboard from Command Center with #/garden, switch to Garden tab and clear hash. */
+  useEffect(() => {
+    if (window.location.hash === '#/garden') {
+      setActiveTab('garden');
+      window.history.replaceState(null, '', window.location.pathname + window.location.search);
+    }
+  }, []);
+
   const [spiritInsight, setSpiritInsight] = useState(() => {
     const { lastInsight, lastInsightDate } = getStoredBriefing();
     const today = localISODate();
@@ -695,6 +731,10 @@ function GardenDashboard() {
     } else {
       setGoalCreatorInitialTitle(result.title);
       setGoalCreatorInitialSubtasks([]);
+      setGoalCreatorInitialIsFixed(result.isFixed);
+      setGoalCreatorInitialContext(result.context);
+      setGoalCreatorInitialRecurrence(result.recurrence);
+      setGoalCreatorInitialEnergyCost(result.energyCost);
       setIsPlanting(true);
     }
   }, []);
@@ -1019,8 +1059,7 @@ function GardenDashboard() {
   }, []);
 
   useEffect(() => {
-    if (!hydrated) return;
-    const today = localISODate();
+    if (!hydrated || !today) return;
     let lastOpen = null;
     try {
       lastOpen = localStorage.getItem(LAST_OPEN_DATE_KEY);
@@ -1041,32 +1080,36 @@ function GardenDashboard() {
         localStorage.setItem(LAST_OPEN_DATE_KEY, today);
       } catch (_) {}
     }
-  }, [hydrated]);
+  }, [hydrated, today]);
 
   const handleGentleRestartFreshStart = useCallback(() => {
     gentleResetToToday({ gapDays: gentleRestartGapDaysRef.current });
     try {
-      localStorage.setItem(LAST_OPEN_DATE_KEY, localISODate());
-      localStorage.setItem(GENTLE_RESTART_LAST_COMPLETED_KEY, localISODate());
+      if (today) {
+        localStorage.setItem(LAST_OPEN_DATE_KEY, today);
+        localStorage.setItem(GENTLE_RESTART_LAST_COMPLETED_KEY, today);
+      }
     } catch (_) {}
     setShowGentleRestart(false);
-  }, [gentleResetToToday]);
+  }, [gentleResetToToday, today]);
 
   const handleGentleRestartReviewCompost = useCallback(() => {
     try {
-      localStorage.setItem(LAST_OPEN_DATE_KEY, localISODate());
+      if (today) localStorage.setItem(LAST_OPEN_DATE_KEY, today);
     } catch (_) {}
     setShowGentleRestart(false);
     setShowCompost(true);
-  }, []);
+  }, [today]);
 
   const handleGentleRestartDismiss = useCallback(() => {
     try {
-      localStorage.setItem(GENTLE_RESTART_DISMISSED_KEY, localISODate());
-      localStorage.setItem(LAST_OPEN_DATE_KEY, localISODate());
+      if (today) {
+        localStorage.setItem(GENTLE_RESTART_DISMISSED_KEY, today);
+        localStorage.setItem(LAST_OPEN_DATE_KEY, today);
+      }
     } catch (_) {}
     setShowGentleRestart(false);
-  }, []);
+  }, [today]);
 
   useEffect(() => {
     if (!hydrated || hasRunArchiveStaleRef.current) return;
@@ -1078,8 +1121,14 @@ function GardenDashboard() {
           pushReward({ message: `Kept today light — moved ${count} older item${count === 1 ? '' : 's'} to compost.`, tone: 'moss', icon: '♻️', sound: null });
         }
       })
+      .then(() => runCriticalMassCheck())
+      .then(({ composted }) => {
+        if (composted > 0) {
+          pushReward({ message: 'Moved a dusty task to the Compost Heap to keep your view clean.', tone: 'moss', icon: '♻️', sound: null });
+        }
+      })
       .catch(() => {});
-  }, [hydrated, archiveStalePlanItems, pushReward]);
+  }, [hydrated, archiveStalePlanItems, runCriticalMassCheck, pushReward]);
 
   const handleDismissStaleBanner = useCallback(() => setStaleArchivedCount(0), []);
 
@@ -1440,12 +1489,26 @@ function GardenDashboard() {
         setMetricPromptValue('');
       }
     }
+
+    // Next Step Prompter: if this task is part of a milestone sequence, suggest the next uncompleted task
+    const completedSubtaskId = completedTask?.subtaskId ?? log?.subtaskId;
+    if (taskId && completedSubtaskId) {
+      const nextStep = getNextTaskInSequence(goals, taskId, completedSubtaskId);
+      if (nextStep) {
+        const completedTitle = completedTask?.title ?? goal?.subtasks?.find((s) => s.id === completedSubtaskId)?.title ?? 'Task';
+        setNextStepPrompt({ completedTitle, nextStep });
+      }
+    }
   };
 
-  /** Chain: User finishes SpiritOrigins → close it → show Tour so Spirit explains the Compass. */
+  /** Chain: User finishes SpiritOrigins → close it → (optionally) show Tour so Spirit explains the Compass. */
   const handleSpiritBorn = () => {
     setShowSpiritOrigins(false);
-    setTimeout(() => setShowTour(true), 300);
+    if (isFirstDayFlow) {
+      onFirstDayStepChange?.('spirit_tour');
+    } else {
+      setTimeout(() => setShowTour(true), 300);
+    }
   };
 
   const handleSpiritSkip = () => {
@@ -1526,12 +1589,15 @@ function GardenDashboard() {
             onComplete={(modifier, energyLevel) => {
               const level = energyLevel ?? modifier ?? 3;
               completeMorningCheckIn(level);
+              generateMorningBriefing(goals, today).then((items) => {
+                if (Array.isArray(items) && items.length > 0) setMorningBriefing(items);
+              });
               requestSpiritWisdom(false);
               const hasAnyAssignment = HOURS.some((h) => assignments[h]);
               let planSummary = null;
               if (!hasAnyAssignment) {
                 const eventsForPlan = Array.isArray(weeklyEvents) ? weeklyEvents : [];
-                const slotCount = level >= 1 && level <= 5 ? (level <= 2 ? 2 + (level - 1) * 2 : level === 3 ? 6 : level === 4 ? 8 : 10) : level;
+                const slotCount = level >= 1 && level <= 10 ? level : (level >= 1 && level <= 5 ? (level <= 2 ? 2 + (level - 1) * 2 : level === 3 ? 6 : level === 4 ? 8 : 10) : 6);
                 const startHour = hourFromTimeStr(userSettings?.dayStart, 8);
                 const endHour = hourFromTimeStr(userSettings?.dayEnd, 22);
                 const plan = generateDailyPlan(goals, slotCount, eventsForPlan, { stormBufferMinutes: 30, startHour, endHour });
@@ -1729,14 +1795,17 @@ function GardenDashboard() {
                       transition={{ duration: 0.15 }}
                       className="absolute left-0 top-full mt-1 z-50 py-1.5 min-w-[7rem] rounded-xl bg-white dark:bg-slate-800 border border-stone-200 dark:border-slate-600 shadow-lg"
                     >
-                      <p className="px-3 py-1 font-sans text-[10px] font-semibold text-stone-500 dark:text-slate-400 uppercase tracking-wider">Energy</p>
-                      {[1, 2, 3, 4, 5].map((n) => (
+                      <p className="px-3 py-1 font-sans text-[10px] font-semibold text-stone-500 dark:text-slate-400 uppercase tracking-wider">Sparks</p>
+                      {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => (
                         <button
                           key={n}
                           type="button"
                           onClick={() => {
                             setEnergyLevel(n);
                             completeMorningCheckIn(n);
+                            generateMorningBriefing(goals, today).then((items) => {
+                              if (Array.isArray(items) && items.length > 0) setMorningBriefing(items);
+                            });
                             setShowEnergyMenu(false);
                           }}
                           className={`w-full flex items-center justify-center gap-1.5 py-2 px-3 font-sans text-sm transition-colors focus:outline-none focus:bg-stone-100 dark:focus:bg-slate-700 ${
@@ -1745,7 +1814,7 @@ function GardenDashboard() {
                               : 'text-stone-700 dark:text-slate-200 hover:bg-stone-50 dark:hover:bg-slate-700/50'
                           }`}
                         >
-                          {n} <span aria-hidden>🥄</span>
+                          {n} <span aria-hidden>⚡</span>
                         </button>
                       ))}
                     </motion.div>
@@ -1889,7 +1958,44 @@ function GardenDashboard() {
                 />
               </div>
             ) : (
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-full">
+              <div className="flex flex-col gap-6 h-full">
+                {/* Spirit's Briefing (Radar) — shown after morning check-in when AI returns items */}
+                {morningBriefing.length > 0 && (
+                  <div className={`rounded-2xl border-2 p-4 shadow-lg ${isDark ? 'border-indigo-500/50 bg-slate-800/90' : 'border-indigo-300 bg-indigo-50/80'}`}>
+                    <div className="flex items-center justify-between gap-2 mb-3">
+                      <h2 className="font-sans text-lg font-bold text-indigo-800 dark:text-indigo-200 flex items-center gap-2">
+                        <span aria-hidden>📡</span> Spirit&apos;s Briefing
+                      </h2>
+                      <button
+                        type="button"
+                        onClick={() => setMorningBriefing([])}
+                        className="font-sans text-sm text-stone-500 hover:text-stone-700 dark:text-stone-400 dark:hover:text-stone-200 focus:outline-none focus:ring-2 focus:ring-indigo-400 rounded px-2 py-1"
+                        aria-label="Dismiss briefing"
+                      >
+                        ✕ Dismiss
+                      </button>
+                    </div>
+                    <ul className="space-y-2">
+                      {morningBriefing.map((item, i) => (
+                        <li key={i} className={`flex flex-wrap items-center gap-2 rounded-lg px-3 py-2 ${isDark ? 'bg-slate-700/50' : 'bg-white/80'}`}>
+                          <span className="font-sans text-sm font-medium text-stone-800 dark:text-stone-200 flex-1 min-w-0">{item.title}</span>
+                          {item.category && (
+                            <span className="font-sans text-xs text-stone-500 dark:text-stone-400 shrink-0">{item.category}</span>
+                          )}
+                          <a
+                            href={`https://www.google.com/search?q=${encodeURIComponent(item.searchQuery)}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 font-sans text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:underline shrink-0"
+                          >
+                            🔍 Verify
+                          </a>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 flex-1 min-h-0">
                 {/* Left: Focus area — Help Me Start + current/next task */}
                 <div className="lg:col-span-5 flex flex-col gap-6">
                   <button
@@ -1966,6 +2072,7 @@ function GardenDashboard() {
                       />
                     </ScheduleErrorBoundary>
                   </div>
+                </div>
                 </div>
               </div>
             )}
@@ -2100,6 +2207,12 @@ function GardenDashboard() {
                     onDeleteGoal={deleteGoal}
                     onToggleMilestone={toggleMilestone}
                     onUpdateSubtask={updateSubtask}
+                    onEditGoal={editGoal}
+                    onAddMilestone={addMilestone}
+                    onUpdateMilestone={updateMilestone}
+                    onDeleteMilestone={deleteMilestone}
+                    onAddSubtask={addSubtask}
+                    onDeleteSubtask={deleteSubtask}
                   />
                 </div>
               </div>
@@ -2280,10 +2393,9 @@ function GardenDashboard() {
         </button>
         <button
           type="button"
-          onClick={() => setActiveTab('planner')}
-          className={`flex items-center gap-2 min-w-[44px] min-h-[44px] justify-center rounded-full px-3 py-2 transition-colors focus:outline-none focus:ring-2 focus:ring-white/30 ${activeTab === 'planner' ? 'bg-white/20 text-amber-300' : 'text-stone-400 hover:text-stone-200'}`}
-          aria-current={activeTab === 'planner' ? 'page' : undefined}
-          aria-label="Plan"
+          onClick={() => { window.location.hash = '#/plan'; }}
+          className="flex items-center gap-2 min-w-[44px] min-h-[44px] justify-center rounded-full px-3 py-2 transition-colors focus:outline-none focus:ring-2 focus:ring-white/30 text-stone-400 hover:text-stone-200"
+          aria-label="Open Command Center (Plan)"
         >
           <span className="text-2xl sm:text-xl" aria-hidden>🗺️</span>
           <span className="hidden sm:inline text-sm font-medium">Plan</span>
@@ -2363,10 +2475,14 @@ function GardenDashboard() {
 
       <GoalCreator
         open={isPlanting}
-        onClose={() => { setIsPlanting(false); setGoalCreatorInitialTitle(''); setGoalCreatorInitialSubtasks([]); }}
+        onClose={() => { setIsPlanting(false); setGoalCreatorInitialTitle(''); setGoalCreatorInitialSubtasks([]); setGoalCreatorInitialIsFixed(undefined); setGoalCreatorInitialContext(undefined); setGoalCreatorInitialRecurrence(undefined); setGoalCreatorInitialEnergyCost(undefined); }}
         onSave={handleSaveSeed}
         initialTitle={goalCreatorInitialTitle}
         initialSubtasks={goalCreatorInitialSubtasks}
+        initialIsFixed={goalCreatorInitialIsFixed}
+        initialContext={goalCreatorInitialContext}
+        initialRecurrence={goalCreatorInitialRecurrence}
+        initialEnergyCost={goalCreatorInitialEnergyCost}
         existingRoutineGoals={(goals ?? []).filter((g) => g.type === 'routine')}
         existingVitalityGoals={(goals ?? []).filter((g) => g.type === 'vitality')}
         ritualCategories={userSettings?.ritualCategories ?? []}
@@ -2405,30 +2521,121 @@ function GardenDashboard() {
         onClose={() => setShowAccessibilityModal(false)}
       />
 
+      {/* Journal & Insights full-screen modals with Now / Plan / Garden header nav */}
       {showJournalModal && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-stone-50 overflow-auto">
-          <div className="sticky top-0 z-10 flex items-center justify-between px-4 py-3 border-b border-stone-200 bg-stone-50/95 backdrop-blur-sm">
-            <h2 className="font-serif text-lg text-stone-900">Journal</h2>
-            <button type="button" onClick={() => setShowJournalModal(false)} aria-label="Close" className="w-10 h-10 flex items-center justify-center rounded-lg text-stone-500 hover:text-stone-800 hover:bg-stone-200">
-              ×
-            </button>
-          </div>
-          <div className="flex-1 px-4 py-6 max-w-2xl mx-auto w-full">
-            <JournalView />
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-stone-900/40 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Journal"
+          onClick={() => setShowJournalModal(false)}
+        >
+          <div
+            className="relative w-full max-w-3xl max-h-[90vh] flex flex-col rounded-2xl bg-stone-50 border border-stone-200 shadow-2xl overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-stone-200 bg-stone-50/95 backdrop-blur-sm">
+              <div className="flex items-center gap-2">
+                <h2 className="font-serif text-lg text-stone-900">Journal</h2>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="hidden sm:flex items-center gap-1 rounded-full bg-stone-100 border border-stone-200 px-1 py-0.5">
+                  <button
+                    type="button"
+                    onClick={() => { setShowJournalModal(false); setActiveTab('today'); }}
+                    className="px-2 py-1 rounded-full text-xs font-sans text-stone-600 hover:text-amber-500 hover:bg-white"
+                  >
+                    Now
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setShowJournalModal(false); window.location.hash = '#/plan'; }}
+                    className="px-2 py-1 rounded-full text-xs font-sans text-stone-600 hover:text-moss-600 hover:bg-white"
+                  >
+                    Plan
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setShowJournalModal(false); setActiveTab('garden'); }}
+                    className="px-2 py-1 rounded-full text-xs font-sans text-stone-600 hover:text-moss-600 hover:bg-white"
+                  >
+                    Garden
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowJournalModal(false)}
+                  aria-label="Close"
+                  className="w-9 h-9 flex items-center justify-center rounded-lg text-stone-500 hover:text-stone-800 hover:bg-stone-200"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 px-4 py-4 sm:py-6 overflow-y-auto">
+              <div className="max-w-2xl mx-auto w-full">
+                <JournalView />
+              </div>
+            </div>
           </div>
         </div>
       )}
 
       {showInsightsModal && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-stone-50 overflow-auto">
-          <div className="sticky top-0 z-10 flex items-center justify-between px-4 py-3 border-b border-stone-200 bg-stone-50/95 backdrop-blur-sm">
-            <h2 className="font-serif text-lg text-stone-900">Insights</h2>
-            <button type="button" onClick={() => setShowInsightsModal(false)} aria-label="Close" className="w-10 h-10 flex items-center justify-center rounded-lg text-stone-500 hover:text-stone-800 hover:bg-stone-200">
-              ×
-            </button>
-          </div>
-          <div className="flex-1 px-4 py-6 max-w-2xl mx-auto w-full">
-            <AnalyticsView />
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-stone-900/40 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Insights"
+          onClick={() => setShowInsightsModal(false)}
+        >
+          <div
+            className="relative w-full max-w-3xl max-h-[90vh] flex flex-col rounded-2xl bg-stone-50 border border-stone-200 shadow-2xl overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-stone-200 bg-stone-50/95 backdrop-blur-sm">
+              <div className="flex items-center gap-2">
+                <h2 className="font-serif text-lg text-stone-900">Insights</h2>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="hidden sm:flex items-center gap-1 rounded-full bg-stone-100 border border-stone-200 px-1 py-0.5">
+                  <button
+                    type="button"
+                    onClick={() => { setShowInsightsModal(false); setActiveTab('today'); }}
+                    className="px-2 py-1 rounded-full text-xs font-sans text-stone-600 hover:text-amber-500 hover:bg-white"
+                  >
+                    Now
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setShowInsightsModal(false); window.location.hash = '#/plan'; }}
+                    className="px-2 py-1 rounded-full text-xs font-sans text-stone-600 hover:text-moss-600 hover:bg-white"
+                  >
+                    Plan
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setShowInsightsModal(false); setActiveTab('garden'); }}
+                    className="px-2 py-1 rounded-full text-xs font-sans text-stone-600 hover:text-moss-600 hover:bg-white"
+                  >
+                    Garden
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowInsightsModal(false)}
+                  aria-label="Close"
+                  className="w-9 h-9 flex items-center justify-center rounded-lg text-stone-500 hover:text-stone-800 hover:bg-stone-200"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 px-4 py-4 sm:py-6 overflow-y-auto">
+              <div className="max-w-2xl mx-auto w-full">
+                <AnalyticsView />
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -2743,6 +2950,14 @@ function GardenDashboard() {
         </motion.div>
       )}
 
+      <NextStepPrompt
+        open={!!nextStepPrompt}
+        completedTitle={nextStepPrompt?.completedTitle}
+        nextStep={nextStepPrompt?.nextStep}
+        onAddToThisWeek={promoteTaskToThisWeek}
+        onLeaveInVault={() => setNextStepPrompt(null)}
+      />
+
       {calendarConnectedToast && (
         <motion.div
           initial={{ opacity: 0, y: 8 }}
@@ -2891,9 +3106,10 @@ function GardenDashboard() {
         open={showTour}
         onComplete={() => {
           setShowTour(false);
-          try {
-            localStorage.setItem('hasSeenTour', 'true');
-          } catch (_) {}
+          setTourSeen(true);
+          if (isFirstDayFlow && firstDayStep === 'spirit_tour') {
+            onFirstDayStepChange?.('done');
+          }
         }}
       />
     </div>

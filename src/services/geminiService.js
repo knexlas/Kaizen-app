@@ -399,6 +399,64 @@ export async function chatWithSpirit(history, context) {
 }
 
 /**
+ * Morning Briefing: contextual heads-ups (events, economic releases, etc.) based on user goals.
+ * @param {Array} userGoals - Active goals (from GardenContext goals); each has at least { title, type?, domain? }
+ * @param {string} todayDate - Date string YYYY-MM-DD for "today"
+ * @returns {Promise<Array<{ title: string, category: string, searchQuery: string }>>} - Up to 3 items, or []
+ */
+export async function generateMorningBriefing(userGoals, todayDate) {
+  const apiKey = getApiKey();
+  const goals = Array.isArray(userGoals) ? userGoals : [];
+  const dateStr = typeof todayDate === 'string' ? todayDate : new Date().toISOString().split('T')[0];
+
+  const goalsSummary = goals.length === 0 ? 'No active goals.' : goals.map((g) => `- ${g.title ?? 'Goal'} (${g.type ?? '—'}, ${g.domain ?? '—'})`).join('\n');
+
+  const prompt = `The user is looking at their day for ${dateStr}. Here are their active goals:
+
+${goalsSummary}
+
+Based on these goals (especially if they involve day trading, finance, or specific hobbies), are there any major real-world events, economic data releases, or general contextual heads-ups they should be aware of today? Return a JSON array of objects with { "title": "...", "category": "...", "searchQuery": "..." }. Keep it under 3 items. If nothing is relevant, return an empty array []. Return ONLY valid JSON, no markdown or explanation.`;
+
+  try {
+    if (apiKey) {
+      const { GoogleGenerativeAI } = await import('@google/generative-ai');
+      const genAI = new GoogleGenerativeAI(apiKey);
+      const result = await tryGenerate(genAI, prompt);
+      const text = result?.response?.text?.();
+      if (typeof text !== 'string') return [];
+      let raw = sanitizeJsonResponse(text).trim();
+      const arrMatch = raw.match(/\[[\s\S]*\]/);
+      if (arrMatch) raw = arrMatch[0];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      const items = parsed.slice(0, 3).filter((item) => item && typeof item.title === 'string').map((item) => ({
+        title: String(item.title).trim(),
+        category: typeof item.category === 'string' ? item.category.trim() : 'General',
+        searchQuery: typeof item.searchQuery === 'string' ? item.searchQuery.trim() : String(item.title).trim(),
+      }));
+      return items;
+    }
+    const groqKey = typeof import.meta !== 'undefined' && import.meta.env?.VITE_GROQ_API_KEY;
+    if (groqKey) {
+      const groqText = await fetchFromGroq(prompt);
+      let raw = sanitizeJsonResponse(groqText).trim();
+      const arrMatch = raw.match(/\[[\s\S]*\]/);
+      if (arrMatch) raw = arrMatch[0];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed.slice(0, 3).filter((item) => item && typeof item.title === 'string').map((item) => ({
+        title: String(item.title).trim(),
+        category: typeof item.category === 'string' ? item.category.trim() : 'General',
+        searchQuery: typeof item.searchQuery === 'string' ? item.searchQuery.trim() : String(item.title).trim(),
+      }));
+    }
+  } catch (err) {
+    console.warn('generateMorningBriefing failed:', err?.message || err);
+  }
+  return [];
+}
+
+/**
  * Generate a Mochi Spirit insight from logs, goals, and this week's plan.
  * @param {Array} logs - Last journal/activity entries (from GardenContext logs)
  * @param {Array} goals - Current goals/seeds (from GardenContext goals)
@@ -717,16 +775,16 @@ function getWorkBlockConstraint(settings) {
   return `CRITICAL HARD CONSTRAINT: The user works from ${start} to ${end}. You are absolutely FORBIDDEN from scheduling any tasks during this time window. Do not suggest or place any tasks between these hours.`;
 }
 
-/** Skill-level instruction for AI: scales step granularity (Beginner = tiny, Expert = big milestones). */
+/** Proficiency-aware instruction: tailor micro-habits to experience level (Beginner = ultra-easy, Advanced = optimization). */
 function getSkillLevelInstruction(skillLevel) {
   const level = (skillLevel || 'intermediate').toLowerCase();
   if (level === 'beginner') {
-    return 'If Skill Level is Beginner: Break tasks into extremely tiny 5-15 minute Kaizen steps.';
+    return 'The user is at a Beginner level for this goal. Tailor the suggested micro-habits to this level: make them 5-minute ultra-easy steps that anyone can do from scratch. No assumptions about prior knowledge or equipment.';
   }
-  if (level === 'expert') {
-    return 'If Skill Level is Expert: Assume deep domain knowledge. Steps should be 1-2 hour milestones.';
+  if (level === 'expert' || level === 'advanced') {
+    return 'The user is at an Advanced level for this goal. Skip the basics. Suggest 15-minute optimization or consistency habits (e.g. advanced techniques, refinement, or sustaining momentum). Assume they are already proficient.';
   }
-  return 'If Skill Level is Intermediate: Skip the extreme basics. Steps should be 30-60 minutes of deep work.';
+  return 'The user is at an Intermediate level for this goal. Suggest micro-habits that assume some experience: 10–15 minute steps, neither ultra-basic nor advanced-only.';
 }
 
 export async function suggestGoalStructure(title, type = 'kaizen', currentMetric, targetMetric, skillLevel) {
@@ -1096,6 +1154,93 @@ Return ONLY a raw JSON array. Example: [{"title":"Review goals","date":"2025-02-
       }));
     } catch (groqErr) {
       console.error('Groq generateMonthlyPlanTasks fallback failed:', groqErr?.message || groqErr);
+      return null;
+    }
+  }
+}
+
+/**
+ * Goal breakdown as structured milestones (no dates).
+ * Use for the Monthly Planner / Goal Breakdown: AI returns logical milestones and flexible tasks
+ * so the user can schedule them later. Parsed and normalized; not a text blob.
+ *
+ * @param {string} goalTitle - The goal to break down
+ * @param {{ userSettings?: object }} [options]
+ * @returns {Promise<{ goalTitle: string, milestones: Array<{ title: string, tasks: Array<{ title: string, estimatedSparks: number, isKaizen: boolean }> }> | null>}
+ */
+export async function generateGoalBreakdownMilestones(goalTitle, options = {}) {
+  const apiKey = getApiKey();
+  if (!apiKey) {
+    console.error('Missing API Key');
+    return null;
+  }
+  const title = String(goalTitle || '').trim();
+  if (!title) return null;
+
+  const prompt = `You are a JSON-only API. Do not include markdown, \`\`\`json, or any text outside the JSON object.
+
+Break down this goal into a logical sequence of milestones. Do NOT assign specific dates to any task. Instead:
+- Create 3 to 5 logical "Milestones" (phases or stages) for this goal.
+- Under each Milestone, list 3 to 5 flexible "Tasks" that belong to that phase.
+- For each task: "title" (short string), "estimatedSparks" (number 1, 2, or 3: 1=small, 2=medium, 3=large), "isKaizen" (boolean: true if it's a small improvement/experiment, false if it's a concrete deliverable).
+
+Goal to break down: "${title}"
+
+Return ONLY a single JSON object with this exact shape (no other keys, no explanation):
+{
+  "goalTitle": "${title}",
+  "milestones": [
+    {
+      "title": "string",
+      "tasks": [
+        { "title": "string", "estimatedSparks": 1, "isKaizen": false },
+        { "title": "string", "estimatedSparks": 2, "isKaizen": true }
+      ]
+    }
+  ]
+}`;
+
+  function parseAndNormalize(rawText) {
+    let raw = sanitizeJsonResponse(rawText).trim();
+    const objMatch = raw.match(/\{[\s\S]*\}/);
+    if (objMatch) raw = objMatch[0];
+    const obj = JSON.parse(raw);
+    if (!obj || typeof obj.goalTitle !== 'string') return null;
+    const milestones = Array.isArray(obj.milestones) ? obj.milestones : [];
+    const normalized = {
+      goalTitle: String(obj.goalTitle).trim() || title,
+      milestones: milestones.map((m) => {
+        const tasks = Array.isArray(m?.tasks) ? m.tasks : [];
+        const out = {
+          title: String(m?.title ?? '').trim() || 'Milestone',
+          tasks: tasks.map((t) => ({
+            title: String(t?.title ?? '').trim() || 'Task',
+            estimatedSparks: Math.max(1, Math.min(3, Math.floor(Number(t?.estimatedSparks) || 2))),
+            isKaizen: Boolean(t?.isKaizen),
+          })),
+        };
+        if (m?.activeMonth && typeof m.activeMonth === 'string') out.activeMonth = m.activeMonth.slice(0, 7);
+        else if (m?.active_month && typeof m.active_month === 'string') out.activeMonth = m.active_month.slice(0, 7);
+        return out;
+      }).filter((m) => m.tasks.length > 0),
+    };
+    return normalized;
+  }
+
+  try {
+    const { GoogleGenerativeAI } = await import('@google/generative-ai');
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const result = await tryGenerate(genAI, prompt);
+    const text = result?.response?.text?.();
+    if (!text) throw new Error('Empty response');
+    return parseAndNormalize(text);
+  } catch (err) {
+    console.warn('Gemini generateGoalBreakdownMilestones failed, trying Groq:', err?.message || err);
+    try {
+      const groqText = await fetchFromGroq(prompt);
+      return parseAndNormalize(groqText);
+    } catch (groqErr) {
+      console.error('Groq generateGoalBreakdownMilestones fallback failed:', groqErr?.message || groqErr);
       return null;
     }
   }

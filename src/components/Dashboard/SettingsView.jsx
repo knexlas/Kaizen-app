@@ -2,13 +2,25 @@ import { useState, useEffect, useRef } from 'react';
 import { useGarden } from '../../context/GardenContext';
 import { localISODate } from '../../services/dateUtils';
 import { testMochiConnection } from '../../services/geminiService';
+import { setTourSeen } from '../../services/onboardingStateService';
 
 const SCHEDULING_DEFAULTS = {
   dayStart: '08:00',
   dayEnd: '22:00',
+  dayStartsAt: '00:00',
   isWorkScheduler: true,
   workHours: { start: '09:00', end: '17:00' },
 };
+
+/** Options for "My Day Starts At" (when the calendar day flips for today/check-in). */
+const DAY_STARTS_AT_OPTIONS = [
+  { value: '00:00', label: '12:00 AM (midnight)' },
+  { value: '01:00', label: '1:00 AM' },
+  { value: '02:00', label: '2:00 AM' },
+  { value: '03:00', label: '3:00 AM' },
+  { value: '04:00', label: '4:00 AM' },
+  { value: '05:00', label: '5:00 AM' },
+];
 
 export default function SettingsView({ onReplayTour }) {
   const {
@@ -32,6 +44,7 @@ export default function SettingsView({ onReplayTour }) {
   const [defaultWeekStart, setDefaultWeekStart] = useState(userSettings.defaultWeekStart ?? 1); // 0 = Sun, 1 = Mon
   const [dayStart, setDayStart] = useState(userSettings.dayStart ?? SCHEDULING_DEFAULTS.dayStart);
   const [dayEnd, setDayEnd] = useState(userSettings.dayEnd ?? SCHEDULING_DEFAULTS.dayEnd);
+  const [dayStartsAt, setDayStartsAt] = useState(userSettings.dayStartsAt ?? SCHEDULING_DEFAULTS.dayStartsAt);
   const [isWorkScheduler, setIsWorkScheduler] = useState(userSettings.isWorkScheduler ?? SCHEDULING_DEFAULTS.isWorkScheduler);
   const [workHoursStart, setWorkHoursStart] = useState(userSettings.workHours?.start ?? SCHEDULING_DEFAULTS.workHours.start);
   const [workHoursEnd, setWorkHoursEnd] = useState(userSettings.workHours?.end ?? SCHEDULING_DEFAULTS.workHours.end);
@@ -57,10 +70,11 @@ export default function SettingsView({ onReplayTour }) {
     setDefaultWeekStart(userSettings.defaultWeekStart ?? 1);
     setDayStart(userSettings.dayStart ?? SCHEDULING_DEFAULTS.dayStart);
     setDayEnd(userSettings.dayEnd ?? SCHEDULING_DEFAULTS.dayEnd);
+    setDayStartsAt(userSettings.dayStartsAt ?? SCHEDULING_DEFAULTS.dayStartsAt);
     setIsWorkScheduler(userSettings.isWorkScheduler ?? SCHEDULING_DEFAULTS.isWorkScheduler);
     setWorkHoursStart(userSettings.workHours?.start ?? SCHEDULING_DEFAULTS.workHours.start);
     setWorkHoursEnd(userSettings.workHours?.end ?? SCHEDULING_DEFAULTS.workHours.end);
-  }, [userSettings.userName, userSettings.defaultWeekStart, userSettings.dayStart, userSettings.dayEnd, userSettings.isWorkScheduler, userSettings.workHours]);
+  }, [userSettings.userName, userSettings.defaultWeekStart, userSettings.dayStart, userSettings.dayEnd, userSettings.dayStartsAt, userSettings.isWorkScheduler, userSettings.workHours]);
 
   const handleSave = () => {
     setUserSettings?.({
@@ -69,6 +83,7 @@ export default function SettingsView({ onReplayTour }) {
       defaultWeekStart,
       dayStart,
       dayEnd,
+      dayStartsAt,
       isWorkScheduler,
       workHours: { start: workHoursStart, end: workHoursEnd },
     });
@@ -223,10 +238,24 @@ export default function SettingsView({ onReplayTour }) {
         <div className="border-t border-stone-100 pt-6">
           <h3 className="font-sans text-sm font-semibold text-stone-800 mb-1">Scheduling</h3>
           <p className="font-sans text-xs text-stone-500 mb-4">Day range and work-hour blocking for the planner and Time Slicer.</p>
-          <p className="font-sans text-xs font-medium text-stone-600 mb-2">Day Schedule</p>
+          <div className="mb-4">
+            <label htmlFor="settings-day-starts-at" className="block font-sans text-xs font-medium text-stone-600 mb-1">My day starts at</label>
+            <select
+              id="settings-day-starts-at"
+              value={dayStartsAt}
+              onChange={(e) => setDayStartsAt(e.target.value)}
+              className="w-full max-w-xs py-2 px-3 rounded-lg border border-stone-200 bg-white font-sans text-stone-900 focus:outline-none focus:ring-2 focus:ring-moss-500/40 focus:border-moss-500"
+            >
+              {DAY_STARTS_AT_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+            <p className="font-sans text-xs text-stone-500 mt-1">When &quot;today&quot; flips (e.g. 3 AM means 1:30 AM Tuesday is still Monday).</p>
+          </div>
+          <p className="font-sans text-xs font-medium text-stone-600 mb-2">Day Schedule (timeline range)</p>
           <div className="grid grid-cols-2 gap-4 mb-4">
             <div>
-              <label htmlFor="settings-day-start" className="block font-sans text-xs font-medium text-stone-600 mb-1">Day starts at</label>
+              <label htmlFor="settings-day-start" className="block font-sans text-xs font-medium text-stone-600 mb-1">First hour shown</label>
               <input
                 id="settings-day-start"
                 type="time"
@@ -357,9 +386,7 @@ export default function SettingsView({ onReplayTour }) {
         <button
           type="button"
           onClick={() => {
-            try {
-              localStorage.removeItem('hasSeenTour');
-            } catch (_) {}
+            setTourSeen(false);
             window.location.reload();
           }}
           className="px-4 py-2 rounded-lg font-sans text-sm font-medium border border-stone-200 text-stone-700 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40"

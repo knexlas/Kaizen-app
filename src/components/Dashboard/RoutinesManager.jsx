@@ -7,6 +7,7 @@ const FORM_CATEGORIES = ['🧼 Care & Hygiene', '🧹 Household', '📁 Life Adm
 export default function RoutinesManager() {
   const { routines, addRoutine, deleteRoutine } = useGarden();
   const [newRoutine, setNewRoutine] = useState({ title: '', category: '🧼 Care & Hygiene', duration: 15 });
+  const [expandedCategory, setExpandedCategory] = useState(null); // accordion: which category is open
 
   const byCategory = useMemo(() => {
     const map = {};
@@ -86,41 +87,55 @@ export default function RoutinesManager() {
         </button>
       </div>
 
-      <div className="space-y-6">
+      <div className="space-y-2" role="region" aria-label="Routine categories">
         {sortedCategories.map((cat) => {
           const items = byCategory[cat] ?? [];
           if (items.length === 0) return null;
+          const isOpen = expandedCategory === cat;
+          const safeId = cat.replace(/\s/g, '-').replace(/[^\w-]/g, '');
           return (
-            <div key={cat} className="rounded-xl border border-stone-200 bg-white p-4 shadow-sm">
-              <h3 className="font-sans text-sm font-bold text-stone-700 uppercase tracking-wide mb-3">{cat}</h3>
-              <ul className="space-y-2" role="list">
-                <AnimatePresence mode="popLayout">
-                  {items.map((r) => (
-                    <motion.li
-                      key={r.id}
-                      layout
-                      initial={{ opacity: 0, height: 0 }}
-                      animate={{ opacity: 1, height: 'auto' }}
-                      exit={{ opacity: 0, height: 0 }}
-                      className="flex items-center justify-between gap-2 py-2 px-3 rounded-lg bg-stone-50 border border-stone-100"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <span className="font-sans text-sm font-medium text-stone-800">{r.title}</span>
-                        <span className="font-sans text-xs text-stone-500 ml-2">[{r.duration} min]</span>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => handleDelete(r.id)}
-                        className="p-1.5 rounded-lg text-red-600 hover:bg-red-50 shrink-0"
-                        aria-label="Delete"
-                        title="Delete"
+            <div key={cat} className="rounded-xl border border-stone-200 bg-white overflow-hidden shadow-sm">
+              <button
+                type="button"
+                onClick={() => setExpandedCategory(isOpen ? null : cat)}
+                className="w-full flex items-center justify-between gap-2 px-4 py-3 font-sans text-sm font-bold text-stone-700 uppercase tracking-wide text-left hover:bg-stone-50 transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:ring-inset"
+                aria-expanded={isOpen}
+                aria-controls={`routines-cat-${safeId}`}
+                id={`routines-header-${safeId}`}
+              >
+                <span>{cat}</span>
+                <span className="shrink-0 text-stone-400" aria-hidden>{isOpen ? '▼' : '▶'}</span>
+              </button>
+              {isOpen && (
+                <ul id={`routines-cat-${safeId}`} className="space-y-2 p-4 pt-0" role="list" aria-labelledby={`routines-header-${safeId}`}>
+                  <AnimatePresence mode="popLayout">
+                    {items.map((r) => (
+                      <motion.li
+                        key={r.id}
+                        layout
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: 'auto' }}
+                        exit={{ opacity: 0, height: 0 }}
+                        className="flex items-center justify-between gap-2 py-2 px-3 rounded-lg bg-stone-50 border border-stone-100"
                       >
-                        🗑️
-                      </button>
-                    </motion.li>
-                  ))}
-                </AnimatePresence>
-              </ul>
+                        <div className="min-w-0 flex-1">
+                          <span className="font-sans text-sm font-medium text-stone-800">{r.title}</span>
+                          <span className="font-sans text-xs text-stone-500 ml-2">[{r.duration} min]</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleDelete(r.id)}
+                          className="p-1.5 rounded-lg text-red-600 hover:bg-red-50 shrink-0"
+                          aria-label="Delete"
+                          title="Delete"
+                        >
+                          🗑️
+                        </button>
+                      </motion.li>
+                    ))}
+                  </AnimatePresence>
+                </ul>
+              )}
             </div>
           );
         })}

@@ -58,8 +58,8 @@ function WispSpirit() {
 }
 
 /** Renders Cat model; falls back to Fox if Cat.glb does not exist. */
-function CatSpiritInner() {
-  return <AnimatedModel path="/models/Cat.glb" scale={0.4} />;
+function CatSpiritInner({ isWalking }) {
+  return <AnimatedModel path="/models/Cat.glb" scale={0.4} isWalking={isWalking} />;
 }
 
 class CatSpiritErrorBoundary extends Component {
@@ -69,21 +69,21 @@ class CatSpiritErrorBoundary extends Component {
   }
   render() {
     if (this.state.hasError) {
-      return <AnimatedModel path="/models/Fox-v6.glb" scale={0.4} />;
+      return <AnimatedModel path="/models/Fox-v6.glb" scale={0.4} isWalking={this.props.isWalking} />;
     }
     return this.props.children;
   }
 }
 
-function CatSpirit() {
+function CatSpirit({ isWalking }) {
   return (
-    <CatSpiritErrorBoundary>
-      <CatSpiritInner />
+    <CatSpiritErrorBoundary isWalking={isWalking}>
+      <CatSpiritInner isWalking={isWalking} />
     </CatSpiritErrorBoundary>
   );
 }
 
-export default function DynamicSpirit3D({ form, position = [0, 0, 0] }) {
+export default function DynamicSpirit3D({ form, position = [0, 0, 0], isWalking = false }) {
   const key = form != null && String(form).length > 0 ? String(form).toLowerCase() : 'mochi';
 
   switch (key) {
@@ -102,35 +102,35 @@ export default function DynamicSpirit3D({ form, position = [0, 0, 0] }) {
     case 'guide':
       return (
         <group position={position} scale={0.8}>
-          <Owl3D />
+          <Owl3D isWalking={isWalking} />
         </group>
       );
     case 'cat':
       return (
         <group position={position}>
-          <CatSpirit />
+          <CatSpirit isWalking={isWalking} />
         </group>
       );
     case 'rabbit':
       return (
         <group position={position}>
-          <Rabbit3D />
+          <Rabbit3D isWalking={isWalking} />
         </group>
       );
     case 'frog':
       return (
         <group position={position}>
-          <Frog3D />
+          <Frog3D isWalking={isWalking} />
         </group>
       );
     case 'butterfly':
       return (
         <group position={position}>
-          <Butterfly3D />
+          <Butterfly3D isWalking={isWalking} />
         </group>
       );
     case 'mochi':
-      return <Mochi3D position={position} />;
+      return <Mochi3D position={position} isWalking={isWalking} />;
     default:
       return (
         <group position={position}>

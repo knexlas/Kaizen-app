@@ -5,7 +5,16 @@ import { getGoalProgressPercent, getHash } from './GardenWalk';
 
 export function KenneyModel({ path, scale = 1 }) {
   const { scene } = useGLTF(path);
-  const clonedScene = useMemo(() => scene.clone(), [scene]);
+  const clonedScene = useMemo(() => {
+    const clone = scene.clone();
+    clone.traverse((child) => {
+      if (child.isMesh) {
+        child.castShadow = true;
+        child.receiveShadow = true;
+      }
+    });
+    return clone;
+  }, [scene]);
   return <primitive object={clonedScene} scale={scale} />;
 }
 

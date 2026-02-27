@@ -19,6 +19,8 @@ export function RewardProvider({ children }) {
       icon: reward.icon ?? '✨',
       sound: soundsOn ? (reward.sound ?? null) : null,
       durationMs: typeof reward.durationMs === 'number' ? reward.durationMs : 2800,
+      vibePayload: reward.vibePayload ?? null,
+      onVibe: typeof reward.onVibe === 'function' ? reward.onVibe : null,
     };
     setQueue((prev) => {
       const next = [...prev, entry].slice(-MAX_QUEUE);

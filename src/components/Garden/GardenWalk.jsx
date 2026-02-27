@@ -228,7 +228,7 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
             />
           </div>
         )}
-        <div className="m-2 sm:m-3 h-[70vh] w-full rounded-3xl overflow-hidden relative">
+        <div className="m-1 sm:m-2 h-[88vh] min-h-[400px] w-full rounded-3xl overflow-hidden relative">
           <Garden3D
             focusGoal={activeFocusGoal}
             onOpenShop={() => setIsShopOpen(true)}
@@ -247,6 +247,14 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
           <VirtualJoystick />
           {/* UI overlay: pointer-events-none so 3D canvas gets clicks; each interactive element has pointer-events-auto */}
           <div className="absolute inset-0 z-40 pointer-events-none rounded-3xl">
+            {/* Toolbox: fades out when shop is open to avoid clutter */}
+            <div
+              className={
+                isShopOpen
+                  ? 'opacity-0 pointer-events-none transition-opacity duration-300'
+                  : 'opacity-100 transition-opacity duration-300'
+              }
+            >
             <button
               type="button"
               onClick={() => setActiveAlmanac('journal')}
@@ -410,6 +418,7 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
             </motion.div>
             )}
           </AnimatePresence>
+            </div>
 
             {/* Shop overlay — glassmorphic modal over 3D canvas */}
             <div className="absolute inset-0 z-50 pointer-events-none rounded-3xl">
@@ -474,7 +483,14 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
           </AnimatePresence>
         </div>
 
-        {/* Toolbelt — bottom center overlay */}
+        {/* Toolbelt — bottom center overlay; fades when shop is open */}
+        <div
+          className={
+            isShopOpen
+              ? 'opacity-0 pointer-events-none transition-opacity duration-300'
+              : 'opacity-100 transition-opacity duration-300'
+          }
+        >
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-50 flex flex-wrap items-center justify-center gap-2 px-3 py-2 rounded-2xl bg-stone-800/90 backdrop-blur-sm shadow-lg border border-stone-600/50 pointer-events-auto">
           <button
             type="button"
@@ -561,6 +577,7 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
               Cancel
             </button>
           ))}
+        </div>
         </div>
           </div>
       </div>

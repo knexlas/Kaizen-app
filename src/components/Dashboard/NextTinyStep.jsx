@@ -1,5 +1,6 @@
-import { useState, useMemo, useCallback, useEffect } from 'react';
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { useGarden } from '../../context/GardenContext';
+import { localISODate } from '../../services/dateUtils';
 
 const SNOOZE_MS = 30 * 60 * 1000;
 const MAX_SUGGESTIONS = 3;
@@ -7,6 +8,13 @@ const MAX_SUGGESTIONS = 3;
 function isRoutineOrMaintenance(item) {
   const g = item?.goal;
   return g?.type === 'routine' || g?.energyType === 'maintenance';
+}
+
+/** True if assignment is fixed/mandatory (from TimeSlicer convention). */
+function isAssignmentFixed(a) {
+  if (a == null) return false;
+  if (typeof a !== 'object') return false;
+  return a.isFixed === true || a.type === 'fixed' || a.fixed === true;
 }
 
 /** True if goal is low-activation (1 or 2) or has no activationEnergy set (backward compat). */
@@ -189,8 +197,10 @@ export default function NextTinyStep({
   compact = false,
   className = '',
 }) {
-  const { goals, compost = [], logs = [], assignments, editGoal } = useGarden();
+  const { goals, compost = [], logs = [], assignments, weeklyEvents = [], editGoal } = useGarden();
   const [snoozedUntil, setSnoozedUntil] = useState({});
+  const [optionsOpen, setOptionsOpen] = useState(false);
+  const optionsRef = useRef(null);
 
   const todayPlanItems = useMemo(() => {
     const HOURS = [
@@ -206,7 +216,8 @@ export default function NextTinyStep({
       if (!goal) continue;
       const ritualTitle = typeof a === 'object' && a.ritualTitle ? a.ritualTitle : null;
       const subtaskId = typeof a === 'object' ? a.subtaskId : null;
-      out.push({ hour, goalId, goal, ritualTitle, subtaskId });
+      const isFixed = isAssignmentFixed(a) || goal?.isFixed === true;
+      out.push({ hour, goalId, goal, ritualTitle, subtaskId, isFixed });
     }
     return out;
   }, [assignments, goals]);
@@ -219,6 +230,59 @@ export default function NextTinyStep({
     snoozedUntil,
     lowEnergy,
   });
+
+  /** Single "right now" focus: fixed calendar event now > fixed plan item at current hour > first suggestion. */
+  const currentFocusItem = useMemo(() => {
+    const now = new Date();
+    const todayStr = localISODate(now);
+    const currentHour = `${String(now.getHours()).padStart(2, '0')}:00`;
+
+    const eventsToday = (Array.isArray(weeklyEvents) ? weeklyEvents : []).filter((e) => {
+      const d = e.start ? new Date(e.start) : null;
+      return d && localISODate(d) === todayStr;
+    });
+    const fixedEventNow = eventsToday.find((e) => {
+      const start = e.start ? new Date(e.start) : null;
+      const end = e.end ? new Date(e.end) : null;
+      if (!start) return false;
+      const endTime = end && end.getTime() > start.getTime() ? end : new Date(start.getTime() + 60 * 60 * 1000);
+      return now.getTime() >= start.getTime() && now.getTime() <= endTime.getTime();
+    });
+    if (fixedEventNow) {
+      return {
+        id: `calendar-${fixedEventNow.id ?? fixedEventNow.start ?? 'now'}`,
+        source: 'calendar',
+        title: fixedEventNow.title || 'Calendar event',
+        event: fixedEventNow,
+        isFixed: true,
+      };
+    }
+
+    const planItemNow = todayPlanItems.find((item) => item.hour === currentHour && item.isFixed);
+    if (planItemNow) {
+      return {
+        id: `plan-${planItemNow.goalId}-${planItemNow.hour}`,
+        source: 'plan',
+        title: planItemNow.ritualTitle || planItemNow.goal?.title || 'Task',
+        goalId: planItemNow.goalId,
+        goal: planItemNow.goal,
+        hour: planItemNow.hour,
+        subtaskId: planItemNow.subtaskId,
+        isFixed: true,
+      };
+    }
+
+    if (suggestions.length > 0) return suggestions[0];
+    return null;
+  }, [weeklyEvents, todayPlanItems, suggestions]);
+
+  useEffect(() => {
+    function handleClickOutside(e) {
+      if (optionsRef.current && !optionsRef.current.contains(e.target)) setOptionsOpen(false);
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   const handleSnooze = useCallback((itemId) => {
     setSnoozedUntil((prev) => ({ ...prev, [itemId]: Date.now() + SNOOZE_MS }));
@@ -268,74 +332,153 @@ export default function NextTinyStep({
     [onStartSession, onCompostStart5Min]
   );
 
-  if (suggestions.length === 0) return null;
+  if (!currentFocusItem && suggestions.length === 0) return null;
+
+  const otherSuggestions = currentFocusItem ? suggestions.filter((s) => s.id !== currentFocusItem.id) : suggestions;
 
   return (
     <>
     <div
       className={`relative before:absolute before:-inset-1 before:bg-indigo-400/30 before:rounded-3xl before:animate-pulse before:-z-10 rounded-xl border-2 border-stone-200 bg-stone-50/90 ${compact ? 'p-3' : 'p-4'} ${className}`}
-      aria-label="Next tiny steps"
+      aria-label="Focus stack and next tiny steps"
     >
       <h3 className={`font-serif text-stone-800 ${compact ? 'text-sm mb-2' : 'text-base mb-3'}`}>
-        Next tiny step
+        {currentFocusItem ? 'One thing now' : 'Next tiny step'}
       </h3>
-      <ul className="space-y-2" role="list">
-        {suggestions.map((s) => (
-          <li
-            key={s.id}
-            className="flex flex-wrap items-center gap-2 py-2 px-3 rounded-lg bg-white border border-stone-200/80"
-          >
-            <span className="min-w-0 flex-1 font-sans text-sm font-medium text-stone-900 truncate">
-              {s.source === 'compost' && '♻️ '}
-              {s.title}
-            </span>
-            <div className="flex flex-wrap items-center gap-1 shrink-0">
+
+      {currentFocusItem && (
+        <div className="mb-4 rounded-xl border-2 border-moss-200 bg-white p-4 shadow-sm">
+          <p className="font-sans text-base font-medium text-stone-900 mb-3">
+            {currentFocusItem.source === 'compost' && '♻️ '}
+            {currentFocusItem.source === 'calendar' && '📅 '}
+            {currentFocusItem.isFixed && '🔒 '}
+            {currentFocusItem.title}
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => { handleStart5Min(currentFocusItem); setOptionsOpen(false); }}
+              className="px-4 py-2 rounded-lg font-sans text-sm font-medium bg-moss-600 text-white hover:bg-moss-700 focus:outline-none focus:ring-2 focus:ring-moss-500/50"
+            >
+              Start Focus
+            </button>
+            {(currentFocusItem.source === 'plan' || currentFocusItem.source === 'recent' || currentFocusItem.source === 'project' || currentFocusItem.source === 'compost') && (
               <button
                 type="button"
-                onClick={() => handleStart5Min(s)}
-                className="px-2.5 py-1 rounded font-sans text-xs font-medium bg-moss-600 text-stone-50 hover:bg-moss-700 focus:outline-none focus:ring-2 focus:ring-moss-500/50"
+                onClick={() => { handleMarkDone(currentFocusItem); setOptionsOpen(false); }}
+                className="px-4 py-2 rounded-lg font-sans text-sm font-medium bg-stone-200 text-stone-800 hover:bg-stone-300 focus:outline-none focus:ring-2 focus:ring-stone-400/50"
               >
-                5 min
+                Mark Done
               </button>
-              {(s.source === 'plan' || s.source === 'recent' || s.source === 'project') && (
-                <>
+            )}
+            {currentFocusItem.source === 'calendar' && (
+              <span className="px-3 py-2 font-sans text-sm text-stone-500">Calendar event — no Done</span>
+            )}
+            <div className="relative inline-block" ref={optionsRef}>
+              <button
+                type="button"
+                onClick={() => setOptionsOpen((o) => !o)}
+                className="px-4 py-2 rounded-lg font-sans text-sm font-medium text-stone-600 bg-stone-100 hover:bg-stone-200 focus:outline-none focus:ring-2 focus:ring-stone-400/50"
+                aria-expanded={optionsOpen}
+                aria-haspopup="true"
+              >
+                Options
+              </button>
+              {optionsOpen && (
+                <div
+                  className="absolute right-0 top-full mt-1 py-1 min-w-[200px] rounded-lg bg-white border border-stone-200 shadow-lg z-10"
+                  role="menu"
+                >
                   <button
                     type="button"
-                    onClick={() => handleMarkDone(s)}
+                    role="menuitem"
+                    className="w-full text-left px-4 py-2 font-sans text-sm text-stone-700 hover:bg-stone-100"
+                    onClick={() => { setOptionsOpen(false); /* TODO: Swap for lower energy task */ }}
+                  >
+                    Swap for lower energy task
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="w-full text-left px-4 py-2 font-sans text-sm text-stone-700 hover:bg-stone-100"
+                    onClick={() => { setOptionsOpen(false); /* TODO: AI break down */ }}
+                  >
+                    AI: Break this down
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="w-full text-left px-4 py-2 font-sans text-sm text-stone-700 hover:bg-stone-100"
+                    onClick={() => { handleSnooze(currentFocusItem.id); setOptionsOpen(false); }}
+                  >
+                    Snooze to later
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {otherSuggestions.length > 0 && (
+        <ul className="space-y-2" role="list" aria-label="Other suggestions">
+          {otherSuggestions.map((s) => (
+            <li
+              key={s.id}
+              className="flex flex-wrap items-center gap-2 py-2 px-3 rounded-lg bg-white border border-stone-200/80"
+            >
+              <span className="min-w-0 flex-1 font-sans text-sm font-medium text-stone-900 truncate">
+                {s.source === 'compost' && '♻️ '}
+                {s.title}
+              </span>
+              <div className="flex flex-wrap items-center gap-1 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => handleStart5Min(s)}
+                  className="px-2.5 py-1 rounded font-sans text-xs font-medium bg-moss-600 text-stone-50 hover:bg-moss-700 focus:outline-none focus:ring-2 focus:ring-moss-500/50"
+                >
+                  5 min
+                </button>
+                {(s.source === 'plan' || s.source === 'recent' || s.source === 'project') && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => handleMarkDone(s)}
+                      className="px-2.5 py-1 rounded font-sans text-xs font-medium bg-stone-200 text-stone-800 hover:bg-stone-300 focus:outline-none focus:ring-2 focus:ring-stone-400/50"
+                    >
+                      Done
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleMoveToCompost(s)}
+                      className="px-2.5 py-1 rounded font-sans text-xs font-medium text-stone-600 hover:bg-stone-200 focus:outline-none focus:ring-2 focus:ring-stone-400/50"
+                    >
+                      To compost
+                    </button>
+                  </>
+                )}
+                {s.source === 'compost' && (
+                  <button
+                    type="button"
+                    onClick={() => onCompostMarkDone?.(s.compostItem)}
                     className="px-2.5 py-1 rounded font-sans text-xs font-medium bg-stone-200 text-stone-800 hover:bg-stone-300 focus:outline-none focus:ring-2 focus:ring-stone-400/50"
                   >
                     Done
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => handleMoveToCompost(s)}
-                    className="px-2.5 py-1 rounded font-sans text-xs font-medium text-stone-600 hover:bg-stone-200 focus:outline-none focus:ring-2 focus:ring-stone-400/50"
-                  >
-                    To compost
-                  </button>
-                </>
-              )}
-              {s.source === 'compost' && (
+                )}
                 <button
                   type="button"
-                  onClick={() => onCompostMarkDone?.(s.compostItem)}
-                  className="px-2.5 py-1 rounded font-sans text-xs font-medium bg-stone-200 text-stone-800 hover:bg-stone-300 focus:outline-none focus:ring-2 focus:ring-stone-400/50"
+                  onClick={() => handleSnooze(s.id)}
+                  className="px-2.5 py-1 rounded font-sans text-xs font-medium text-stone-500 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-stone-400/50"
+                  title="Snooze 30 min"
                 >
-                  Done
+                  Snooze
                 </button>
-              )}
-              <button
-                type="button"
-                onClick={() => handleSnooze(s.id)}
-                className="px-2.5 py-1 rounded font-sans text-xs font-medium text-stone-500 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-stone-400/50"
-                title="Snooze 30 min"
-              >
-                Snooze
-              </button>
-            </div>
-          </li>
-        ))}
-      </ul>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
     {showRewardToast && (
       <div

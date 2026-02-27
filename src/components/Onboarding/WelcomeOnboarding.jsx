@@ -26,11 +26,14 @@ export default function WelcomeOnboarding({ open, onClose, onComplete }) {
       aria-labelledby="welcome-onboarding-title"
     >
       <div className="w-full max-w-md rounded-2xl border-2 border-stone-200 bg-stone-50 shadow-xl p-6 text-stone-900">
-        <h2 id="welcome-onboarding-title" className="font-serif text-xl mb-2">
-          Welcome
+        <h2 id="welcome-onboarding-title" className="font-serif text-xl mb-1">
+          Welcome to your garden
         </h2>
-        <p className="font-sans text-stone-600 text-sm mb-6">
-          Start gently. Set your energy when you are ready, and pick one tiny step at a time.
+        <p className="font-sans text-stone-600 text-sm mb-2">
+          This isn’t a normal planner. We’ll move one tiny step at a time.
+        </p>
+        <p className="font-sans text-stone-500 text-xs mb-6">
+          Takes less than a minute — you can always slow down later.
         </p>
         <button
           type="button"

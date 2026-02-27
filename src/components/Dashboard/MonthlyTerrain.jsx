@@ -27,7 +27,7 @@ function DensityDot({ density }) {
   return <span className="inline-block w-2 h-2 rounded-full bg-moss-500" aria-hidden />;
 }
 
-export default function MonthlyTerrain({ googleToken, year: yearProp, month: monthProp }) {
+export default function MonthlyTerrain({ googleToken, year: yearProp, month: monthProp, onRequestPlanDay }) {
   const now = new Date();
   const [year, setYear] = useState(yearProp ?? now.getFullYear());
   const [month, setMonth] = useState(monthProp ?? now.getMonth() + 1);
@@ -154,7 +154,10 @@ export default function MonthlyTerrain({ googleToken, year: yearProp, month: mon
                 key={i}
                 type="button"
                 onClick={() => {
-                  if (dayOfMonth != null) setSelectedDay({ date: dateLabel, events: dayEvents });
+                  if (dayOfMonth != null) {
+                    const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(dayOfMonth).padStart(2, '0')}`;
+                    setSelectedDay({ dateStr, date: dateLabel, events: dayEvents });
+                  }
                 }}
                 className={`
                   min-h-[48px] flex flex-col items-center justify-center p-1 border-b border-r border-stone-100
@@ -162,7 +165,7 @@ export default function MonthlyTerrain({ googleToken, year: yearProp, month: mon
                   ${dayOfMonth == null ? 'bg-stone-50/50 cursor-default' : 'bg-white cursor-pointer hover:bg-stone-100 transition-colors'}
                   ${isToday ? 'ring-1 ring-moss-500/50 bg-moss-50/30' : ''}
                 `}
-                title={dayTitle}
+                title={dayOfMonth != null ? `${dayTitle || 'View day'}. Click to open day details; use "Add task for this day" to plan.` : undefined}
                 disabled={dayOfMonth == null}
               >
                 {dayOfMonth != null && (
@@ -185,6 +188,7 @@ export default function MonthlyTerrain({ googleToken, year: yearProp, month: mon
         <DayDetailModal
           day={selectedDay}
           onClose={() => setSelectedDay(null)}
+          onAddTask={onRequestPlanDay && selectedDay.dateStr ? () => onRequestPlanDay(selectedDay.dateStr) : undefined}
         />
       )}
 

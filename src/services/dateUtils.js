@@ -1,10 +1,11 @@
 /**
- * Local date helpers (YYYY-MM-DD), day difference, and weekday indexing.
+ * Local date helpers (YYYY-MM-DD), day difference, weekday indexing, and custom day-start.
  *
  * Weekday index convention:
  * - JS Date.getDay(): 0 = Sunday, 1 = Monday, ..., 6 = Saturday.
  * - mon0 (weekdayIndexMon0): 0 = Monday, 1 = Tuesday, ..., 6 = Sunday.
- *   Use mon0 in UI (e.g. day tabs Mon..Sun). Convert to/from getDay() only at boundaries.
+ *
+ * Custom day start: If "my day starts at 3:00 AM", then 1:30 AM Tuesday is still "Monday" (logical).
  */
 
 /**
@@ -18,6 +19,47 @@ export function localISODate(date = new Date()) {
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
+}
+
+/**
+ * Parse "My Day Starts At" setting to hour (0–5). '00:00' -> 0, '03:00' -> 3.
+ * @param {string} [value] - '00:00' | '01:00' | ... | '05:00'
+ * @returns {number} 0–5
+ */
+export function getDayStartsAtHour(value) {
+  if (value == null || value === '') return 0;
+  const h = parseInt(String(value).trim().split(':')[0], 10);
+  if (Number.isNaN(h)) return 0;
+  return Math.max(0, Math.min(5, Math.floor(h)));
+}
+
+/**
+ * Logical "today" given a custom day start. If day starts at 3:00 AM, then 1:30 AM Tuesday is still Monday.
+ * @param {Date} [date=new Date()]
+ * @param {number} [dayStartsAtHour=0] - 0 = midnight, 1 = 1 AM, ..., 5 = 5 AM
+ * @returns {string} YYYY-MM-DD
+ */
+export function getLogicalToday(date = new Date(), dayStartsAtHour = 0) {
+  const d = date instanceof Date ? date : new Date(date);
+  if (dayStartsAtHour <= 0) return localISODate(d);
+  const hour = d.getHours();
+  if (hour < dayStartsAtHour) {
+    const prev = new Date(d);
+    prev.setDate(prev.getDate() - 1);
+    return localISODate(prev);
+  }
+  return localISODate(d);
+}
+
+/**
+ * Is the given date string the same as logical today?
+ * @param {string} dateStr - YYYY-MM-DD
+ * @param {Date} [now=new Date()]
+ * @param {number} [dayStartsAtHour=0]
+ */
+export function isLogicalToday(dateStr, now = new Date(), dayStartsAtHour = 0) {
+  if (!dateStr) return false;
+  return getLogicalToday(now, dayStartsAtHour) === dateStr;
 }
 
 /**

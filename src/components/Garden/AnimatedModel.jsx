@@ -1,33 +1,52 @@
 import React, { useEffect, useRef, useMemo } from 'react';
+import { useFrame } from '@react-three/fiber';
 import { useGLTF, useAnimations } from '@react-three/drei';
+import * as THREE from 'three';
 import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
 
-export default function AnimatedModel({ path, scale = 1, rotation = [0, 0, 0] }) {
-  const group = useRef();
+export default function AnimatedModel({ path, scale = 1, rotation = [0, 0, 0], isWalking = false }) {
+  const groupRef = useRef();
+  const breathingRef = useRef(1);
   const { scene, animations } = useGLTF(path);
 
-  // Safely clone skinned meshes so we can place multiple of the same animal
-  const clone = useMemo(() => SkeletonUtils.clone(scene), [scene]);
-  const { actions, names } = useAnimations(animations, group);
+  // Safely clone skinned meshes and compute Y-offset so the bottom of the model sits at y = 0
+  const { clone, yOffset } = useMemo(() => {
+    const c = SkeletonUtils.clone(scene);
+    const box = new THREE.Box3().setFromObject(c);
+    const offset = box.min.y !== undefined && Number.isFinite(box.min.y) ? -box.min.y : 0;
+    return { clone: c, yOffset: offset };
+  }, [scene]);
+
+  const { actions, names } = useAnimations(animations, groupRef);
 
   useEffect(() => {
-    if (names.length > 0) {
-      // Look for an 'Idle', 'Walk', or 'Swim' animation, otherwise fallback to the first available
-      const targetAnim =
-        names.find((n) => n.toLowerCase().includes('idle')) ||
-        names.find((n) => n.toLowerCase().includes('swim')) ||
-        names.find((n) => n.toLowerCase().includes('walk')) ||
-        names[0];
+    if (names.length === 0) return;
+    const walkAnim = names.find((n) => n.toLowerCase().includes('walk')) || names[0];
+    const idleAnim = names.find((n) => n.toLowerCase().includes('idle')) || names.find((n) => n.toLowerCase().includes('swim')) || names[0];
+    const nextName = isWalking ? walkAnim : idleAnim;
+    const action = actions[nextName];
+    if (!action) return;
+    Object.values(actions).forEach((a) => a.stop());
+    action.reset().setLoop(THREE.LoopRepeat, Infinity).fadeIn(0.3).play();
+    return () => {
+      action.fadeOut(0.2);
+    };
+  }, [actions, names, isWalking]);
 
-      if (actions[targetAnim]) {
-        actions[targetAnim].reset().fadeIn(0.5).play();
-      }
-    }
-  }, [actions, names]);
+  // Procedural breathing when no baked animations (static model): gentle sine on scale.x / scale.y
+  useFrame((state) => {
+    if (names.length > 0 || !groupRef.current) return;
+    const t = state.clock.elapsedTime;
+    const s = 1 + Math.sin(t * 0.6) * 0.015;
+    groupRef.current.scale.x = s;
+    groupRef.current.scale.y = s;
+  });
 
   return (
-    <group ref={group} scale={scale} rotation={rotation}>
-      <primitive object={clone} />
+    <group scale={scale} rotation={rotation}>
+      <group ref={groupRef} position={[0, yOffset, 0]}>
+        <primitive object={clone} />
+      </group>
     </group>
   );
 }

@@ -3,16 +3,17 @@ import { addEnergyRecord as saveEnergyRecord } from '../firebase/services';
 
 const EnergyContext = createContext(null);
 
-const DEFAULT_DAILY = 3;
-
-/** Energy level 1–5 is used as a "Friction Filter" (e.g. ≤2 → prioritize short tasks). Stored here and in GardenContext.dailySpoonCount. */
+/** Sparks (Energy Units) 1–10. Used as daily capacity and friction filter. Stored in GardenContext.dailySpoonCount. */
+const SPARKS_MIN = 1;
+const SPARKS_MAX = 10;
+const DEFAULT_SPARKS = 5;
 
 export function EnergyProvider({ children }) {
-  const [dailyEnergy, setDailyEnergy] = useState(DEFAULT_DAILY);
-  const [currentEnergy, setCurrentEnergy] = useState(DEFAULT_DAILY);
+  const [dailyEnergy, setDailyEnergy] = useState(DEFAULT_SPARKS);
+  const [currentEnergy, setCurrentEnergy] = useState(DEFAULT_SPARKS);
 
   const setEnergyLevel = useCallback((level) => {
-    const n = Math.max(1, Math.min(5, Number(level) || DEFAULT_DAILY));
+    const n = Math.max(SPARKS_MIN, Math.min(SPARKS_MAX, Number(level) || DEFAULT_SPARKS));
     setDailyEnergy(n);
     setCurrentEnergy(n);
   }, []);
@@ -33,6 +34,8 @@ export function EnergyProvider({ children }) {
     setEnergyLevel,
     recordEnergy,
     restMode: currentEnergy < 1,
+    sparksMin: SPARKS_MIN,
+    sparksMax: SPARKS_MAX,
   };
 
   return (

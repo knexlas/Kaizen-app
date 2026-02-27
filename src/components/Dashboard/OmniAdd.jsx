@@ -1,6 +1,25 @@
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { parseOmniAddInput } from '../../services/geminiService';
+import { getTaskDictionaryEntry } from '../../services/energyDictionaryService';
+import { useGarden } from '../../context/GardenContext';
+
+/** Recurrence options for Rhythms. Value stored in task.recurrence. */
+const RECURRENCE_OPTIONS = [
+  { value: 'none', label: 'Does not repeat' },
+  { value: 'daily', label: 'Daily' },
+  { value: 'weekly', label: 'Weekly' },
+  { value: 'monthly', label: 'Monthly' },
+  { value: 'custom', label: 'Custom' },
+];
+
+/** Energy cost for tasks: 0 = Zero-Spark, 1–3 = Light/Medium/Heavy. Stored on goal/task as energyCost. */
+const ENERGY_COST_OPTIONS = [
+  { value: 0, label: '0 ⚡ Freebie', title: 'Zero-Spark / Freebie' },
+  { value: 1, label: '1 Light', title: 'Light effort' },
+  { value: 2, label: '2 Medium', title: 'Medium effort' },
+  { value: 3, label: '3 Heavy', title: 'Heavy effort' },
+];
 
 const CHIPS = [
   { id: 'goal', label: 'New Goal', icon: '🎯' },
@@ -8,23 +27,77 @@ const CHIPS = [
   { id: 'note', label: 'Brain Dump / Note', icon: '📝' },
 ];
 
+const DEBOUNCE_MS = 400;
+const MIN_TITLE_LENGTH_FOR_LOOKUP = 2;
+
 export default function OmniAdd({
   onOpenGoalCreator,
   onOpenScheduleEvent,
   onOpenBrainDump,
   onParsedRoute,
 }) {
+  const { googleUser } = useGarden();
+  const uid = googleUser?.uid;
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState('');
   const [isParsing, setIsParsing] = useState(false);
+  /** True when energy slider was auto-set from Task Dictionary (show "Based on your history"). */
+  const [learnedFromHistory, setLearnedFromHistory] = useState(false);
+  /** Fixed/Mandatory (lock) vs Flexible (wave). Work/synced events default to Fixed. */
+  const [isFixed, setIsFixed] = useState(false);
+  /** Work vs Personal context tag. */
+  const [context, setContext] = useState('personal');
+  /** Repeat / Rhythm: none | daily | weekly | monthly | custom. Shown in dropdown behind cycle icon. */
+  const [recurrence, setRecurrence] = useState('none');
+  const [recurrenceDropdownOpen, setRecurrenceDropdownOpen] = useState(false);
+  /** Energy cost 0 (Freebie), 1 (Light), 2 (Medium), 3 (Heavy). Default 1. */
+  const [energyCost, setEnergyCost] = useState(1);
   const inputRef = useRef(null);
+  const recurrenceRef = useRef(null);
 
   useEffect(() => {
     if (open) {
       setInput('');
+      setIsFixed(false);
+      setContext('personal');
+      setRecurrence('none');
+      setRecurrenceDropdownOpen(false);
+      setEnergyCost(1);
+      setLearnedFromHistory(false);
       requestAnimationFrame(() => inputRef.current?.focus());
     }
   }, [open]);
+
+  /** Debounced Task Dictionary lookup: when user types a task name, snap energy to learned cost if any. */
+  useEffect(() => {
+    if (!uid || !open) return;
+    const trimmed = input.trim();
+    if (trimmed.length < MIN_TITLE_LENGTH_FOR_LOOKUP) {
+      setLearnedFromHistory(false);
+      return;
+    }
+    const t = setTimeout(() => {
+      getTaskDictionaryEntry(uid, trimmed)
+        .then((entry) => {
+          if (entry?.learnedCost != null && entry.learnedCost >= 0 && entry.learnedCost <= 3) {
+            setEnergyCost(Math.round(entry.learnedCost));
+            setLearnedFromHistory(true);
+          } else {
+            setLearnedFromHistory(false);
+          }
+        })
+        .catch(() => setLearnedFromHistory(false));
+    }, DEBOUNCE_MS);
+    return () => clearTimeout(t);
+  }, [uid, open, input]);
+
+  useEffect(() => {
+    function handleClickOutside(e) {
+      if (recurrenceRef.current && !recurrenceRef.current.contains(e.target)) setRecurrenceDropdownOpen(false);
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   const close = () => setOpen(false);
 
@@ -46,11 +119,20 @@ export default function OmniAdd({
     try {
       const result = await parseOmniAddInput(trimmed);
       if (result && onParsedRoute) {
-        onParsedRoute(result);
+        const isCalendar = result.type === 'calendar_event';
+        const recurrencePayload = recurrence && recurrence !== 'none' ? (recurrence === 'weekly' ? { type: 'weekly', days: [] } : recurrence === 'monthly' ? { type: 'monthly' } : recurrence === 'custom' ? { type: 'custom' } : { type: 'daily' }) : undefined;
+        onParsedRoute({
+          ...result,
+          isFixed: isCalendar ? true : isFixed,
+          context: isCalendar ? 'work' : context,
+          recurrence: recurrencePayload,
+          energyCost: energyCost >= 0 && energyCost <= 3 ? energyCost : 1,
+        });
       }
     } catch (err) {
       if (onParsedRoute) {
-        onParsedRoute({ type: 'goal', title: trimmed });
+        const recurrencePayload = recurrence && recurrence !== 'none' ? (recurrence === 'weekly' ? { type: 'weekly', days: [] } : recurrence === 'monthly' ? { type: 'monthly' } : recurrence === 'custom' ? { type: 'custom' } : { type: 'daily' }) : undefined;
+        onParsedRoute({ type: 'goal', title: trimmed, isFixed, context, recurrence: recurrencePayload, energyCost: energyCost >= 0 && energyCost <= 3 ? energyCost : 1 });
       }
     } finally {
       setIsParsing(false);
@@ -130,6 +212,117 @@ export default function OmniAdd({
                 <p className="mt-2 font-sans text-xs text-stone-400 text-center">
                   Press Enter to let Mochi route it, or pick one below.
                 </p>
+
+                  <div className="mt-4 space-y-3">
+                  <div className="flex items-center justify-center gap-2 flex-wrap">
+                    <span className="font-sans text-xs text-stone-500 mr-1">Energy:</span>
+                    {ENERGY_COST_OPTIONS.map((opt) => (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => { setEnergyCost(opt.value); setLearnedFromHistory(false); }}
+                        className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg font-sans text-xs font-medium border transition-colors ${energyCost === opt.value ? 'bg-amber-50 border-amber-300 text-amber-800' : 'bg-stone-50 border-stone-200 text-stone-500 hover:border-stone-300'}`}
+                        aria-pressed={energyCost === opt.value}
+                        aria-label={`${opt.label} (${opt.value})`}
+                        title={opt.title}
+                      >
+                        <span aria-hidden>⚡</span> {opt.value} {opt.label}
+                      </button>
+                    ))}
+                    {learnedFromHistory && (
+                      <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-moss-50 border border-moss-200 text-moss-700 font-sans text-xs" title="Based on your past feedback">
+                        <span aria-hidden>🧠</span> Based on your history
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center justify-center gap-2">
+                    <span className="font-sans text-xs text-stone-500 mr-1">Type:</span>
+                    <button
+                      type="button"
+                      onClick={() => setIsFixed(true)}
+                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-sans text-xs font-medium border transition-colors ${isFixed ? 'bg-amber-50 border-amber-300 text-amber-800' : 'bg-stone-50 border-stone-200 text-stone-500 hover:border-stone-300'}`}
+                      aria-pressed={isFixed}
+                      aria-label="Fixed / Mandatory"
+                    >
+                      <span aria-hidden>🔒</span> Fixed
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setIsFixed(false)}
+                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-sans text-xs font-medium border transition-colors ${!isFixed ? 'bg-sky-50 border-sky-300 text-sky-800' : 'bg-stone-50 border-stone-200 text-stone-500 hover:border-stone-300'}`}
+                      aria-pressed={!isFixed}
+                      aria-label="Flexible"
+                    >
+                      <span aria-hidden>〰️</span> Flexible
+                    </button>
+                  </div>
+                  <div className="flex items-center justify-center gap-2">
+                    <span className="font-sans text-xs text-stone-500 mr-1">Context:</span>
+                    <button
+                      type="button"
+                      onClick={() => setContext('work')}
+                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-sans text-xs font-medium border transition-colors ${context === 'work' ? 'bg-stone-700 border-stone-600 text-white' : 'bg-stone-50 border-stone-200 text-stone-500 hover:border-stone-300'}`}
+                      aria-pressed={context === 'work'}
+                      aria-label="Work"
+                    >
+                      Work
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setContext('personal')}
+                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-sans text-xs font-medium border transition-colors ${context === 'personal' ? 'bg-moss-100 border-moss-300 text-moss-800' : 'bg-stone-50 border-stone-200 text-stone-500 hover:border-stone-300'}`}
+                      aria-pressed={context === 'personal'}
+                      aria-label="Personal"
+                    >
+                      Personal
+                    </button>
+                  </div>
+                  <div className="flex items-center justify-center gap-2">
+                    <span className="font-sans text-xs text-stone-500">Repeat:</span>
+                    <div className="relative inline-block" ref={recurrenceRef}>
+                      <button
+                        type="button"
+                        onClick={() => setRecurrenceDropdownOpen((o) => !o)}
+                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-sans text-xs font-medium border transition-colors min-h-[32px] ${recurrence !== 'none' ? 'bg-violet-50 border-violet-300 text-violet-800' : 'bg-stone-50 border-stone-200 text-stone-500 hover:border-stone-300'}`}
+                        aria-expanded={recurrenceDropdownOpen}
+                        aria-haspopup="listbox"
+                        aria-label="Repeat / Rhythm"
+                      >
+                        <span aria-hidden className="shrink-0" title="Repeat">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M17 1l4 4-4 4" />
+                            <path d="M3 11V9a4 4 0 014-4h14" />
+                            <path d="M7 23l-4-4 4-4" />
+                            <path d="M21 13v2a4 4 0 01-4 4H3" />
+                          </svg>
+                        </span>
+                        <span className="max-w-[100px] truncate">
+                          {RECURRENCE_OPTIONS.find((o) => o.value === recurrence)?.label ?? 'Does not repeat'}
+                        </span>
+                      </button>
+                      {recurrenceDropdownOpen && (
+                        <div
+                          className="absolute left-0 top-full z-50 mt-1 py-1 min-w-[160px] rounded-lg bg-white border border-stone-200 shadow-lg max-h-[220px] overflow-y-auto"
+                          role="listbox"
+                          aria-label="Repeat options"
+                        >
+                          {RECURRENCE_OPTIONS.map((opt) => (
+                            <button
+                              key={opt.value}
+                              type="button"
+                              role="option"
+                              aria-selected={recurrence === opt.value}
+                              onClick={() => { setRecurrence(opt.value); setRecurrenceDropdownOpen(false); }}
+                              className={`w-full text-left px-4 py-2 font-sans text-sm hover:bg-stone-100 focus:bg-stone-100 focus:outline-none ${recurrence === opt.value ? 'text-moss-700 bg-moss-50' : 'text-stone-700'}`}
+                            >
+                              {opt.label}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
 
                 <div className="mt-5 flex flex-wrap justify-center gap-2">
                   {CHIPS.map((chip) => (

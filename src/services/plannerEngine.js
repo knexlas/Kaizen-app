@@ -297,3 +297,31 @@ export function autoFillWeek(goals, calendarEvents, startDate) {
 
   return result;
 }
+
+/**
+ * Pacing for Volume/Quota goals: remaining value and suggested per-week rate.
+ * @param {Array} goals - All goals (filter to type === 'volume' with deadline)
+ * @param {string} [todayStr] - YYYY-MM-DD for "today" (default: local today)
+ * @returns {Array<{ goal, remaining, remainingWeeks, valuePerWeek, deadlineStr }>}
+ */
+export function getVolumePacing(goals, todayStr) {
+  const today = todayStr ? new Date(todayStr + 'T12:00:00') : new Date();
+  today.setHours(0, 0, 0, 0);
+  const list = (goals || []).filter((g) => g.type === 'volume' && (g.targetValue ?? 0) > 0);
+  return list.map((goal) => {
+    const target = Number(goal.targetValue) || 0;
+    const current = Number(goal.currentProgress) || 0;
+    const remaining = Math.max(0, target - current);
+    let deadline = goal.deadline ? new Date(String(goal.deadline).trim() + 'T12:00:00') : null;
+    if (deadline && isNaN(deadline.getTime())) deadline = null;
+    const deadlineStr = deadline ? deadline.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' }) : null;
+    let remainingWeeks = 0;
+    if (deadline) {
+      deadline.setHours(0, 0, 0, 0);
+      const msPerWeek = 7 * 24 * 60 * 60 * 1000;
+      remainingWeeks = Math.max(0, (deadline.getTime() - today.getTime()) / msPerWeek);
+    }
+    const valuePerWeek = remainingWeeks > 0 && remaining > 0 ? Math.ceil((remaining / remainingWeeks) * 10) / 10 : remaining;
+    return { goal, remaining, remainingWeeks, valuePerWeek, deadlineStr };
+  });
+}

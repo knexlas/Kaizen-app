@@ -25,6 +25,12 @@ function isTerrainAllowed(terrainMap, x, z, allowedTerrain) {
   return true;
 }
 
+function fireToast(message) {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('kaizen:toast', { detail: { message } }));
+  }
+}
+
 export default function WanderingCreature({
   emoji = '🐰',
   customComponent,
@@ -34,21 +40,51 @@ export default function WanderingCreature({
   scale = 1,
   zOffset = 0.5,
   goalPositions = null,
+  displayName = 'creature',
+  timePhase = 'day',
+  campfirePositions = [],
 }) {
-  const { terrainMap } = useGarden();
+  const { terrainMap, earnEmbers } = useGarden();
   const groupRef = useRef();
   const [target, setTarget] = useState(() => new THREE.Vector3(0, 0, 0));
   const [isWalking, setIsWalking] = useState(false);
+  const [isInteracting, setIsInteracting] = useState(false);
+  const lastPetTimeRef = useRef(0);
   const idleRotationRef = useRef(null);
   const timeoutRef = useRef(null);
   const goalPositionsRef = useRef(goalPositions);
+  const campfirePositionsRef = useRef(campfirePositions);
+  const PET_COOLDOWN_MS = 60000;
+  const INTERACT_DURATION_MS = 2000;
 
   useEffect(() => {
     goalPositionsRef.current = goalPositions;
   }, [goalPositions]);
+  useEffect(() => {
+    campfirePositionsRef.current = campfirePositions;
+  }, [campfirePositions]);
 
   useEffect(() => {
     const pickTarget = () => {
+      // Night: gather at campfires, or stay near center if no fires
+      if (timePhase === 'night') {
+        const fires = campfirePositionsRef.current;
+        if (fires && fires.length > 0) {
+          const fire = fires[Math.floor(Math.random() * fires.length)];
+          const angle = Math.random() * Math.PI * 2;
+          const radius = 1.2 + Math.random() * 1.5;
+          const tx = (fire.x ?? fire[0] ?? 0) + Math.cos(angle) * radius;
+          const tz = (fire.z ?? fire[2] ?? 0) + Math.sin(angle) * radius;
+          setTarget(new THREE.Vector3(tx, 0, tz));
+        } else {
+          setTarget(new THREE.Vector3(Math.random() * 2 - 1, 0, Math.random() * 2 - 1));
+        }
+        idleRotationRef.current = null;
+        const delay = 4000 + Math.random() * 4000;
+        timeoutRef.current = setTimeout(pickTarget, delay);
+        return;
+      }
+
       const goals = goalPositionsRef.current;
       const useGoalTarget = goals?.length > 0 && Math.random() < 0.35;
 
@@ -103,12 +139,31 @@ export default function WanderingCreature({
     return () => {
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
     };
-  }, [terrainMap, allowedTerrain]);
+  }, [terrainMap, allowedTerrain, timePhase, campfirePositions]);
 
   const walkSpeed = speed * 0.65; // Slightly reduced for a more relaxed pace
 
+  const handlePet = () => {
+    setIsInteracting(true);
+    const now = Date.now();
+    const cooldownPassed = now - lastPetTimeRef.current >= PET_COOLDOWN_MS;
+    if (cooldownPassed && typeof earnEmbers === 'function') {
+      earnEmbers(1);
+      lastPetTimeRef.current = now;
+      fireToast(`You pet the ${displayName}! ❤️ +1 Ember`);
+    } else {
+      fireToast(`Happy ${displayName}! ❤️`);
+    }
+    setTimeout(() => setIsInteracting(false), INTERACT_DURATION_MS);
+  };
+
   useFrame((state, delta) => {
     if (!groupRef.current) return;
+
+    if (isInteracting) {
+      groupRef.current.position.y = zOffset + Math.abs(Math.sin(state.clock.elapsedTime * 10)) * 0.3;
+      return;
+    }
 
     const distance = groupRef.current.position.distanceTo(target);
 
@@ -125,7 +180,12 @@ export default function WanderingCreature({
       groupRef.current.rotation.y = THREE.MathUtils.lerp(groupRef.current.rotation.y, angle, delta * walkSpeed * 3);
     } else {
       setIsWalking(false);
-      groupRef.current.position.y = zOffset;
+      // Night + at rest (reached target): ultra-slow, shallow "deep sleep" breathing
+      if (timePhase === 'night') {
+        groupRef.current.position.y = zOffset + Math.sin(state.clock.elapsedTime * 0.35) * 0.015;
+      } else {
+        groupRef.current.position.y = zOffset;
+      }
 
       const idleRot = idleRotationRef.current;
       if (idleRot != null) {
@@ -139,7 +199,13 @@ export default function WanderingCreature({
   });
 
   return (
-    <group ref={groupRef} position={[0, zOffset, 0]}>
+    <group
+      ref={groupRef}
+      position={[0, zOffset, 0]}
+      onPointerDown={(e) => { e.stopPropagation(); handlePet(); }}
+      onPointerOver={() => { document.body.style.cursor = 'pointer'; }}
+      onPointerOut={() => { document.body.style.cursor = 'auto'; }}
+    >
       {customComponent ? (
         <group scale={scale}>
           {cloneElement(customComponent, { isWalking })}

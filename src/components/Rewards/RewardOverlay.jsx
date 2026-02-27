@@ -7,30 +7,60 @@ const TONE_CLASSES = {
   amber: 'bg-amber-100 border-amber-300 text-amber-900',
 };
 
+const VIBE_DURATION_MS = 4000;
+
 export default function RewardOverlay() {
   const { queue, removeTop } = useReward();
   const top = queue[0];
 
   useEffect(() => {
     if (!top) return;
-    const ms = typeof top.durationMs === 'number' ? top.durationMs : 2800;
+    const ms = top.vibePayload ? VIBE_DURATION_MS : (typeof top.durationMs === 'number' ? top.durationMs : 2800);
     const t = setTimeout(() => removeTop(), ms);
     return () => clearTimeout(t);
-  }, [top?.id, top?.durationMs, removeTop]);
+  }, [top?.id, top?.durationMs, top?.vibePayload, removeTop]);
 
   if (!top) return null;
 
   const toneClass = TONE_CLASSES[top.tone] ?? TONE_CLASSES.moss;
+  const hasVibe = top.vibePayload && typeof top.onVibe === 'function';
+
+  const handleVibe = (vibe) => {
+    top.onVibe?.(vibe);
+    removeTop();
+  };
 
   return (
     <div
-      className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[60] max-w-sm w-full mx-4"
+      className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[60] max-w-sm w-full mx-4 pointer-events-auto"
       role="status"
       aria-live="polite"
     >
       <div className={`px-4 py-3 rounded-xl border shadow-lg font-sans text-sm ${toneClass}`}>
-        <span className="mr-2" aria-hidden>{top.icon}</span>
-        <span>{top.message}</span>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="mr-2 shrink-0" aria-hidden>{top.icon}</span>
+          <span className="flex-1 min-w-0">{top.message}</span>
+        </div>
+        {hasVibe && (
+          <div className="flex gap-2 mt-3 pt-2 border-t border-current/10">
+            <button
+              type="button"
+              onClick={() => handleVibe('energizer')}
+              className="flex-1 py-1.5 px-2 rounded-lg font-sans text-xs font-medium bg-white/60 hover:bg-white/90 border border-current/20 transition-colors"
+              aria-label="Energized"
+            >
+              🔋 Energized
+            </button>
+            <button
+              type="button"
+              onClick={() => handleVibe('drainer')}
+              className="flex-1 py-1.5 px-2 rounded-lg font-sans text-xs font-medium bg-white/60 hover:bg-white/90 border border-current/20 transition-colors"
+              aria-label="Drained"
+            >
+              🪫 Drained
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

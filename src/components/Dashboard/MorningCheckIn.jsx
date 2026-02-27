@@ -4,21 +4,21 @@ import { localISODate } from '../../services/dateUtils';
 import { useGarden } from '../../context/GardenContext';
 import { useEnergy } from '../../context/EnergyContext';
 
-/** Energy levels 1–5: used as Friction Filter (e.g. ≤2 → prioritize short tasks). */
-const ENERGY_OPTIONS = [
-  { level: 1, label: 'Survival Mode', sublabel: 'Only essentials & 5-min Kaizen tasks', emoji: '🥄' },
-  { level: 2, label: 'Low Battery', sublabel: 'Light plan, easy wins', emoji: '🥄' },
-  { level: 3, label: 'Steady', sublabel: 'Normal daily routines', emoji: '🥄' },
-  { level: 4, label: 'High Energy', sublabel: 'Ready for deeper work', emoji: '🥄' },
-  { level: 5, label: 'Peak Flow', sublabel: 'Bring on the big projects', emoji: '🥄' },
+/** Sparks (Energy Units) 1–10. Zone labels for the capacity slider. */
+const SPARKS_MIN = 1;
+const SPARKS_MAX = 10;
+const SPARK_ZONES = [
+  { min: 1, max: 3, label: 'Running on empty', color: 'text-slate-600' },
+  { min: 4, max: 7, label: 'Doing okay', color: 'text-amber-700' },
+  { min: 8, max: 10, label: 'Ready to conquer', color: 'text-moss-700' },
 ];
 
-/** Map legacy modifier to energy level 1–5 for "Repeat Yesterday". */
-function modifierToEnergyLevel(modifier) {
-  if (modifier == null || typeof modifier !== 'number') return 3;
-  if (modifier <= -2) return 1;
-  if (modifier >= 1) return 5;
-  return 3;
+/** Map legacy modifier to Sparks 1–10 for "Repeat Yesterday". */
+function modifierToSparks(modifier) {
+  if (modifier == null || typeof modifier !== 'number') return 5;
+  if (modifier <= -2) return 2;
+  if (modifier >= 1) return 8;
+  return 5;
 }
 
 /** Get yesterday as YYYY-MM-DD (local timezone). */
@@ -95,15 +95,17 @@ function Sparkline({ data }) {
 }
 
 export default function MorningCheckIn({ onComplete, onDismiss, goals = [], logMetric, yesterdayPlan = null }) {
-  const { smallJoys } = useGarden();
+  const { smallJoys, clearDaySchedule, today } = useGarden();
   const [randomJoy] = useState(() => {
     if (!smallJoys || smallJoys.length === 0) return null;
     return smallJoys[Math.floor(Math.random() * smallJoys.length)];
   });
   const { setEnergyLevel } = useEnergy();
   const [step, setStep] = useState('energy');
-  const [selectedEnergyLevel, setSelectedEnergyLevel] = useState(null);
+  const [selectedEnergyLevel, setSelectedEnergyLevel] = useState(5);
   const [measurementValues, setMeasurementValues] = useState({});
+  const [showPauseConfirm, setShowPauseConfirm] = useState(false);
+  const [pauseClearing, setPauseClearing] = useState(false);
 
   const vitalityGoals = useMemo(
     () => (Array.isArray(goals) ? goals.filter((g) => g.type === 'vitality') : []),
@@ -115,13 +117,14 @@ export default function MorningCheckIn({ onComplete, onDismiss, goals = [], logM
     [goals]
   );
 
-  const yesterdayEnergyLevel = useMemo(() => {
+  const yesterdaySparks = useMemo(() => {
     if (!yesterdayPlan) return null;
-    if (typeof yesterdayPlan.spoonCount === 'number' && yesterdayPlan.spoonCount >= 1 && yesterdayPlan.spoonCount <= 5) return yesterdayPlan.spoonCount;
-    return modifierToEnergyLevel(yesterdayPlan.modifier);
+    if (typeof yesterdayPlan.spoonCount === 'number' && yesterdayPlan.spoonCount >= 1 && yesterdayPlan.spoonCount <= 10) return yesterdayPlan.spoonCount;
+    return modifierToSparks(yesterdayPlan.modifier);
   }, [yesterdayPlan]);
 
-  const handleEnergySelect = (level) => {
+  const handleEnergySelect = (sparks) => {
+    const level = Math.max(SPARKS_MIN, Math.min(SPARKS_MAX, Number(sparks)));
     setSelectedEnergyLevel(level);
     setEnergyLevel(level);
     if (vitalityGoals.length === 0) {
@@ -137,7 +140,7 @@ export default function MorningCheckIn({ onComplete, onDismiss, goals = [], logM
   };
 
   const finishWithMeasurements = () => {
-    const level = selectedEnergyLevel ?? 3;
+    const level = selectedEnergyLevel ?? 5;
     onComplete?.(level, level);
   };
 
@@ -203,42 +206,115 @@ export default function MorningCheckIn({ onComplete, onDismiss, goals = [], logM
                 </div>
               )}
               <p className="font-sans text-stone-600 text-center mb-4">
-                How&apos;s your energy today?
+                How many Sparks do you have today? (1–10)
               </p>
-              {yesterdayPlan && yesterdayEnergyLevel != null && (
+              {yesterdayPlan && yesterdaySparks != null && (
                 <div className="mb-4">
                   <button
                     type="button"
-                    onClick={() => handleEnergySelect(yesterdayEnergyLevel)}
+                    onClick={() => handleEnergySelect(yesterdaySparks)}
                     className="w-full py-3 px-4 rounded-xl border-2 border-moss-300 bg-moss-50/80 font-sans text-sm text-moss-800 hover:bg-moss-100 hover:border-moss-400 focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors"
                   >
-                    🔄 Repeat Yesterday ({ENERGY_OPTIONS.find((o) => o.level === yesterdayEnergyLevel)?.label ?? `Level ${yesterdayEnergyLevel}`})
+                    🔄 Repeat Yesterday ({yesterdaySparks} Sparks)
                   </button>
                 </div>
               )}
-              <div className="space-y-2" role="group" aria-label="Select energy level">
-                {ENERGY_OPTIONS.map((option) => {
-                  const selected = selectedEnergyLevel === option.level;
-                  return (
-                    <button
-                      key={option.level}
-                      type="button"
-                      onClick={() => handleEnergySelect(option.level)}
-                      className={`w-full text-left py-3 px-4 rounded-xl border-2 transition-colors focus:outline-none focus:ring-2 focus:ring-moss-500/40 focus:ring-offset-1 ${
-                        selected
-                          ? 'border-amber-500 bg-amber-50 text-amber-900 ring-2 ring-amber-400/60 ring-offset-1'
-                          : 'border-stone-200 bg-white text-stone-700 hover:border-stone-300 hover:bg-stone-50'
-                      }`}
-                      aria-pressed={selected}
-                      aria-label={`${option.level} ${option.label}`}
-                    >
-                      <span className="font-sans font-medium">
-                        [{option.level} {option.emoji}] {option.label}
-                      </span>
-                      <p className="font-sans text-xs text-stone-500 mt-0.5">{option.sublabel}</p>
-                    </button>
-                  );
-                })}
+              <div className="space-y-4" role="group" aria-label="Daily capacity (Sparks)">
+                <div className="px-1">
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="font-sans text-sm font-medium text-stone-700">
+                      {(selectedEnergyLevel ?? 5)} Sparks
+                    </span>
+                    <span className="font-sans text-xs text-stone-500">
+                      {SPARK_ZONES.find((z) => (selectedEnergyLevel ?? 5) >= z.min && (selectedEnergyLevel ?? 5) <= z.max)?.label ?? '—'}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={SPARKS_MIN}
+                    max={SPARKS_MAX}
+                    step={1}
+                    value={selectedEnergyLevel ?? 5}
+                    onChange={(e) => setSelectedEnergyLevel(Number(e.target.value))}
+                    className="w-full h-3 rounded-full appearance-none bg-stone-200 accent-moss-600 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
+                    style={{ accentColor: 'var(--moss-600, #5a7a2a)' }}
+                    aria-valuemin={SPARKS_MIN}
+                    aria-valuemax={SPARKS_MAX}
+                    aria-valuenow={selectedEnergyLevel ?? 5}
+                    aria-valuetext={`${selectedEnergyLevel ?? 5} Sparks`}
+                  />
+                  <div className="flex justify-between mt-1 font-sans text-[10px] text-stone-400">
+                    <span>1</span>
+                    <span>10</span>
+                  </div>
+                  <p className="mt-1 font-sans text-[10px] text-stone-500 text-center">
+                    {SPARK_ZONES[0].min}-{SPARK_ZONES[0].max}: {SPARK_ZONES[0].label} · {SPARK_ZONES[1].min}-{SPARK_ZONES[1].max}: {SPARK_ZONES[1].label} · {SPARK_ZONES[2].min}-{SPARK_ZONES[2].max}: {SPARK_ZONES[2].label}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleEnergySelect(selectedEnergyLevel ?? 5)}
+                  disabled={selectedEnergyLevel == null}
+                  className="w-full py-3 rounded-xl font-sans font-medium text-stone-50 bg-moss-600 hover:bg-moss-700 focus:outline-none focus:ring-2 focus:ring-moss-500/50 disabled:opacity-50 disabled:pointer-events-none transition-colors"
+                >
+                  Continue with {(selectedEnergyLevel ?? 5)} Sparks
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowPauseConfirm(true)}
+                  className="w-full mt-2 py-2.5 rounded-xl font-sans text-sm font-medium text-stone-600 hover:text-stone-800 border border-stone-200 hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors"
+                >
+                  ⏸️ Pause Day
+                </button>
+              </div>
+            </motion.div>
+          )}
+
+          {showPauseConfirm && (
+            <motion.div
+              key="pause-confirm"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="absolute inset-0 rounded-2xl bg-stone-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-10"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="pause-confirm-title"
+            >
+              <div className="bg-white rounded-xl border border-stone-200 shadow-xl p-5 max-w-sm w-full">
+                <h3 id="pause-confirm-title" className="font-serif text-stone-900 text-lg mb-2">
+                  Clear today&apos;s schedule?
+                </h3>
+                <p className="font-sans text-sm text-stone-600 mb-4">
+                  Do you need to clear today&apos;s schedule? Flexible tasks will be saved for later, and mandatory tasks will be held for you to reschedule.
+                </p>
+                <div className="flex gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setShowPauseConfirm(false)}
+                    disabled={pauseClearing}
+                    className="flex-1 py-2.5 rounded-xl font-sans text-sm font-medium text-stone-600 border border-stone-200 hover:bg-stone-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (!clearDaySchedule || !today) return;
+                      setPauseClearing(true);
+                      try {
+                        await clearDaySchedule(today);
+                        onComplete?.(1, 1);
+                        onDismiss?.();
+                      } finally {
+                        setPauseClearing(false);
+                      }
+                    }}
+                    disabled={pauseClearing}
+                    className="flex-1 py-2.5 rounded-xl font-sans text-sm font-medium text-white bg-amber-600 hover:bg-amber-700 disabled:opacity-70"
+                  >
+                    {pauseClearing ? '…' : 'Clear today'}
+                  </button>
+                </div>
               </div>
             </motion.div>
           )}

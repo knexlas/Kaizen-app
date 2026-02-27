@@ -154,36 +154,94 @@ function Ground({ onClick, disabled }) {
       receiveShadow
       onClick={disabled ? undefined : onClick}
     >
-      <meshStandardMaterial color="#2d5a27" />
+      <meshStandardMaterial color="#256330" roughness={0.95} metalness={0} />
     </RoundedBox>
   );
 }
 
-function GoalNode({ goal, onGoalClick, activeTool, waterGoal, fireToast, setActiveTool }) {
+/** Single static flora instance for ambient scatter (flowers/mushrooms). */
+function StaticFloraNode({ path, position, scale = 0.4 }) {
+  const { scene } = useGLTF(path);
+  const cloned = useMemo(() => {
+    if (!scene) return null;
+    const clone = scene.clone();
+    clone.traverse((child) => {
+      if (child.isMesh) {
+        child.castShadow = true;
+        child.receiveShadow = true;
+      }
+    });
+    return clone;
+  }, [scene]);
+  if (!cloned) return null;
+  return <primitive object={cloned} position={position} scale={scale} />;
+}
+
+/** Ambient scatter: a few static flowers/mushrooms around the garden for visual richness. */
+function AmbientScatter() {
+  const scatter = useMemo(
+    () => [
+      { path: '/models/flower_yellowA.glb', position: [-6, 0, 5], scale: 0.35 },
+      { path: '/models/flower_purpleA.glb', position: [7, 0, -6], scale: 0.35 },
+      { path: '/models/mushroom_red.glb', position: [4, 0, 8], scale: 0.4 },
+      { path: '/models/mushroom_tan.glb', position: [-8, 0, -4], scale: 0.4 },
+      { path: '/models/flower_redA.glb', position: [9, 0, 3], scale: 0.35 },
+    ],
+    []
+  );
+  return (
+    <group>
+      {scatter.map(({ path, position, scale }, i) => (
+        <StaticFloraNode key={i} path={path} position={position} scale={scale} />
+      ))}
+    </group>
+  );
+}
+
+function GoalNode({ goal, onGoalClick, activeTool, waterGoal, fireToast, setActiveTool, positionOverride }) {
   const [hovered, setHovered] = useState(false);
-  const scale = hovered ? 1.05 : 1;
+  const [justWatered, setJustWatered] = useState(false);
+  const estimatedMinutes = goal.estimatedMinutes ?? (Number(goal.targetHours) || 0) * 60 || 1;
+  const totalMinutes = Number(goal.totalMinutes) || 0;
+  const progressRatio = Math.min(1, totalMinutes / estimatedMinutes);
+  const baseScale = 0.5 + progressRatio * 1.0;
+  const finalScale = (hovered ? 1.05 : 1) * baseScale;
+
+  useEffect(() => {
+    if (!justWatered) return;
+    const t = setTimeout(() => setJustWatered(false), 1500);
+    return () => clearTimeout(t);
+  }, [justWatered]);
+
+  const handleClick = (e) => {
+    e.stopPropagation();
+    if (activeTool?.type === 'move') {
+      setActiveTool?.({ type: 'place', item: goal, isRelocating: true, originalType: 'goal' });
+      return;
+    }
+    if (activeTool?.type === 'water') {
+      try {
+        waterGoal(goal.id);
+        setJustWatered(true);
+        if (typeof fireToast === 'function') fireToast('Watered! +5 Embers 💦');
+        if (typeof setActiveTool === 'function') setActiveTool(null);
+      } catch (err) {
+        if (typeof fireToast === 'function') fireToast(err?.message ?? 'No water left');
+      }
+      return;
+    }
+    onGoalClick(goal);
+  };
+
+  const position = Array.isArray(positionOverride) && positionOverride.length >= 3
+    ? positionOverride
+    : goal.position3D;
+
   return (
     <group
-      position={goal.position3D}
-      scale={scale}
-      onClick={(e) => {
-        e.stopPropagation();
-        if (activeTool?.type === 'move') {
-          setActiveTool?.({ type: 'place', item: goal, isRelocating: true, originalType: 'goal' });
-          return;
-        }
-        if (activeTool?.type === 'water') {
-          try {
-            waterGoal(goal.id);
-            if (typeof fireToast === 'function') fireToast('Watered! +5 Embers 💦');
-            if (typeof setActiveTool === 'function') setActiveTool(null);
-          } catch (err) {
-            if (typeof fireToast === 'function') fireToast(err?.message ?? 'No water left');
-          }
-          return;
-        }
-        onGoalClick(goal);
-      }}
+      position={position}
+      scale={finalScale}
+      onClick={handleClick}
       onPointerOver={(e) => {
         e.stopPropagation();
         setHovered(true);
@@ -195,17 +253,20 @@ function GoalNode({ goal, onGoalClick, activeTool, waterGoal, fireToast, setActi
       }}
     >
       <ProceduralFlora goal={goal} isHovered={hovered} />
+      {justWatered && (
+        <Sparkles count={20} scale={[2, 2, 2]} position={[0, 1.2, 0]} size={2} speed={0.3} color="#93c5fd" />
+      )}
     </group>
   );
 }
 
-function DecorationNode({ decoration, activeTool, setActiveTool }) {
+function DecorationNode({ decoration, activeTool, setActiveTool, positionOverride }) {
   if (!decoration?.position3D || !Array.isArray(decoration.position3D) || !decoration.model) return null;
   const isOrganic = decoration.id?.startsWith('anim_') || decoration.id?.startsWith('dec_pot') || decoration.id?.startsWith('dec_lily');
   const yRotation = useMemo(() => (isOrganic ? Math.random() * Math.PI * 2 : 0), [isOrganic]);
   return (
     <group
-      position={decoration.position3D}
+      position={Array.isArray(positionOverride) && positionOverride.length >= 3 ? positionOverride : decoration.position3D}
       onClick={(e) => {
         e.stopPropagation();
         if (activeTool?.type === 'move') {
@@ -224,18 +285,56 @@ function DecorationNode({ decoration, activeTool, setActiveTool }) {
   );
 }
 
-function Scene({ placedGoals, onPlant, onGoalClick, timePhase, activeTool, waterGoal, fireToast, setActiveTool, decorations, canvasInteractionDisabled }) {
+function Scene({ placedGoals, onPlant, onGoalClick, timePhase, activeTool, waterGoal, fireToast, setActiveTool, decorations, canvasInteractionDisabled, campfirePositions = [] }) {
+  const { terrainMap } = useGarden();
   const isItemBeingMoved = (id, kind) =>
     activeTool?.type === 'place' && activeTool?.isRelocating && activeTool?.originalType === kind && (activeTool?.item?.id === id || activeTool?.decorationId === id || activeTool?.decoration?.id === id);
   const visibleDecorations = decorations?.filter((dec) => !isItemBeingMoved(dec.id, 'decoration')) ?? [];
   const visibleGoals = placedGoals?.filter((goal) => !isItemBeingMoved(goal.id, 'goal')) ?? [];
 
+  const getTerrainHeightAt = (x, z) => {
+    if (!terrainMap || typeof terrainMap !== 'object') return -0.05;
+    if (typeof x !== 'number' || typeof z !== 'number' || Number.isNaN(x) || Number.isNaN(z)) return -0.05;
+    const key = `${Math.round(x)},${Math.round(z)}`;
+    const material = terrainMap[key];
+    if (material === 'water') return 0.02;
+    if (material === 'sand') return 0.01;
+    if (material === 'stone') return -0.05;
+    return -0.05;
+  };
+
+  const getDecorationYOffset = (model) => {
+    if (!model) return 0;
+    const m = String(model).toLowerCase();
+    if (m.includes('campfire')) return 0.08;
+    if (m.includes('bridge')) return 0.04;
+    if (m.includes('canoe')) return 0.05;
+    if (m.includes('stump')) return 0.03;
+    if (m.includes('pot_') || m.includes('lily')) return 0.02;
+    return 0;
+  };
+
   return (
     <>
       <TerrainTiles />
       <Ground onClick={onPlant} disabled={canvasInteractionDisabled} />
+      <AmbientScatter />
       {visibleDecorations.map((dec) => (
-        <DecorationNode key={dec.id} decoration={dec} activeTool={activeTool} setActiveTool={setActiveTool} />
+        <DecorationNode
+          key={dec.id}
+          decoration={dec}
+          activeTool={activeTool}
+          setActiveTool={setActiveTool}
+          positionOverride={
+            Array.isArray(dec.position3D) && dec.position3D.length >= 3
+              ? [
+                  dec.position3D[0],
+                  getTerrainHeightAt(dec.position3D[0], dec.position3D[2]) + getDecorationYOffset(dec.model),
+                  dec.position3D[2],
+                ]
+              : undefined
+          }
+        />
       ))}
       {visibleGoals.map((goal) => (
         <GoalNode
@@ -246,14 +345,23 @@ function Scene({ placedGoals, onPlant, onGoalClick, timePhase, activeTool, water
           waterGoal={waterGoal}
           fireToast={fireToast}
           setActiveTool={setActiveTool}
+          positionOverride={
+            Array.isArray(goal.position3D) && goal.position3D.length >= 3
+              ? [
+                  goal.position3D[0],
+                  getTerrainHeightAt(goal.position3D[0], goal.position3D[2]) + 0.02,
+                  goal.position3D[2],
+                ]
+              : undefined
+          }
         />
       ))}
-      <Ecosystem placedGoals={placedGoals} timePhase={timePhase} />
+      <Ecosystem placedGoals={placedGoals} timePhase={timePhase} campfirePositions={campfirePositions} />
     </>
   );
 }
 
-function Ecosystem({ placedGoals, timePhase = 'day' }) {
+function Ecosystem({ placedGoals, timePhase = 'day', campfirePositions = [] }) {
   const { unlockedAnimals, spiritConfig, userSettings } = useGarden();
   const rawForm = userSettings?.spirit?.form ?? spiritConfig?.type ?? 'mochi';
   const effectiveForm = rawForm === 'ember' ? 'flame' : rawForm === 'nimbus' ? 'cloud' : rawForm === 'custom' ? 'guide' : (rawForm || 'mochi');
@@ -265,8 +373,19 @@ function Ecosystem({ placedGoals, timePhase = 'day' }) {
 
   return (
     <group name="ecosystem">
+      <WanderingCreature
+        customComponent={<DynamicSpirit3D form={effectiveForm} />}
+        allowedTerrain="grass"
+        speed={1.2}
+        zOffset={0}
+        scale={1}
+        goalPositions={goalPositions}
+        timePhase={phase}
+        displayName="Spirit"
+        campfirePositions={campfirePositions}
+      />
       {unlockedAnimals?.includes('fish') && (
-        <WanderingCreature emoji="🐟" allowedTerrain="water" speed={0.8} zOffset={0.2} scale={0.7} />
+        <WanderingCreature emoji="🐟" allowedTerrain="water" speed={0.8} zOffset={0.2} scale={0.7} timePhase={phase} displayName="fish" campfirePositions={campfirePositions} />
       )}
       {unlockedAnimals?.includes('rabbit') && (
         <WanderingCreature
@@ -276,11 +395,14 @@ function Ecosystem({ placedGoals, timePhase = 'day' }) {
           jumpHeight={0.6}
           zOffset={0}
           scale={0.8}
+          timePhase={phase}
+          displayName="rabbit"
+          campfirePositions={campfirePositions}
         />
       )}
-      <WanderingCreature allowedTerrain="water" speed={0.5} zOffset={0} customComponent={<Frog3D />} />
+      <WanderingCreature allowedTerrain="water" speed={0.5} zOffset={0} customComponent={<Frog3D />} timePhase={phase} displayName="frog" campfirePositions={campfirePositions} />
       {phase !== 'night' && (
-        <WanderingCreature allowedTerrain="grass" speed={1.5} zOffset={1.5} customComponent={<Butterfly3D />} />
+        <WanderingCreature allowedTerrain="grass" speed={1.5} zOffset={1.5} customComponent={<Butterfly3D />} timePhase={phase} displayName="butterfly" campfirePositions={campfirePositions} />
       )}
       {phase === 'night' && (
         <Sparkles count={40} scale={[15, 4, 15]} position={[0, 2, 0]} size={4} speed={0.4} opacity={0.8} color="#fef08a" />
@@ -293,6 +415,9 @@ function Ecosystem({ placedGoals, timePhase = 'day' }) {
           zOffset={0.5}
           scale={0.7}
           goalPositions={goalPositions}
+          timePhase={phase}
+          displayName="Mochi"
+          campfirePositions={campfirePositions}
         />
       )}
     </group>
@@ -355,9 +480,29 @@ function fireToast(message) {
   }
 }
 
+/*
+ * .glb usage: Fixed monuments (tree_pineTallA, sign, statue_obelisk) are used by ShopCornerTree,
+ * JournalMonument, InsightMonolith. ProceduralFlora preloads TREES/PINES/FLOWERS/MUSHROOMS (see ProceduralFlora.jsx).
+ * Shop decorations and pets are preloaded below so placing/unlocking from SpiritShop is instant.
+ * AmbientScatter uses flower_* and mushroom_* (already preloaded by ProceduralFlora).
+ */
 useGLTF.preload('/models/tree_pineTallA.glb');
 useGLTF.preload('/models/sign.glb');
 useGLTF.preload('/models/statue_obelisk.glb');
+
+// Preload all shop decoration & pet models so placing/unlocking is instant (no pop-in)
+const SHOP_DECORATION_MODELS = [
+  'tent_smallOpen.glb', 'campfire_logs.glb', 'campfire_stones.glb', 'campfire_bricks.glb', 'campfire_planks.glb',
+  'log_stackLarge.glb', 'canoe.glb', 'bridge_wood.glb', 'fence_planks.glb', 'fence_gate.glb', 'sign.glb',
+  'statue_obelisk.glb', 'statue_columnDamaged.glb', 'pot_large.glb', 'lily_large.glb', 'stump_oldTall.glb',
+];
+const SHOP_PET_MODELS = [
+  'Pug.glb', 'ShibaInu-v10.glb', 'Husky-v9.glb', 'Fox-v6.glb', 'Wolf-v12.glb', 'Horse-v7.glb', 'Horse_White-v8.glb',
+  'Alpaca-v1.glb', 'Llama.glb', 'Deer-v4.glb', 'Stag-v11.glb', 'Cow-v3.glb', 'Bull-v2.glb', 'Pig.glb', 'Sheep.glb',
+  'Donkey-v5.glb', 'Fish1.glb', 'Manta ray.glb', 'Dolphin.glb',
+];
+const SPIRIT_ECOSYSTEM_MODELS = ['Cat.glb'];
+[...SHOP_DECORATION_MODELS, ...SHOP_PET_MODELS, ...SPIRIT_ECOSYSTEM_MODELS].forEach((m) => useGLTF.preload(`/models/${m}`));
 
 /** Map context spirit type to DynamicSpirit3D form (flame, cloud, guide, cat, mochi). */
 function spiritTypeToForm(spiritConfig, userSettings) {
@@ -375,6 +520,13 @@ export default function Garden3D({ onGoalClick, onOpenShop, focusGoal, onOpenJou
   const chosenForm = spiritTypeToForm(spiritConfig, userSettings);
   const placedGoals = goals?.filter((g) => Array.isArray(g.position3D) && g.position3D.length >= 3) ?? [];
   const unplacedGoals = goals?.filter((g) => !g.position3D || !Array.isArray(g.position3D)) ?? [];
+  const campfirePositions = useMemo(
+    () =>
+      (decorations ?? [])
+        .filter((d) => d.model && String(d.model).toLowerCase().includes('campfire') && Array.isArray(d.position3D) && d.position3D.length >= 3)
+        .map((d) => ({ x: Number(d.position3D[0]) || 0, y: Number(d.position3D[1]) ?? 0, z: Number(d.position3D[2]) || 0 })),
+    [decorations]
+  );
 
   const handlePlant = (e) => {
     e.stopPropagation();
@@ -428,12 +580,11 @@ export default function Garden3D({ onGoalClick, onOpenShop, focusGoal, onOpenJou
         <Canvas shadows camera={{ position: [8, 6, 8], fov: 50 }}>
           <SceneErrorBoundary>
             <EnvironmentManager setTimePhase={setTimePhase} />
-            <Sky sunPosition={[10, 20, 10]} />
+            <Sky sunPosition={[10, 20, 10]} turbidity={2.2} rayleigh={0.85} />
             <Environment preset="forest" />
             <KeyboardController />
             <OrbitControlsWithFollowTarget enabled={!uiBlocksCanvas} />
             <FocusCamera focusGoal={focusGoal} />
-            <DynamicSpirit3D form={chosenForm} position={[0, 0, 0]} />
             <Scene
               placedGoals={placedGoals}
               onPlant={handlePlant}
@@ -445,6 +596,7 @@ export default function Garden3D({ onGoalClick, onOpenShop, focusGoal, onOpenJou
               setActiveTool={setActiveTool}
               decorations={decorations}
               canvasInteractionDisabled={uiBlocksCanvas}
+              campfirePositions={campfirePositions}
             />
             {onOpenShop && (
           <group>
