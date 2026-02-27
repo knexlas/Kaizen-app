@@ -1,20 +1,21 @@
-import React, { useMemo, useRef } from 'react';
+import React, { useMemo, useRef, useContext } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { useGLTF } from '@react-three/drei';
 import { getGoalProgressPercent, getHash } from './GardenWalk';
+import { LowPerfContext } from './Garden3D';
 
-export function KenneyModel({ path, scale = 1 }) {
+export function KenneyModel({ path, scale = 1, lowPerf = false }) {
   const { scene } = useGLTF(path);
   const clonedScene = useMemo(() => {
     const clone = scene.clone();
     clone.traverse((child) => {
       if (child.isMesh) {
-        child.castShadow = true;
-        child.receiveShadow = true;
+        child.castShadow = !lowPerf;
+        child.receiveShadow = !lowPerf;
       }
     });
     return clone;
-  }, [scene]);
+  }, [scene, lowPerf]);
   return <primitive object={clonedScene} scale={scale} />;
 }
 
@@ -36,6 +37,7 @@ function getLastWateredOrCreated(goal) {
 }
 
 export default function ProceduralFlora({ goal, isHovered }) {
+  const lowPerf = useContext(LowPerfContext);
   const progress = getGoalProgressPercent(goal) || 0;
   const growthScale = Math.max(0.3, progress / 100);
 
@@ -62,14 +64,14 @@ export default function ProceduralFlora({ goal, isHovered }) {
   return (
     <group scale={0.8} position={[0, 0, 0]}>
       {/* Tilled Soil Base */}
-      <mesh position={[0, 0.05, 0]} receiveShadow castShadow>
+      <mesh position={[0, 0.05, 0]} receiveShadow={!lowPerf} castShadow={!lowPerf}>
         <cylinderGeometry args={[0.45, 0.5, 0.1, 8]} />
         <meshStandardMaterial color={isThirsty ? '#d6d3d1' : '#4a3f35'} roughness={1} />
       </mesh>
       {/* Droop wrapper when thirsty; inner group has sway animation */}
       <group rotation={isThirsty ? [0.2, 0, 0.2] : [0, 0, 0]}>
         <group ref={plantRef}>
-          <KenneyModel path={modelFile} scale={growthScale} />
+          <KenneyModel path={modelFile} scale={growthScale} lowPerf={lowPerf} />
         </group>
       </group>
     </group>

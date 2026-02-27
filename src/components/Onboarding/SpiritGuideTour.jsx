@@ -55,6 +55,18 @@ const TOUR_STEPS = [
     targetId: 'mochi-chat-btn',
     message: () => 'And I am always here. Click me if you need advice, a plan, or just want to chat. When creating goals, try "Suggest based on Title" — Mochi can plan for you. Change the title and suggest again for a fresh plan!',
   },
+  {
+    targetId: 'tour-timeline',
+    message: () => "Want to build habits faster? Use 'Habit Stacks' to link a new goal to an existing routine, like brushing your teeth!",
+  },
+  {
+    targetId: 'tour-horizons',
+    message: () => "When you create a big project, the AI calculates a 'Proficiency Arc'. Watch your rank level up from Beginner to Master as you log hours!",
+  },
+  {
+    targetId: 'tour-insights',
+    message: () => "At the end of the week, open Insights. Mochi will write a personalized, guilt-free story about your progress.",
+  },
 ];
 
 export default function SpiritGuideTour({ open = true, onComplete }) {
@@ -86,7 +98,14 @@ export default function SpiritGuideTour({ open = true, onComplete }) {
 
     const el = document.getElementById(step.targetId);
     if (!el) {
-      setIndex((i) => i + 1);
+      // Target hidden or in another view: show tooltip at fallback position so user can still read and click Next
+      const fallback = {
+        top: typeof window !== 'undefined' ? window.innerHeight / 2 - 80 : 200,
+        left: typeof window !== 'undefined' ? window.innerWidth / 2 - 150 : 100,
+        width: 300,
+        height: 160,
+      };
+      setRect(fallback);
       return;
     }
     el.scrollIntoView({ behavior: 'smooth', block: 'center' });

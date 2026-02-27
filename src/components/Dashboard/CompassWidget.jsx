@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { timeToMinutes, minutesToTime } from '../../services/schedulerService';
+import { getAssignmentsForHour } from './TimeSlicer';
 
 const HOUR_START = 6;
 const HOUR_END = 23;
@@ -41,7 +42,7 @@ export default function CompassWidget({
   onPlantHere,
 }) {
   const slotKey = useMemo(() => getCurrentSlotKey(now), [now]);
-  const assignment = slotKey ? assignments[slotKey] : null;
+  const assignment = slotKey ? (getAssignmentsForHour(assignments, slotKey)[0] ?? null) : null;
   const goalId = getGoalIdFromAssignment(assignment);
   const title = getAssignmentTitle(assignment, goals);
   const isStorm = weather === 'storm';

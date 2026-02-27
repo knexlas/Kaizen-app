@@ -4,7 +4,7 @@ import { DefaultSpiritSvg, ThinkingDots } from './MochiSpirit';
 import { chatWithSpirit, suggestGoalStructure } from '../../services/geminiService';
 import { useGarden } from '../../context/GardenContext';
 import { extractActionCandidate, splitIntoSteps } from '../../services/aiActionExtractor';
-import { HOURS } from './TimeSlicer';
+import { HOURS, getAssignmentsForHour } from './TimeSlicer';
 
 const SPIRIT_EMOJI_BY_TYPE = { mochi: '🐱', cat: '🐱', ember: '🔥', nimbus: '☁️', owl: '🦉' };
 
@@ -88,16 +88,16 @@ export default function SpiritChat({ open, onClose, context = {} }) {
       case 'ADD_TINY_TASK': {
         const goal = makeGoal(title);
         addGoal(goal);
-        const firstEmpty = HOURS.find((h) => !assignments[h]);
-        if (firstEmpty) setAssignments((prev) => ({ ...prev, [firstEmpty]: goal.id }));
+        const firstEmpty = HOURS.find((h) => getAssignmentsForHour(assignments, h).length === 0);
+        if (firstEmpty) setAssignments((prev) => ({ ...prev, [firstEmpty]: [...getAssignmentsForHour(prev, firstEmpty), goal.id] }));
         fireToast('Added a tiny step 🌱');
         break;
       }
       case 'SCHEDULE_NEXT': {
         const goal = makeGoal(title);
         addGoal(goal);
-        const firstEmpty = HOURS.find((h) => !assignments[h]);
-        if (firstEmpty) setAssignments((prev) => ({ ...prev, [firstEmpty]: goal.id }));
+        const firstEmpty = HOURS.find((h) => getAssignmentsForHour(assignments, h).length === 0);
+        if (firstEmpty) setAssignments((prev) => ({ ...prev, [firstEmpty]: [...getAssignmentsForHour(prev, firstEmpty), goal.id] }));
         fireToast('Added to today. You can place it in your schedule.');
         break;
       }
@@ -116,11 +116,13 @@ export default function SpiritChat({ open, onClose, context = {} }) {
         const toAdd = steps.length >= 2 ? steps : [title, 'Second step', 'Third step'].slice(0, 3);
         const goalsToAdd = toAdd.map((stepTitle) => makeGoal(stepTitle));
         goalsToAdd.forEach((g) => addGoal(g));
-        const emptySlots = HOURS.filter((h) => !assignments[h]).slice(0, goalsToAdd.length);
+        const emptySlots = HOURS.filter((h) => getAssignmentsForHour(assignments, h).length === 0).slice(0, goalsToAdd.length);
         if (emptySlots.length > 0) {
           setAssignments((prev) => {
             const next = { ...prev };
-            emptySlots.forEach((slot, i) => { if (goalsToAdd[i]) next[slot] = goalsToAdd[i].id; });
+            emptySlots.forEach((slot, i) => {
+              if (goalsToAdd[i]) next[slot] = [...getAssignmentsForHour(next, slot), goalsToAdd[i].id];
+            });
             return next;
           });
         }

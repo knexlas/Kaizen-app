@@ -1,6 +1,6 @@
-import { useMemo, Suspense, useRef, useState, useEffect } from 'react';
+import { useMemo, Suspense, useRef, useState, useEffect, createContext, useContext } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { OrbitControls, Sky, Environment, RoundedBox, useGLTF, Sparkles, Billboard, Text } from '@react-three/drei';
+import { OrbitControls, Sky, Environment, RoundedBox, useGLTF, Sparkles, Billboard, Text, PerformanceMonitor } from '@react-three/drei';
 import * as THREE from 'three';
 import { useGarden } from '../../context/GardenContext';
 import { getGoalProgressPercent } from './GardenWalk';
@@ -18,11 +18,17 @@ import Garden3DErrorBoundary from './Garden3DErrorBoundary';
 import SceneErrorBoundary from './SceneErrorBoundary';
 import { joystickState } from './VirtualJoystick';
 
+/** When true, shadows and heavy Sparkles are disabled to save battery (e.g. on mobile). */
+export const LowPerfContext = createContext(false);
+
 const TERRAIN_COLORS = {
   water: '#4facfe',
   stone: '#78716c',
   sand: '#d2b48c',
 };
+
+/** Routine categories used for grouping; order matches Seedbag. */
+const ROUTINE_CATEGORIES = ['💪 Wellness', '📁 Life Admin', '🧹 Household', '🧼 Care & Hygiene'];
 
 function FocusCamera({ focusGoal }) {
   const { camera } = useThree();
@@ -86,7 +92,7 @@ function OrbitControlsWithFollowTarget({ enabled = true }) {
       enabled={enabled}
       maxPolarAngle={Math.PI / 2 - 0.01}
       minDistance={2}
-      maxDistance={25}
+      maxDistance={45}
       target={targetRef.current}
       autoRotate
       autoRotateSpeed={0.5}
@@ -99,11 +105,12 @@ function OrbitControlsWithFollowTarget({ enabled = true }) {
 
 function WaterTile({ x, z }) {
   const ref = useRef();
+  const lowPerf = useContext(LowPerfContext);
   useFrame((state) => {
     if (ref.current) ref.current.position.y = 0.02 + Math.sin(state.clock.elapsedTime * 2 + x + z) * 0.03;
   });
   return (
-    <mesh ref={ref} position={[x, 0.02, z]} receiveShadow castShadow>
+    <mesh ref={ref} position={[x, 0.02, z]} receiveShadow={!lowPerf} castShadow={!lowPerf}>
       <boxGeometry args={[1, 0.15, 1]} />
       <meshStandardMaterial color="#3b82f6" roughness={0.1} metalness={0.5} transparent opacity={0.85} />
     </mesh>
@@ -112,6 +119,7 @@ function WaterTile({ x, z }) {
 
 function TerrainTiles() {
   const { terrainMap } = useGarden();
+  const lowPerf = useContext(LowPerfContext);
   const entries = Object.entries(terrainMap ?? {});
   return (
     <>
@@ -121,7 +129,7 @@ function TerrainTiles() {
         if (material === 'water') return <WaterTile key={key} x={x} z={z} />;
         if (material === 'sand') {
           return (
-            <mesh key={key} position={[x, 0.01, z]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+            <mesh key={key} position={[x, 0.01, z]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow={!lowPerf}>
               <planeGeometry args={[1, 1]} />
               <meshStandardMaterial color="#e6c280" roughness={1} />
             </mesh>
@@ -129,14 +137,14 @@ function TerrainTiles() {
         }
         if (material === 'stone') {
           return (
-            <RoundedBox key={key} args={[0.95, 0.15, 0.95]} radius={0.02} position={[x, -0.05, z]} receiveShadow>
+            <RoundedBox key={key} args={[0.95, 0.15, 0.95]} radius={0.02} position={[x, -0.05, z]} receiveShadow={!lowPerf}>
               <meshStandardMaterial color="#78716c" roughness={0.8} />
             </RoundedBox>
           );
         }
         const color = TERRAIN_COLORS[material] ?? TERRAIN_COLORS.stone;
         return (
-          <RoundedBox key={key} args={[0.95, 0.2, 0.95]} radius={0.05} position={[x, -0.1, z]} receiveShadow>
+          <RoundedBox key={key} args={[0.95, 0.2, 0.95]} radius={0.05} position={[x, -0.1, z]} receiveShadow={!lowPerf}>
             <meshStandardMaterial color={color} />
           </RoundedBox>
         );
@@ -146,12 +154,13 @@ function TerrainTiles() {
 }
 
 function Ground({ onClick, disabled }) {
+  const lowPerf = useContext(LowPerfContext);
   return (
     <RoundedBox
-      args={[30, 0.5, 30]}
+      args={[60, 0.5, 60]}
       radius={0.1}
       position={[0, -0.3, 0]}
-      receiveShadow
+      receiveShadow={!lowPerf}
       onClick={disabled ? undefined : onClick}
     >
       <meshStandardMaterial color="#256330" roughness={0.95} metalness={0} />
@@ -162,17 +171,18 @@ function Ground({ onClick, disabled }) {
 /** Single static flora instance for ambient scatter (flowers/mushrooms). */
 function StaticFloraNode({ path, position, scale = 0.4 }) {
   const { scene } = useGLTF(path);
+  const lowPerf = useContext(LowPerfContext);
   const cloned = useMemo(() => {
     if (!scene) return null;
     const clone = scene.clone();
     clone.traverse((child) => {
       if (child.isMesh) {
-        child.castShadow = true;
-        child.receiveShadow = true;
+        child.castShadow = !lowPerf;
+        child.receiveShadow = !lowPerf;
       }
     });
     return clone;
-  }, [scene]);
+  }, [scene, lowPerf]);
   if (!cloned) return null;
   return <primitive object={cloned} position={position} scale={scale} />;
 }
@@ -198,9 +208,10 @@ function AmbientScatter() {
   );
 }
 
-function GoalNode({ goal, onGoalClick, activeTool, waterGoal, fireToast, setActiveTool, positionOverride }) {
+function GoalNode({ goal, onGoalClick, onToolUsed, activeTool, waterGoal, fireToast, setActiveTool, positionOverride }) {
   const [hovered, setHovered] = useState(false);
   const [justWatered, setJustWatered] = useState(false);
+  const lowPerf = useContext(LowPerfContext);
   const estimatedMinutes = goal.estimatedMinutes ?? (Number(goal.targetHours) || 0) * 60 || 1;
   const totalMinutes = Number(goal.totalMinutes) || 0;
   const progressRatio = Math.min(1, totalMinutes / estimatedMinutes);
@@ -221,10 +232,12 @@ function GoalNode({ goal, onGoalClick, activeTool, waterGoal, fireToast, setActi
     }
     if (activeTool?.type === 'water') {
       try {
-        waterGoal(goal.id);
+        const id = goal.isGroup && goal._firstMemberId ? goal._firstMemberId : goal.id;
+        waterGoal(id);
         setJustWatered(true);
         if (typeof fireToast === 'function') fireToast('Watered! +5 Embers 💦');
         if (typeof setActiveTool === 'function') setActiveTool(null);
+        onToolUsed?.();
       } catch (err) {
         if (typeof fireToast === 'function') fireToast(err?.message ?? 'No water left');
       }
@@ -254,7 +267,7 @@ function GoalNode({ goal, onGoalClick, activeTool, waterGoal, fireToast, setActi
     >
       <ProceduralFlora goal={goal} isHovered={hovered} />
       {justWatered && (
-        <Sparkles count={20} scale={[2, 2, 2]} position={[0, 1.2, 0]} size={2} speed={0.3} color="#93c5fd" />
+        <Sparkles count={lowPerf ? 5 : 20} scale={[2, 2, 2]} position={[0, 1.2, 0]} size={2} speed={0.3} color="#93c5fd" />
       )}
     </group>
   );
@@ -285,7 +298,7 @@ function DecorationNode({ decoration, activeTool, setActiveTool, positionOverrid
   );
 }
 
-function Scene({ placedGoals, onPlant, onGoalClick, timePhase, activeTool, waterGoal, fireToast, setActiveTool, decorations, canvasInteractionDisabled, campfirePositions = [] }) {
+function Scene({ placedGoals, onPlant, onGoalClick, onToolUsed, timePhase, activeTool, waterGoal, fireToast, setActiveTool, decorations, canvasInteractionDisabled, campfirePositions = [] }) {
   const { terrainMap } = useGarden();
   const isItemBeingMoved = (id, kind) =>
     activeTool?.type === 'place' && activeTool?.isRelocating && activeTool?.originalType === kind && (activeTool?.item?.id === id || activeTool?.decorationId === id || activeTool?.decoration?.id === id);
@@ -341,6 +354,7 @@ function Scene({ placedGoals, onPlant, onGoalClick, timePhase, activeTool, water
           key={goal.id}
           goal={goal}
           onGoalClick={onGoalClick}
+          onToolUsed={onToolUsed}
           activeTool={activeTool}
           waterGoal={waterGoal}
           fireToast={fireToast}
@@ -363,9 +377,12 @@ function Scene({ placedGoals, onPlant, onGoalClick, timePhase, activeTool, water
 
 function Ecosystem({ placedGoals, timePhase = 'day', campfirePositions = [] }) {
   const { unlockedAnimals, spiritConfig, userSettings } = useGarden();
+  const lowPerf = useContext(LowPerfContext);
   const rawForm = userSettings?.spirit?.form ?? spiritConfig?.type ?? 'mochi';
   const effectiveForm = rawForm === 'ember' ? 'flame' : rawForm === 'nimbus' ? 'cloud' : rawForm === 'custom' ? 'guide' : (rawForm || 'mochi');
   const showBackgroundMochi = effectiveForm !== 'mochi';
+  // Spirit forms with origin at center (mochi sphere, flame, cloud, wisp) need base offset so they sit on terrain
+  const spiritBaseOffset = ['mochi', 'flame', 'cloud', 'wisp'].includes(effectiveForm) ? 0.5 : 0;
   const goalPositions = placedGoals
     ?.map((g) => g.position3D)
     .filter((p) => Array.isArray(p) && p.length >= 3) ?? [];
@@ -377,7 +394,7 @@ function Ecosystem({ placedGoals, timePhase = 'day', campfirePositions = [] }) {
         customComponent={<DynamicSpirit3D form={effectiveForm} />}
         allowedTerrain="grass"
         speed={1.2}
-        zOffset={0}
+        zOffset={spiritBaseOffset}
         scale={1}
         goalPositions={goalPositions}
         timePhase={phase}
@@ -405,7 +422,7 @@ function Ecosystem({ placedGoals, timePhase = 'day', campfirePositions = [] }) {
         <WanderingCreature allowedTerrain="grass" speed={1.5} zOffset={1.5} customComponent={<Butterfly3D />} timePhase={phase} displayName="butterfly" campfirePositions={campfirePositions} />
       )}
       {phase === 'night' && (
-        <Sparkles count={40} scale={[15, 4, 15]} position={[0, 2, 0]} size={4} speed={0.4} opacity={0.8} color="#fef08a" />
+        <Sparkles count={lowPerf ? 5 : 40} scale={[15, 4, 15]} position={[0, 2, 0]} size={4} speed={0.4} opacity={0.8} color="#fef08a" />
       )}
       {showBackgroundMochi && (
         <WanderingCreature
@@ -514,12 +531,58 @@ function spiritTypeToForm(spiritConfig, userSettings) {
   return t || 'mochi';
 }
 
-export default function Garden3D({ onGoalClick, onOpenShop, focusGoal, onOpenJournal, onOpenInsights, uiBlocksCanvas = false }) {
+export default function Garden3D({ onGoalClick, onOpenShop, focusGoal, onOpenJournal, onOpenInsights, onToolUsed, uiBlocksCanvas = false }) {
   const [timePhase, setTimePhase] = useState('day');
+  const [dpr, setDpr] = useState([1, 2]);
+  const [lowPerf, setLowPerf] = useState(false);
   const { goals, editGoal, activeTool, setActiveTool, paintTerrain, updateDecoration, waterGoal, decorations = [], spiritConfig, userSettings } = useGarden();
   const chosenForm = spiritTypeToForm(spiritConfig, userSettings);
-  const placedGoals = goals?.filter((g) => Array.isArray(g.position3D) && g.position3D.length >= 3) ?? [];
-  const unplacedGoals = goals?.filter((g) => !g.position3D || !Array.isArray(g.position3D)) ?? [];
+  const allGoals = goals ?? [];
+
+  const placedGoalsForScene = useMemo(() => {
+    const nonRoutine = allGoals.filter((g) => g.type !== 'routine' && Array.isArray(g.position3D) && g.position3D.length >= 3);
+    const routineGoals = allGoals.filter((g) => g.type === 'routine');
+    const byCategory = {};
+    routineGoals.forEach((g) => {
+      const cat = ROUTINE_CATEGORIES.includes(g.category) ? g.category : '📋 Other';
+      if (!byCategory[cat]) byCategory[cat] = [];
+      byCategory[cat].push(g);
+    });
+    const proxyGoals = [];
+    Object.entries(byCategory).forEach(([category, members]) => {
+      const withPosition = members.filter((m) => Array.isArray(m.position3D) && m.position3D.length >= 3);
+      if (withPosition.length === 0) return;
+      const first = withPosition[0];
+      const totalMinutes = members.reduce((sum, m) => sum + (Number(m.totalMinutes) || 0), 0);
+      const estimatedMinutes = members.reduce((sum, m) => sum + (Number(m.estimatedMinutes) || 0) || (Number(m.targetHours) || 0) * 60, 0) || 1;
+      proxyGoals.push({
+        id: `routine-group-${category}`,
+        title: category,
+        isGroup: true,
+        _firstMemberId: first.id,
+        totalMinutes,
+        estimatedMinutes: estimatedMinutes || 1,
+        position3D: first.position3D,
+      });
+    });
+    return [...nonRoutine, ...proxyGoals];
+  }, [allGoals]);
+
+  const placedGoals = placedGoalsForScene;
+  const unplacedGoals = allGoals.filter((g) => g.type !== 'routine' && (!g.position3D || !Array.isArray(g.position3D))) ?? [];
+  const unplacedRoutineCategories = useMemo(() => {
+    const routineGoals = allGoals.filter((g) => g.type === 'routine');
+    const byCategory = {};
+    routineGoals.forEach((g) => {
+      const cat = ROUTINE_CATEGORIES.includes(g.category) ? g.category : '📋 Other';
+      if (!byCategory[cat]) byCategory[cat] = [];
+      byCategory[cat].push(g);
+    });
+    return Object.entries(byCategory)
+      .filter(([, members]) => members.every((m) => !m.position3D || !Array.isArray(m.position3D)))
+      .map(([category, members]) => ({ category, firstMember: members[0] }));
+  }, [allGoals]);
+
   const campfirePositions = useMemo(
     () =>
       (decorations ?? [])
@@ -541,15 +604,18 @@ export default function Garden3D({ onGoalClick, onOpenShop, focusGoal, onOpenJou
         if (activeTool.originalType === 'decoration') {
           updateDecoration(item.id, { position3D: [x, 0, z] });
         } else if (activeTool.originalType === 'goal') {
-          editGoal(item.id, { position3D: [x, 0, z] });
+          const goalId = item.isGroup && item._firstMemberId ? item._firstMemberId : item.id;
+          editGoal(goalId, { position3D: [x, 0, z] });
         }
         setActiveTool(null);
+        onToolUsed?.();
         return;
       }
       const decorationId = activeTool.decoration?.id ?? activeTool.decorationId;
       if (decorationId) {
         updateDecoration(decorationId, { position3D: [x, 0, z] });
         setActiveTool(null);
+        onToolUsed?.();
       }
       return;
     }
@@ -560,15 +626,22 @@ export default function Garden3D({ onGoalClick, onOpenShop, focusGoal, onOpenJou
     if (activeTool?.type === 'plant') {
       editGoal(activeTool.goalId, { position3D: [x, 0, z] });
       setActiveTool(null);
+      onToolUsed?.();
       return;
     }
-    if (unplacedGoals.length === 0) {
-      fireToast('No unplaced seeds left in your bag! 🎒');
+    if (unplacedGoals.length > 0) {
+      const goal = unplacedGoals[0];
+      editGoal(goal.id, { position3D: [x, 0, z] });
+      fireToast(`Planted ${goal.title}! 🌱`);
       return;
     }
-    const goal = unplacedGoals[0];
-    editGoal(goal.id, { position3D: [x, 0, z] });
-    fireToast(`Planted ${goal.title}! 🌱`);
+    if (unplacedRoutineCategories.length > 0) {
+      const { category, firstMember } = unplacedRoutineCategories[0];
+      editGoal(firstMember.id, { position3D: [x, 0, z] });
+      fireToast(`Planted ${category}! 🌱`);
+      return;
+    }
+    fireToast('No unplaced seeds left in your bag! 🎒');
   };
 
   return (
@@ -577,9 +650,21 @@ export default function Garden3D({ onGoalClick, onOpenShop, focusGoal, onOpenJou
         <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 pointer-events-none px-3 py-2 rounded-xl bg-stone-800/90 text-white text-sm font-medium shadow-lg">
           Tap the grass to plant a goal! 🌱
         </div>
-        <Canvas shadows camera={{ position: [8, 6, 8], fov: 50 }}>
+        <Canvas shadows camera={{ position: [8, 6, 8], fov: 50 }} dpr={dpr}>
           <SceneErrorBoundary>
-            <EnvironmentManager setTimePhase={setTimePhase} />
+            <PerformanceMonitor
+              onDecline={() => {
+                setDpr([1, 1]);
+                setLowPerf(true);
+              }}
+              onIncline={() => {
+                setDpr([1, 2]);
+                setLowPerf(false);
+              }}
+            >
+              <LowPerfContext.Provider value={lowPerf}>
+                <fog attach="fog" args={['#e7e5e4', 15, 35]} />
+                <EnvironmentManager setTimePhase={setTimePhase} />
             <Sky sunPosition={[10, 20, 10]} turbidity={2.2} rayleigh={0.85} />
             <Environment preset="forest" />
             <KeyboardController />
@@ -589,6 +674,7 @@ export default function Garden3D({ onGoalClick, onOpenShop, focusGoal, onOpenJou
               placedGoals={placedGoals}
               onPlant={handlePlant}
               onGoalClick={onGoalClick}
+              onToolUsed={onToolUsed}
               timePhase={timePhase}
               activeTool={activeTool}
               waterGoal={waterGoal}
@@ -617,6 +703,8 @@ export default function Garden3D({ onGoalClick, onOpenShop, focusGoal, onOpenJou
               {onOpenJournal && <JournalMonument onClick={onOpenJournal} />}
               {onOpenInsights && <InsightMonolith onClick={onOpenInsights} />}
             </Suspense>
+              </LowPerfContext.Provider>
+            </PerformanceMonitor>
           </SceneErrorBoundary>
         </Canvas>
     </div>

@@ -34,19 +34,23 @@ export default function EveningWindDown({
   const [gratitude, setGratitude] = useState('');
   const [selectedFocusId, setSelectedFocusId] = useState(null);
 
-  // Normalize assignments into items with hour, val (with id, goalId, title for UI)
+  // Normalize assignments into items with hour, val (flatten array-per-hour for multiple tasks per slot)
   const unfinishedItems = useMemo(() => {
-    return Object.entries(assignments)
-      .filter(([key, val]) => key !== 'anytime' && val != null)
-      .map(([hour, val]) => {
-        const goalId = getGoalId(val);
-        const title = getTitle(val, goalId, goals);
-        const id = goalId ?? `${hour}-${title}`;
-        return {
-          hour,
-          val: { ...(typeof val === 'object' ? val : {}), id, goalId, title },
-        };
+    const out = [];
+    for (const [key, val] of Object.entries(assignments)) {
+      if (key === 'anytime') continue;
+      const list = Array.isArray(val) ? val : val != null ? [val] : [];
+      list.forEach((v, i) => {
+        const goalId = getGoalId(v);
+        const title = getTitle(v, goalId, goals);
+        const id = (v && typeof v === 'object' && v.id) ?? goalId ?? `${key}-${i}-${title}`;
+        out.push({
+          hour: key,
+          val: { ...(typeof v === 'object' ? v : {}), id, goalId, title },
+        });
       });
+    }
+    return out;
   }, [assignments, goals]);
 
   const handleDeferAll = () => {
@@ -59,7 +63,7 @@ export default function EveningWindDown({
       (i) => i.val.id === selectedFocusId || i.val.goalId === selectedFocusId
     );
     if (!focusItem) return;
-    const next = { [focusItem.hour]: assignments[focusItem.hour] };
+    const next = { [focusItem.hour]: assignments[focusItem.hour] ?? [] };
     onUpdateAssignments?.(next);
     setEveningMode?.('night-owl');
     onClose?.();

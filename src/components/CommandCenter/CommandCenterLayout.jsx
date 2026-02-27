@@ -1,5 +1,6 @@
 import { useState, useMemo, useCallback } from 'react';
 import { useGarden } from '../../context/GardenContext';
+import { useTheme } from '../../context/ThemeContext';
 import HorizonsGantt from '../Horizons/HorizonsGantt';
 import HorizonsNarrativeBoard from '../Horizons/HorizonsNarrativeBoard';
 import MonthlyTerrain from '../Dashboard/MonthlyTerrain';
@@ -7,6 +8,17 @@ import StagingArea, { PlanDayDrawer, buildBacklogTasks, getPlanItemsForDate, for
 import GoalEditor from '../Goals/GoalEditor';
 import TaskDetailModal from '../Dashboard/TaskDetailModal';
 import ProjectPlanner from '../Projects/ProjectPlanner';
+import SettingsView from '../Dashboard/SettingsView';
+import { DefaultSpiritSvg } from '../Dashboard/MochiSpirit';
+import { AnimatePresence, motion } from 'framer-motion';
+
+const MirrorIcon = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0" aria-hidden>
+    <path d="M9 18H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h5" />
+    <path d="M15 6h5a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-5" />
+    <circle cx="12" cy="12" r="3" />
+  </svg>
+);
 
 const TABS = [
   { id: 'calendar', label: 'Calendar (The Week)', icon: '📅' },
@@ -15,6 +27,9 @@ const TABS = [
 ];
 
 export default function CommandCenterLayout({ onBack, onNavigateToDashboard }) {
+  const { darkMode: themeDarkMode, setDarkModeOverride } = useTheme();
+  const isDark = themeDarkMode === true;
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
   const {
     goals = [],
     weeklyEvents = [],
@@ -43,12 +58,31 @@ export default function CommandCenterLayout({ onBack, onNavigateToDashboard }) {
     stagingTaskStatus = {},
     setStagingTaskStatus,
     addGoal,
+    spiritConfig,
+    eveningMode,
   } = useGarden();
+
+  const navigateToNowAndOpen = useCallback((modal) => {
+    if (typeof sessionStorage !== 'undefined') sessionStorage.setItem('kaizen:openModal', modal);
+    onNavigateToDashboard?.({ tab: 'today' }) || onBack?.();
+  }, [onNavigateToDashboard, onBack]);
+
+  const renderSpiritAvatar = () => {
+    if (!spiritConfig) return <span className="text-xl leading-none">✨</span>;
+    if (spiritConfig.type === 'mochi') return <DefaultSpiritSvg className="w-10 h-10 drop-shadow-sm" />;
+    if (spiritConfig.type === 'custom') {
+      const HEADS = { bunny: '🐰', cat: '🐱', bear: '🐻', fox: '🦊', bot: '🤖', owl: '🦉' };
+      return <span className="text-xl leading-none">{HEADS[spiritConfig.head] || '✨'}</span>;
+    }
+    const ARCHETYPES = { cat: '🐱', ember: '🔥', nimbus: '☁️', owl: '🦉' };
+    return <span className="text-xl leading-none">{ARCHETYPES[spiritConfig.type] || '✨'}</span>;
+  };
 
   const [activeTab, setActiveTab] = useState('calendar');
   const [editingGoal, setEditingGoal] = useState(null);
   const [taskDetailRef, setTaskDetailRef] = useState(null);
   const [showProjectPlanner, setShowProjectPlanner] = useState(false);
+  const [projectPlannerPrefill, setProjectPlannerPrefill] = useState({ prefillTitle: '', prefillParentGoalId: '' });
   const [expandedGoalId, setExpandedGoalId] = useState(null);
   const [expandedRoutineCategory, setExpandedRoutineCategory] = useState(null); // accordion: which routine category is open in Seedbag
   const [planDayDateStr, setPlanDayDateStr] = useState(null);
@@ -137,15 +171,15 @@ export default function CommandCenterLayout({ onBack, onNavigateToDashboard }) {
   );
 
   return (
-    <div className="min-h-screen flex flex-col bg-stone-50">
-      <header className="sticky top-0 z-20 border-b border-stone-200 bg-white/95 backdrop-blur-sm shrink-0">
+    <div className={`min-h-screen flex flex-col transition-colors ${isDark ? 'bg-slate-900 text-slate-100' : 'bg-stone-50'}`}>
+      <header className={`sticky top-0 z-20 border-b shrink-0 backdrop-blur-sm ${isDark ? 'border-slate-700 bg-slate-800/95' : 'border-stone-200 bg-white/95'}`}>
         <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             {onBack && (
               <button
                 type="button"
                 onClick={onBack}
-                className="p-2 rounded-lg text-stone-500 hover:bg-stone-100 hover:text-stone-800 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
+                className={`p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-moss-500/40 ${isDark ? 'text-slate-400 hover:bg-slate-700 hover:text-slate-100' : 'text-stone-500 hover:bg-stone-100 hover:text-stone-800'}`}
                 aria-label="Back to Today"
               >
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -153,18 +187,98 @@ export default function CommandCenterLayout({ onBack, onNavigateToDashboard }) {
                 </svg>
               </button>
             )}
-            <h1 className="font-serif text-xl text-stone-900">Command Center</h1>
+            <h1 className={`font-serif text-xl ${isDark ? 'text-slate-100' : 'text-stone-900'}`}>Command Center</h1>
+          </div>
+          {/* Toolbelt — same as Now: Mochi chat, Compost, Mirror, Dark mode, Accessibility, Replay tour (Settings is fixed top-right only) */}
+          <div className="flex items-center justify-end gap-3 shrink-0">
+            <button
+              type="button"
+              onClick={() => navigateToNowAndOpen('chat')}
+              className="w-10 h-10 flex items-center justify-center rounded-full hover:scale-105 transition-transform cursor-pointer drop-shadow-sm"
+              title="Talk to Mochi"
+              aria-label="Talk to Mochi"
+            >
+              {renderSpiritAvatar()}
+            </button>
+            <button
+              type="button"
+              onClick={() => navigateToNowAndOpen('compost')}
+              className={`w-10 h-10 flex items-center justify-center rounded-full focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors ${
+                isDark ? 'text-slate-400 hover:text-slate-100 hover:bg-slate-700/60' : 'text-stone-600 hover:text-stone-900 hover:bg-stone-200'
+              }`}
+              aria-label="Compost Heap"
+              title="Compost Heap"
+            >
+              <span className="text-xl leading-none" aria-hidden>🍂</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => navigateToNowAndOpen('mirror')}
+              className={`w-10 h-10 flex items-center justify-center rounded-full focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors ${
+                isDark ? 'text-slate-400 hover:text-slate-100 hover:bg-slate-700/60' : 'text-stone-500 hover:text-stone-800 hover:bg-stone-200'
+              }`}
+              aria-label="Customize Spirit (Mirror)"
+              title="Mirror"
+            >
+              <MirrorIcon />
+            </button>
+            <button
+              type="button"
+              onClick={() => setDarkModeOverride(!isDark)}
+              className={`w-10 h-10 flex items-center justify-center rounded-full focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors ${
+                isDark ? 'text-indigo-300 hover:bg-slate-700/60' : 'text-stone-500 hover:text-indigo-600 hover:bg-stone-200'
+              }`}
+              aria-label="Toggle dark mode"
+              title="Toggle dark mode"
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
+                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+              </svg>
+            </button>
+            {eveningMode !== 'night-owl' && (
+              <button
+                type="button"
+                onClick={() => navigateToNowAndOpen('accessibility')}
+                className={`w-10 h-10 flex items-center justify-center rounded-full focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors ${
+                  isDark ? 'text-slate-400 hover:text-slate-100 hover:bg-slate-700/60' : 'text-stone-500 hover:text-stone-800 hover:bg-stone-200'
+                }`}
+                aria-label="Accessibility & Comfort"
+                title="Accessibility & Comfort"
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0" aria-hidden>
+                  <circle cx="12" cy="12" r="10" />
+                  <path d="M12 6v4M12 14h.01M9 9l2 2-2 2" />
+                </svg>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => navigateToNowAndOpen('tour')}
+              className={`w-10 h-10 flex items-center justify-center rounded-full focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors ${
+                isDark ? 'text-slate-400 hover:text-slate-100 hover:bg-slate-700/60' : 'text-stone-400 hover:text-stone-600 hover:bg-stone-200'
+              }`}
+              aria-label="Replay tour"
+              title="Replay tour"
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0" aria-hidden>
+                <circle cx="12" cy="12" r="10" />
+                <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+                <line x1="12" y1="17" x2="12.01" y2="17" />
+              </svg>
+            </button>
           </div>
         </div>
         <div className="max-w-5xl mx-auto px-4 pb-2">
-          <nav className="flex gap-1 p-1 rounded-xl bg-stone-100 border border-stone-200" aria-label="Plan sections">
+          <nav className={`flex gap-1 p-1 rounded-xl border ${isDark ? 'bg-slate-700/50 border-slate-600' : 'bg-stone-100 border-stone-200'}`} aria-label="Plan sections">
             {TABS.map((tab) => (
               <button
                 key={tab.id}
                 type="button"
                 onClick={() => setActiveTab(tab.id)}
                 className={`flex-1 min-w-0 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg font-sans text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-moss-500/40 ${
-                  activeTab === tab.id ? 'bg-white text-stone-900 shadow-sm' : 'text-stone-600 hover:text-stone-800'
+                  activeTab === tab.id
+                    ? isDark ? 'bg-slate-600 text-slate-100 shadow-sm' : 'bg-white text-stone-900 shadow-sm'
+                    : isDark ? 'text-slate-300 hover:text-slate-100' : 'text-stone-600 hover:text-stone-800'
                 }`}
                 aria-current={activeTab === tab.id ? 'page' : undefined}
               >
@@ -176,13 +290,26 @@ export default function CommandCenterLayout({ onBack, onNavigateToDashboard }) {
         </div>
       </header>
 
+      {/* Persistent top-right Settings (same as dashboard) */}
+      <div className="fixed top-4 right-4 z-50 pointer-events-auto">
+        <button
+          type="button"
+          onClick={() => setShowSettingsModal((v) => !v)}
+          className="w-10 h-10 flex items-center justify-center rounded-full bg-stone-900/80 backdrop-blur-md border border-white/10 shadow-lg text-stone-200 hover:text-white hover:bg-stone-800/90 transition-colors focus:outline-none focus:ring-2 focus:ring-moss-500/50"
+          aria-label={showSettingsModal ? 'Close settings' : 'Settings'}
+          title={showSettingsModal ? 'Close' : 'Settings'}
+        >
+          <span className="text-xl leading-none" aria-hidden>{showSettingsModal ? '←' : '⚙️'}</span>
+        </button>
+      </div>
+
       {/* Today strip: quick view of today's schedule */}
-      <div className="shrink-0 border-b border-stone-200 bg-white/80 px-4 py-2">
+      <div className={`shrink-0 border-b px-4 py-2 ${isDark ? 'border-slate-700 bg-slate-800/80' : 'border-stone-200 bg-white/80'}`}>
         <div className="max-w-5xl mx-auto flex flex-wrap items-center gap-x-4 gap-y-1">
-          <span className="font-sans text-sm font-medium text-stone-700">Today</span>
+          <span className={`font-sans text-sm font-medium ${isDark ? 'text-slate-300' : 'text-stone-700'}`}>Today</span>
           {todayPlanItems.length > 0 ? (
             <>
-              <span className="font-sans text-sm text-stone-600">
+              <span className={`font-sans text-sm ${isDark ? 'text-slate-400' : 'text-stone-600'}`}>
                 {todayPlanItems.map((p) => `${formatHourKey(Number(p.hour))} ${p.title}`).join(' · ')}
               </span>
               <button
@@ -194,7 +321,7 @@ export default function CommandCenterLayout({ onBack, onNavigateToDashboard }) {
               </button>
             </>
           ) : (
-            <span className="font-sans text-sm text-stone-500 italic">Nothing scheduled yet.</span>
+            <span className={`font-sans text-sm italic ${isDark ? 'text-slate-500' : 'text-stone-500'}`}>Nothing scheduled yet.</span>
           )}
         </div>
       </div>
@@ -367,7 +494,7 @@ export default function CommandCenterLayout({ onBack, onNavigateToDashboard }) {
               {routinesByCategory.length > 0 && (
                 <>
                   <h3 className="font-sans text-sm font-semibold text-stone-700 uppercase tracking-wide mt-6 mb-2">Routines</h3>
-                  <p className="font-sans text-xs text-stone-500 mb-3">Click a routine to expand tasks, see when it’s planned, and edit.</p>
+                  <p className="font-sans text-xs text-stone-500 mb-3">Click a routine to expand tasks, see when it’s planned, and edit. Each category is one seed in your garden; complete any routine in the group to grow it.</p>
                   <p className="font-sans text-xs text-stone-400 mb-3">Routines without a category appear under Other. Edit a routine to set its category (Wellness, Life Admin, etc.).</p>
                   <div className="space-y-2" role="region" aria-label="Routine categories">
                     {routinesByCategory.map(({ category, goals: catGoals }) => {
@@ -512,6 +639,11 @@ export default function CommandCenterLayout({ onBack, onNavigateToDashboard }) {
         addSubtask={addSubtask}
         updateSubtask={updateSubtask}
         deleteSubtask={deleteSubtask}
+        onOpenProjectPlanner={(opts) => {
+          setProjectPlannerPrefill({ prefillTitle: opts?.prefillTitle ?? '', prefillParentGoalId: opts?.prefillParentGoalId ?? '' });
+          setEditingGoal(null);
+          setShowProjectPlanner(true);
+        }}
       />
 
       <TaskDetailModal
@@ -525,8 +657,10 @@ export default function CommandCenterLayout({ onBack, onNavigateToDashboard }) {
 
       <ProjectPlanner
         open={showProjectPlanner}
-        onClose={() => setShowProjectPlanner(false)}
+        onClose={() => { setShowProjectPlanner(false); setProjectPlannerPrefill({ prefillTitle: '', prefillParentGoalId: '' }); }}
         onCreateGoals={handleProjectGoals}
+        prefillTitle={projectPlannerPrefill.prefillTitle}
+        prefillParentGoalId={projectPlannerPrefill.prefillParentGoalId}
       />
 
       <PlanDayDrawer
@@ -538,6 +672,46 @@ export default function CommandCenterLayout({ onBack, onNavigateToDashboard }) {
         saveDayPlanForDate={saveDayPlanForDate}
         goals={goals}
       />
+
+      <AnimatePresence>
+        {showSettingsModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[60] flex items-center justify-center p-3 sm:p-4 bg-stone-900/40 backdrop-blur-sm overflow-y-auto safe-area-pb"
+            onClick={() => setShowSettingsModal(false)}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Settings"
+          >
+            <motion.div
+              initial={{ scale: 0.96, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.96, opacity: 0 }}
+              onClick={(e) => e.stopPropagation()}
+              className="relative w-full max-w-lg max-h-[90dvh] overflow-y-auto rounded-2xl bg-[#FDFCF5] border border-stone-200 shadow-2xl"
+            >
+              <button
+                type="button"
+                onClick={() => setShowSettingsModal(false)}
+                aria-label="Close"
+                className="absolute top-3 right-3 z-10 w-9 h-9 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg text-stone-400 hover:text-stone-600 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
+              >
+                ×
+              </button>
+              <div className="p-6 pt-14">
+                <SettingsView
+                  onReplayTour={() => {
+                    setShowSettingsModal(false);
+                    onBack?.();
+                  }}
+                />
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Bottom nav: Now | Plan | Garden — same mental model as dashboard */}
       <nav

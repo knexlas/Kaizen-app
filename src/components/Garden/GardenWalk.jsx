@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useGarden } from '../../context/GardenContext';
 import { useEnergy } from '../../context/EnergyContext';
@@ -101,7 +101,7 @@ const GARDEN_GRADIENTS = {
 };
 
 export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCreator, onEditGoal }) {
-  const { goals: contextGoals, decorations = [], fertilizerCount = 0, fertilizeGoal, waterGoal, waterDrops = 0, addWater = () => {}, dailySpoonCount, activeTool, setActiveTool, ownedSeeds = [], editGoal } = useGarden();
+  const { goals: contextGoals, decorations = [], fertilizerCount = 0, fertilizeGoal, waterGoal, waterDrops = 0, addWater = () => {}, dailySpoonCount, activeTool, setActiveTool, ownedSeeds = [], editGoal, tourStep } = useGarden();
   const { dailyEnergy } = useEnergy();
   const spoons = typeof dailySpoonCount === 'number' ? dailySpoonCount : dailyEnergy;
   const energyTier = getEnergyTier(spoons);
@@ -118,6 +118,9 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
   const [activeAlmanac, setActiveAlmanac] = useState(null); // 'journal' | 'insights' | null
   const [showPlantingModal, setShowPlantingModal] = useState(false);
   const [isTransplanting, setIsTransplanting] = useState(false);
+  const [toolboxFaded, setToolboxFaded] = useState(false);
+
+  const onToolUsed = useCallback(() => setToolboxFaded(true), []);
 
   const formatTime = (seconds) => {
     const m = Math.floor(seconds / 60);
@@ -156,8 +159,25 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
   const growingCount = allGoals.filter((g) => !isProjectDone(g) && getGoalProgressPercent(g) < 100).length;
   const harvestedCount = allGoals.filter((g) => isProjectDone(g) || getGoalProgressPercent(g) >= 100).length;
 
-  const unplacedGoals = allGoals.filter((g) => !g.position3D || !Array.isArray(g.position3D));
+  const ROUTINE_CATEGORIES = ['💪 Wellness', '📁 Life Admin', '🧹 Household', '🧼 Care & Hygiene'];
+  const unplacedGoals = allGoals.filter((g) => g.type !== 'routine' && (!g.position3D || !Array.isArray(g.position3D)));
   const unplacedDecorations = decorations.filter((d) => !d.position3D || !Array.isArray(d.position3D));
+  const unplacedRoutineCategories = useMemo(() => {
+    const routineGoals = allGoals.filter((g) => g.type === 'routine');
+    const byCategory = {};
+    routineGoals.forEach((g) => {
+      const cat = ROUTINE_CATEGORIES.includes(g.category) ? g.category : '📋 Other';
+      if (!byCategory[cat]) byCategory[cat] = [];
+      byCategory[cat].push(g);
+    });
+    return Object.entries(byCategory)
+      .filter(([, members]) => members.every((m) => !m.position3D || !Array.isArray(m.position3D)))
+      .map(([category, members]) => ({ id: `routine-group-${category}`, title: category, goalId: members[0].id }));
+  }, [allGoals]);
+  const plantableSeeds = [
+    ...unplacedGoals.map((g) => ({ id: g.id, title: g.title || 'Untitled goal', goalId: g.id })),
+    ...unplacedRoutineCategories,
+  ];
   const firstUnplacedGoal = unplacedGoals[0];
   const firstUnplacedDecoration = unplacedDecorations[0];
 
@@ -234,10 +254,12 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
             onOpenShop={() => setIsShopOpen(true)}
             onOpenJournal={() => setActiveAlmanac('journal')}
             onOpenInsights={() => setActiveAlmanac('insights')}
+            onToolUsed={onToolUsed}
             onGoalClick={(goal) => {
               if (activeTool?.type === 'water') {
                 waterGoal(goal.id);
                 setActiveTool(null);
+                onToolUsed();
               } else {
                 setViewingGoal(goal);
               }
@@ -245,6 +267,12 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
             uiBlocksCanvas={!!(viewingGoal || activeAlmanac)}
           />
           <VirtualJoystick />
+          {/* Tour step 4: point to Spirit */}
+          {tourStep === 4 && (
+            <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-xl bg-stone-800 text-white text-sm font-sans shadow-lg max-w-[280px] text-center pointer-events-none">
+              Welcome to the Garden! Click your Spirit to pet it.
+            </div>
+          )}
           {/* UI overlay: pointer-events-none so 3D canvas gets clicks; each interactive element has pointer-events-auto */}
           <div className="absolute inset-0 z-40 pointer-events-none rounded-3xl">
             {/* Toolbox: fades out when shop is open to avoid clutter */}
@@ -483,15 +511,21 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
           </AnimatePresence>
         </div>
 
-        {/* Toolbelt — bottom center overlay; fades when shop is open */}
+        {/* Toolbelt — fades when shop open; fades after use, restores on hover (game-like) */}
         <div
           className={
             isShopOpen
               ? 'opacity-0 pointer-events-none transition-opacity duration-300'
-              : 'opacity-100 transition-opacity duration-300'
+              : 'transition-opacity duration-300'
           }
+          style={!isShopOpen ? { opacity: toolboxFaded ? 0.35 : 1 } : undefined}
         >
-        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-50 flex flex-wrap items-center justify-center gap-2 px-3 py-2 rounded-2xl bg-stone-800/90 backdrop-blur-sm shadow-lg border border-stone-600/50 pointer-events-auto">
+        <div
+          className="absolute bottom-4 left-1/2 -translate-x-1/2 z-50 flex flex-wrap items-center justify-center gap-2 px-3 py-2 rounded-2xl bg-stone-800/90 backdrop-blur-sm shadow-lg border border-stone-600/50 pointer-events-auto"
+          onMouseEnter={() => setToolboxFaded(false)}
+          role="toolbar"
+          aria-label="Garden tools"
+        >
           <button
             type="button"
             disabled={waterDrops === 0}
@@ -513,6 +547,7 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
           {toolBtn('grass', 'Grass (Eraser)', '🌱')}
           <button
             type="button"
+            title="Click an object, then click the ground to move it"
             onClick={() => setActiveTool({ type: 'move' })}
             className={`px-3 py-2 rounded-xl font-sans text-sm font-medium transition-all focus:outline-none focus:ring-2 focus:ring-moss-500/50 focus:ring-offset-2 ${
               activeTool?.type === 'move'
@@ -571,7 +606,10 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
           {(activeTool && (
             <button
               type="button"
-              onClick={() => setActiveTool(null)}
+              onClick={() => {
+                setActiveTool(null);
+                setToolboxFaded(true);
+              }}
               className="px-3 py-2 rounded-xl font-sans text-sm font-medium bg-stone-600 text-white hover:bg-stone-500 focus:outline-none focus:ring-2 focus:ring-moss-500/50 focus:ring-offset-2 transition-colors"
             >
               Cancel
@@ -617,20 +655,20 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
                 <p className="font-sans text-sm text-stone-500 mt-1">Tap one, then tap the grass to place it.</p>
               </div>
               <div className="px-4 pb-4 max-h-[60vh] overflow-y-auto">
-                {unplacedGoals.length > 0 ? (
+                {plantableSeeds.length > 0 ? (
                   <ul className="space-y-2" role="list">
-                    {unplacedGoals.map((goal) => (
-                      <li key={goal.id}>
+                    {plantableSeeds.map((seed) => (
+                      <li key={seed.id}>
                         <button
                           type="button"
                           onClick={() => {
-                            setActiveTool({ type: 'plant', goalId: goal.id });
+                            setActiveTool({ type: 'plant', goalId: seed.goalId });
                             setShowPlantingModal(false);
                           }}
                           className="w-full flex items-center gap-3 px-4 py-3 rounded-xl font-sans text-left text-stone-800 bg-white/80 border border-stone-200/80 hover:bg-moss-50/80 hover:border-moss-300/80 focus:outline-none focus:ring-2 focus:ring-moss-500/50 focus:ring-offset-2 transition-colors"
                         >
                           <span className="text-xl shrink-0" aria-hidden>🌱</span>
-                          <span className="font-medium truncate">{goal.title || 'Untitled goal'}</span>
+                          <span className="font-medium truncate">{seed.title || 'Untitled goal'}</span>
                         </button>
                       </li>
                     ))}

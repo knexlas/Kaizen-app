@@ -17,7 +17,7 @@ import GoalCreator from '../Goals/GoalCreator';
 import ProjectPlanner from '../Projects/ProjectPlanner';
 import HorizonsGantt from '../Horizons/HorizonsGantt';
 import GoalEditor from '../Goals/GoalEditor';
-import TimeSlicer, { HOURS, MAX_SLOTS_BY_WEATHER } from './TimeSlicer';
+import TimeSlicer, { HOURS, MAX_SLOTS_BY_WEATHER, getAssignmentsForHour } from './TimeSlicer';
 import CompassWidget from './CompassWidget';
 import CommandPalette from './CommandPalette';
 import OmniAdd from './OmniAdd';
@@ -26,12 +26,13 @@ import MochiSpiritWithDialogue, { DefaultSpiritSvg, getSpiritGreeting, getPlanRe
 import SpiritChat from './SpiritChat';
 import CompostHeap from './CompostHeap';
 import NextTinyStep from './NextTinyStep';
-import { generateSpiritInsight, generateMorningBriefing, generateWeeklyPlan, generateMonthlyPlan, generateMonthlyPlanTasks, rebalanceMonthQuota } from '../../services/geminiService';
+import { generateSpiritInsight, generateMorningBriefing, generateWeeklyPlan, generateMonthlyPlan, generateMonthlyPlanTasks, rebalanceMonthQuota, generateHabitSynergy } from '../../services/geminiService';
 import { importICSFile, downloadICS, CALENDAR_PROVIDERS } from '../../services/calendarSyncService';
 import { fetchOutlookEvents } from '../../services/microsoftCalendarService';
 import { getStoredBriefing, setStoredBriefing } from '../../services/spiritBriefingStorage';
 import { getNextTaskInSequence } from '../../services/nextStepService';
 import NextStepPrompt from './NextStepPrompt';
+import HabitStackHandoffPrompt from './HabitStackHandoffPrompt';
 import MorningCheckIn from './MorningCheckIn';
 import EveningWindDown from './EveningWindDown';
 import FocusSession from '../Focus/FocusSession';
@@ -45,6 +46,8 @@ import CalendarView from './CalendarView';
 import SpiritBuilder from '../Onboarding/SpiritBuilder';
 import SpiritGuideTour from '../Onboarding/SpiritGuideTour';
 import SpiritOrigins from '../Onboarding/SpiritOrigins';
+import TourHighlight from '../Onboarding/TourHighlight';
+import FeatureTooltip from '../Onboarding/FeatureTooltip';
 import { fetchGoogleEvents, createGoogleEvent } from '../../services/googleCalendarService';
 import { getTourSeen, setTourSeen, consumeTriggerTourFlag } from '../../services/onboardingStateService';
 import { findAvailableSlots, generateLiquidSchedule, generateSolidSchedule, getDefaultWeekStart, getStormWarnings, getStormImpactForDay, timeToMinutes, minutesToTime, generateDailyPlan, materializeWeeklyPlan, getSpoonCost, hourFromTimeStr } from '../../services/schedulerService';
@@ -220,7 +223,7 @@ class ScheduleErrorBoundary extends Component {
 }
 
 function GardenDashboard({ firstDayStep, onFirstDayStepChange } = {}) {
-  const { goals, weeklyEvents, logs, addGoal, updateGoalProgress, updateGoalMilestone, editGoal, deleteGoal, addSubtask, updateSubtask, deleteSubtask, updateSubtaskProgress, toggleMilestone, updateMilestone, addMilestone, deleteMilestone, promoteTaskToThisWeek, lastCheckInDate, completeMorningCheckIn, dailyEnergyModifier, dailySpoonCount, addLog, logMetric, googleUser, connectCalendar, disconnectCalendar, googleToken, updateWeeklyEvents, weeklyNorthStarId, cloudSaveStatus, spiritConfig, setSpiritConfig, compost, addToCompost, removeFromCompost, soilNutrients, consumeSoilNutrients, earnEmbers, addWater, today, assignments, setAssignments, gentleResetToToday, archiveStalePlanItems, runCriticalMassCheck, eveningMode, setEveningMode, userSettings, addRitualCategory, saveDayPlanForDate, loadDayPlan, weekAssignments, monthlyQuotas, addMonthlyQuota, updateMonthlyQuota, msUser, msToken, connectOutlook, disconnectOutlook, refreshOutlookToken } = useGarden();
+  const { goals, weeklyEvents, logs, addGoal, updateGoalProgress, updateUserSettings, updateGoalMilestone, editGoal, deleteGoal, addSubtask, updateSubtask, deleteSubtask, updateSubtaskProgress, toggleMilestone, updateMilestone, addMilestone, deleteMilestone, promoteTaskToThisWeek, lastCheckInDate, completeMorningCheckIn, dailyEnergyModifier, dailySpoonCount, addLog, logMetric, googleUser, connectCalendar, disconnectCalendar, googleToken, updateWeeklyEvents, weeklyNorthStarId, cloudSaveStatus, spiritConfig, setSpiritConfig, compost, addToCompost, removeFromCompost, soilNutrients, consumeSoilNutrients, earnEmbers, addWater, today, assignments, setAssignments, gentleResetToToday, archiveStalePlanItems, runCriticalMassCheck, eveningMode, setEveningMode, userSettings, addRitualCategory, saveDayPlanForDate, loadDayPlan, weekAssignments, monthlyQuotas, addMonthlyQuota, updateMonthlyQuota, msUser, msToken, connectOutlook, disconnectOutlook, refreshOutlookToken, tourStep, setTourStep } = useGarden();
   const { pushReward } = useReward();
   const { darkMode: themeDarkMode, setDarkModeOverride } = useTheme();
   const { dailyEnergy, setEnergyLevel } = useEnergy();
@@ -238,6 +241,16 @@ function GardenDashboard({ firstDayStep, onFirstDayStepChange } = {}) {
     return <span className="text-4xl">{ARCHETYPES[spiritConfig.type] || '✨'}</span>;
   };
   const needsMorningCheckIn = lastCheckInDate !== today;
+  const appGuideStep = userSettings?.appGuideStep ?? 0;
+  const showAppGuide = appGuideStep >= 0 && appGuideStep < 6;
+  const GUIDE_STEPS = [
+    { targetId: 'guide-morning-checkin', message: 'Start here by logging your energy.' },
+    { targetId: 'guide-omni-add', message: 'Quickly add tasks or ideas here.' },
+    { targetId: 'tour-timeline', message: 'Click a task to view notes, generate an AI guide, or set up a Habit Stack.' },
+    { targetId: 'tour-insights', message: 'Check here weekly for AI-generated summaries of your progress.' },
+    { targetId: 'tour-horizons', message: 'Open Plan to schedule your week, manage projects, and set monthly quotas.' },
+    { targetId: 'guide-garden-tab', message: 'Open the Garden to see your goals as plants and interact with your spirit.' },
+  ];
 
   const yesterdayForPlan = useMemo(() => {
     if (!today) return localISODate(new Date(Date.now() - 864e5));
@@ -269,6 +282,7 @@ function GardenDashboard({ firstDayStep, onFirstDayStepChange } = {}) {
   const [seedForMilestones, setSeedForMilestones] = useState(null);
   const [editingGoal, setEditingGoal] = useState(null);
   const [nextStepPrompt, setNextStepPrompt] = useState(null); // { completedTitle, nextStep } after task complete
+  const [habitStackHandoff, setHabitStackHandoff] = useState(null); // { routineName, linkedGoal, linkedSubtaskId?, linkedTitle } when routine completes and a linked Kaizen task exists
   const [fertilizerToast, setFertilizerToast] = useState(false);
   const [growthToast, setGrowthToast] = useState(null);
   const [calendarConnectedToast, setCalendarConnectedToast] = useState(false);
@@ -282,6 +296,7 @@ function GardenDashboard({ firstDayStep, onFirstDayStepChange } = {}) {
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [showSpiritMirror, setShowSpiritMirror] = useState(false);
   const [showProjectPlanner, setShowProjectPlanner] = useState(false);
+  const [projectPlannerPrefill, setProjectPlannerPrefill] = useState({ prefillTitle: '', prefillParentGoalId: '' });
   const [horizonsView, setHorizonsView] = useState('planning'); // 'planning' | 'metrics'
   const [planView, setPlanView] = useState('calendar'); // 'calendar' | 'projects' | 'routines'
   const [rebalanceQuotaId, setRebalanceQuotaId] = useState(null); // id of quota being rebalanced
@@ -304,6 +319,7 @@ function GardenDashboard({ firstDayStep, onFirstDayStepChange } = {}) {
   const [goalCreatorInitialContext, setGoalCreatorInitialContext] = useState(undefined);
   const [goalCreatorInitialRecurrence, setGoalCreatorInitialRecurrence] = useState(undefined);
   const [goalCreatorInitialEnergyCost, setGoalCreatorInitialEnergyCost] = useState(undefined);
+  const [synergySuggestion, setSynergySuggestion] = useState(null); // { goalId, suggestedHabitTitle, pitchText } after creating a goal
   const [now, setNow] = useState(() => new Date());
   const [showSpiritDialogue, setShowSpiritDialogue] = useState(false);
   const [showChat, setShowChat] = useState(false);
@@ -420,6 +436,11 @@ function GardenDashboard({ firstDayStep, onFirstDayStepChange } = {}) {
     }
   }, [firstDayStep, isFirstDayFlow]);
 
+  /** If tour is on step 1 but user already did morning check-in, skip to step 2. */
+  useEffect(() => {
+    if (tourStep === 1 && !needsMorningCheckIn) setTourStep(2);
+  }, [tourStep, needsMorningCheckIn, setTourStep]);
+
   useEffect(() => {
     const check = () => setIsMobileNav(window.innerWidth < 640);
     check();
@@ -468,6 +489,19 @@ function GardenDashboard({ firstDayStep, onFirstDayStepChange } = {}) {
       setActiveTab('garden');
       window.history.replaceState(null, '', window.location.pathname + window.location.search);
     }
+  }, []);
+
+  /** When navigating from Plan with a modal to open, open it and clear the flag. */
+  useEffect(() => {
+    if (typeof sessionStorage === 'undefined') return;
+    const modal = sessionStorage.getItem('kaizen:openModal');
+    if (!modal) return;
+    sessionStorage.removeItem('kaizen:openModal');
+    if (modal === 'chat') setShowChat(true);
+    else if (modal === 'compost') setShowCompost(true);
+    else if (modal === 'mirror') setShowSpiritMirror(true);
+    else if (modal === 'accessibility') setShowAccessibilityModal(true);
+    else if (modal === 'tour') setShowTour(true);
   }, []);
 
   const [spiritInsight, setSpiritInsight] = useState(() => {
@@ -863,14 +897,16 @@ function GardenDashboard({ firstDayStep, onFirstDayStepChange } = {}) {
   );
 
   const filledSpoonTotal = useMemo(() => {
-    return HOURS.reduce((sum, h) => {
-      const a = assignments[h];
-      if (!a) return sum;
-      if (a && typeof a === 'object' && (a.type === 'recovery' || a.spoonCost === 0)) return sum;
-      const gid = typeof a === 'object' && 'goalId' in a ? a.goalId : a;
-      const goal = gid ? goals.find((g) => g.id === gid) : null;
-      return sum + getSpoonCost(goal ?? a);
-    }, 0);
+    let total = 0;
+    for (const h of HOURS) {
+      for (const a of getAssignmentsForHour(assignments, h)) {
+        if (a && typeof a === 'object' && (a.type === 'recovery' || a.spoonCost === 0)) continue;
+        const gid = typeof a === 'object' && 'goalId' in a ? a.goalId : (typeof a === 'string' ? a : a?.parentGoalId);
+        const goal = gid ? goals.find((g) => g.id === gid) : null;
+        total += getSpoonCost(goal ?? a);
+      }
+    }
+    return total;
   }, [assignments, goals]);
 
   const stormWarnings = useMemo(() => {
@@ -1000,13 +1036,13 @@ function GardenDashboard({ firstDayStep, onFirstDayStepChange } = {}) {
     const seen = new Set();
     const out = [];
     for (const hour of HOURS) {
-      const a = assignments[hour];
-      if (!a) continue;
-      const goalId = typeof a === 'string' ? a : (a?.goalId ?? a?.parentGoalId);
-      if (!goalId || seen.has(goalId)) continue;
-      seen.add(goalId);
-      const goal = goals?.find((g) => g.id === goalId);
-      if (goal) out.push({ goalId, goal });
+      for (const a of getAssignmentsForHour(assignments, hour)) {
+        const goalId = typeof a === 'string' ? a : (a?.goalId ?? a?.parentGoalId);
+        if (!goalId || seen.has(goalId)) continue;
+        seen.add(goalId);
+        const goal = goals?.find((g) => g.id === goalId);
+        if (goal) out.push({ goalId, goal });
+      }
     }
     return out;
   }, [assignments, goals]);
@@ -1015,14 +1051,14 @@ function GardenDashboard({ firstDayStep, onFirstDayStepChange } = {}) {
   const todayPlanItemsWithHour = useMemo(() => {
     const out = [];
     for (const hour of HOURS) {
-      const a = assignments[hour];
-      if (!a) continue;
-      const goalId = typeof a === 'string' ? a : (a?.goalId ?? a?.parentGoalId);
-      const goal = goals?.find((g) => g.id === goalId);
-      if (!goal) continue;
-      const ritualTitle = typeof a === 'object' && a.ritualTitle ? a.ritualTitle : null;
-      const subtaskId = typeof a === 'object' && a.subtaskId ? a.subtaskId : null;
-      out.push({ hour, goalId, goal, ritualTitle, subtaskId });
+      for (const a of getAssignmentsForHour(assignments, hour)) {
+        const goalId = typeof a === 'string' ? a : (a?.goalId ?? a?.parentGoalId);
+        const goal = goals?.find((g) => g.id === goalId);
+        if (!goal) continue;
+        const ritualTitle = typeof a === 'object' && a.ritualTitle ? a.ritualTitle : null;
+        const subtaskId = typeof a === 'object' && a.subtaskId ? a.subtaskId : null;
+        out.push({ hour, goalId, goal, ritualTitle, subtaskId });
+      }
     }
     return out;
   }, [assignments, goals]);
@@ -1134,7 +1170,17 @@ function GardenDashboard({ firstDayStep, onFirstDayStepChange } = {}) {
 
   const handleSaveSeed = (goal) => {
     addGoal(goal);
+    if (tourStep === 2) setTourStep(3);
     setIsPlanting(false);
+    generateHabitSynergy(goal.title).then((result) => {
+      if (result?.hasSynergy && result.suggestedHabitTitle) {
+        setSynergySuggestion({
+          goalId: goal.id,
+          suggestedHabitTitle: result.suggestedHabitTitle,
+          pitchText: result.pitchText || 'Pairs well with your new goal!',
+        });
+      }
+    }).catch(() => {});
   };
 
   const handleProjectGoals = useCallback((goalsToCreate) => {
@@ -1251,8 +1297,8 @@ function GardenDashboard({ firstDayStep, onFirstDayStepChange } = {}) {
     const id = crypto.randomUUID?.() ?? `goal-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
     const newGoal = { id, type: 'routine', title, estimatedMinutes: 5, totalMinutes: 0, createdAt: new Date().toISOString() };
     addGoal(newGoal);
-    const firstEmpty = HOURS.find((h) => !assignments[h]);
-    if (firstEmpty) setAssignments((prev) => ({ ...prev, [firstEmpty]: id }));
+    const firstEmpty = HOURS.find((h) => getAssignmentsForHour(assignments, h).length === 0);
+    if (firstEmpty) setAssignments((prev) => ({ ...prev, [firstEmpty]: [...getAssignmentsForHour(prev, firstEmpty), id] }));
     setActiveSession({ ...newGoal, sessionDurationMinutes: 5, subtaskId: null });
     setShowStartNowModal(false);
     setStartNowCandidate(null);
@@ -1266,8 +1312,8 @@ function GardenDashboard({ firstDayStep, onFirstDayStepChange } = {}) {
   /** Guided empty state: pick a goal for this week — assign to first slot and start 5 min. */
   const handleGuidedPickGoal = useCallback((goal) => {
     if (!goal?.id) return;
-    const firstEmpty = HOURS.find((h) => !assignments[h]);
-    if (firstEmpty) setAssignments((prev) => ({ ...prev, [firstEmpty]: goal.id }));
+    const firstEmpty = HOURS.find((h) => getAssignmentsForHour(assignments, h).length === 0);
+    if (firstEmpty) setAssignments((prev) => ({ ...prev, [firstEmpty]: [...getAssignmentsForHour(prev, firstEmpty), goal.id] }));
     setActiveSession({
       ...goal,
       sessionDurationMinutes: 5,
@@ -1490,13 +1536,41 @@ function GardenDashboard({ firstDayStep, onFirstDayStepChange } = {}) {
       }
     }
 
-    // Next Step Prompter: if this task is part of a milestone sequence, suggest the next uncompleted task
-    const completedSubtaskId = completedTask?.subtaskId ?? log?.subtaskId;
-    if (taskId && completedSubtaskId) {
-      const nextStep = getNextTaskInSequence(goals, taskId, completedSubtaskId);
-      if (nextStep) {
-        const completedTitle = completedTask?.title ?? goal?.subtasks?.find((s) => s.id === completedSubtaskId)?.title ?? 'Task';
-        setNextStepPrompt({ completedTitle, nextStep });
+    // Habit Stack: if the completed task was a routine, check for a linked Kaizen goal/subtask and offer to start it
+    const completedGoalForStack = taskId ? goals?.find((g) => g.id === taskId) : null;
+    const wasRoutine = completedGoalForStack?.type === 'routine';
+    let didSetHabitStack = false;
+    if (wasRoutine && taskId) {
+      let linkedGoal = (goals || []).find((g) => g.linkedRoutineId === taskId);
+      let linkedSubtaskId = null;
+      let linkedTitle = linkedGoal?.title ?? null;
+      if (!linkedGoal) {
+        for (const g of goals || []) {
+          const st = (g.subtasks || []).find((s) => s.linkedRoutineId === taskId);
+          if (st) {
+            linkedGoal = g;
+            linkedSubtaskId = st.id;
+            linkedTitle = st.title ?? g.title;
+            break;
+          }
+        }
+      }
+      if (linkedGoal) {
+        const routineName = completedTask?.title ?? completedGoalForStack?.title ?? 'Routine';
+        setHabitStackHandoff({ routineName, linkedGoal, linkedSubtaskId, linkedTitle });
+        didSetHabitStack = true;
+      }
+    }
+
+    // Next Step Prompter: if this task is part of a milestone sequence and we didn't show habit stack, suggest the next uncompleted task
+    if (!didSetHabitStack) {
+      const completedSubtaskId = completedTask?.subtaskId ?? log?.subtaskId;
+      if (taskId && completedSubtaskId) {
+        const nextStep = getNextTaskInSequence(goals, taskId, completedSubtaskId);
+        if (nextStep) {
+          const completedTitle = completedTask?.title ?? goal?.subtasks?.find((s) => s.id === completedSubtaskId)?.title ?? 'Task';
+          setNextStepPrompt({ completedTitle, nextStep });
+        }
       }
     }
   };
@@ -1519,6 +1593,7 @@ function GardenDashboard({ firstDayStep, onFirstDayStepChange } = {}) {
   const handleMilestoneCheck = (goalId, milestoneId, completed) => {
     updateGoalMilestone(goalId, milestoneId, completed);
     if (completed) {
+      if (tourStep === 3) setTourStep(4);
       setFertilizerToast(true);
       const goal = goals.find((g) => g.id === goalId);
       const milestoneTitle = goal?.milestones?.find((m) => m.id === milestoneId)?.title ?? '';
@@ -1589,11 +1664,13 @@ function GardenDashboard({ firstDayStep, onFirstDayStepChange } = {}) {
             onComplete={(modifier, energyLevel) => {
               const level = energyLevel ?? modifier ?? 3;
               completeMorningCheckIn(level);
+              if (tourStep === 1) setTourStep(2);
+              setShowMorningCheckInModal(false);
               generateMorningBriefing(goals, today).then((items) => {
                 if (Array.isArray(items) && items.length > 0) setMorningBriefing(items);
               });
               requestSpiritWisdom(false);
-              const hasAnyAssignment = HOURS.some((h) => assignments[h]);
+              const hasAnyAssignment = HOURS.some((h) => getAssignmentsForHour(assignments, h).length > 0);
               let planSummary = null;
               if (!hasAnyAssignment) {
                 const eventsForPlan = Array.isArray(weeklyEvents) ? weeklyEvents : [];
@@ -1824,7 +1901,7 @@ function GardenDashboard({ firstDayStep, onFirstDayStepChange } = {}) {
             </div>
           </div>
 
-          {/* Right: Toolbelt — Chat, Compost, Mirror, Dark mode, Accessibility, Settings, Tour */}
+          {/* Right: Toolbelt — Chat, Compost, Mirror, Dark mode, Accessibility, Tour (Settings is fixed top-right) */}
           <div className="flex items-center justify-end gap-3 h-12 shrink-0">
             <button
               id="mochi-chat-btn"
@@ -1887,21 +1964,6 @@ function GardenDashboard({ firstDayStep, onFirstDayStepChange } = {}) {
                     <path d="M12 6v4M12 14h.01M9 9l2 2-2 2" />
                   </svg>
                 </button>
-                <button
-                  id="tour-settings"
-                  type="button"
-                  onClick={() => setActiveTab('settings')}
-                  className={`w-10 h-10 flex items-center justify-center rounded-full focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors ${
-                    isDark ? 'text-slate-400 hover:text-slate-100 hover:bg-slate-700/60' : 'text-stone-500 hover:text-stone-800 hover:bg-stone-200'
-                  }`}
-                  aria-label="Settings"
-                  title="Settings"
-                >
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0" aria-hidden>
-                    <circle cx="12" cy="12" r="3" />
-                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
-                  </svg>
-                </button>
               </>
             )}
             <button
@@ -1950,12 +2012,14 @@ function GardenDashboard({ firstDayStep, onFirstDayStepChange } = {}) {
         {activeTab === 'today' && (
           <>
             {needsMorningCheckIn ? (
-              <div className="flex flex-col items-center justify-center min-h-[50vh] px-4">
-                <GuidedEmptyState
-                  variant="needEnergy"
-                  onSetSpoons={() => setShowMorningCheckInModal(true)}
-                  lowStim={getSettings().lowStim}
-                />
+              <div id="guide-morning-checkin" className="flex flex-col items-center justify-center min-h-[50vh] px-4">
+                <TourHighlight step={1} tooltip="Start here! Tell me how much energy you have today.">
+                  <GuidedEmptyState
+                    variant="needEnergy"
+                    onSetSpoons={() => setShowMorningCheckInModal(true)}
+                    lowStim={getSettings().lowStim}
+                  />
+                </TourHighlight>
               </div>
             ) : (
               <div className="flex flex-col gap-6 h-full">
@@ -2033,13 +2097,14 @@ function GardenDashboard({ firstDayStep, onFirstDayStepChange } = {}) {
                 </div>
                 {/* Right: Day Planner — always visible, scrollable */}
                 <div className="lg:col-span-7">
-                  <div
-                    id="tour-timeline"
-                    className="overflow-y-auto max-h-[80vh] rounded-2xl border border-white/20 bg-white/90 backdrop-blur-md shadow-xl p-4"
-                    style={{ boxShadow: '0 8px 32px -8px rgba(0,0,0,0.15), 0 0 0 1px rgba(255,255,255,0.5)' }}
-                  >
-                    <ScheduleErrorBoundary onCollapse={() => {}}>
-                      <TimeSlicer
+                  <TourHighlight step={3} tooltip="Click the checkbox to complete it and earn your first Ember.">
+                    <div
+                      id="tour-timeline"
+                      className="overflow-y-auto max-h-[80vh] rounded-2xl border border-white/20 bg-white/90 backdrop-blur-md shadow-xl p-4"
+                      style={{ boxShadow: '0 8px 32px -8px rgba(0,0,0,0.15), 0 0 0 1px rgba(255,255,255,0.5)' }}
+                    >
+                      <ScheduleErrorBoundary onCollapse={() => {}}>
+                        <TimeSlicer
                         zenMode
                         weather={weather ?? 'sun'}
                         goals={Array.isArray(goals) ? goals : []}
@@ -2070,8 +2135,9 @@ function GardenDashboard({ firstDayStep, onFirstDayStepChange } = {}) {
                         onDiscardWeekPlan={handleDiscardWeekPlan}
                         monthlyRoadmap={monthlyRoadmap}
                       />
-                    </ScheduleErrorBoundary>
-                  </div>
+                      </ScheduleErrorBoundary>
+                    </div>
+                  </TourHighlight>
                 </div>
                 </div>
               </div>
@@ -2368,7 +2434,7 @@ function GardenDashboard({ firstDayStep, onFirstDayStepChange } = {}) {
             <button type="button" onClick={() => setShowJournalModal(true)} className="text-stone-500 hover:text-stone-800 underline underline-offset-2 focus:outline-none focus:ring-2 focus:ring-moss-500/40 rounded">
               📔 Journal
             </button>
-            <button type="button" onClick={() => setShowInsightsModal(true)} className="text-stone-500 hover:text-stone-800 underline underline-offset-2 focus:outline-none focus:ring-2 focus:ring-moss-500/40 rounded">
+            <button type="button" id="tour-insights" onClick={() => setShowInsightsModal(true)} className="text-stone-500 hover:text-stone-800 underline underline-offset-2 focus:outline-none focus:ring-2 focus:ring-moss-500/40 rounded">
               📊 Insights
             </button>
           </div>
@@ -2393,6 +2459,7 @@ function GardenDashboard({ firstDayStep, onFirstDayStepChange } = {}) {
         </button>
         <button
           type="button"
+          id="tour-horizons"
           onClick={() => { window.location.hash = '#/plan'; }}
           className="flex items-center gap-2 min-w-[44px] min-h-[44px] justify-center rounded-full px-3 py-2 transition-colors focus:outline-none focus:ring-2 focus:ring-white/30 text-stone-400 hover:text-stone-200"
           aria-label="Open Command Center (Plan)"
@@ -2403,6 +2470,7 @@ function GardenDashboard({ firstDayStep, onFirstDayStepChange } = {}) {
         {eveningMode !== 'night-owl' && (
           <button
             type="button"
+            id="guide-garden-tab"
             onClick={() => setActiveTab('garden')}
             className={`flex items-center gap-2 min-w-[44px] min-h-[44px] justify-center rounded-full px-3 py-2 transition-colors focus:outline-none focus:ring-2 focus:ring-white/30 ${activeTab === 'garden' ? 'bg-white/20 text-moss-400' : 'text-stone-400 hover:text-stone-200'}`}
             aria-current={activeTab === 'garden' ? 'page' : undefined}
@@ -2425,16 +2493,20 @@ function GardenDashboard({ firstDayStep, onFirstDayStepChange } = {}) {
         onOpenSpiritBuilder={() => { setCommandPaletteOpen(false); setShowSpiritMirror(true); }}
       />
 
-      <OmniAdd
-        onOpenGoalCreator={(title) => {
-          setGoalCreatorInitialTitle(title ?? '');
-          setGoalCreatorInitialSubtasks([]);
-          setIsPlanting(true);
-        }}
-        onOpenScheduleEvent={() => setShowScheduleEventModal(true)}
-        onOpenBrainDump={() => setShowCompost(true)}
-        onParsedRoute={handleOmniAddParsedRoute}
-      />
+      <div id="guide-omni-add" className="relative">
+        <TourHighlight step={2} tooltip="Great. Now add one tiny micro-habit to your list.">
+        <OmniAdd
+          onOpenGoalCreator={(title) => {
+            setGoalCreatorInitialTitle(title ?? '');
+            setGoalCreatorInitialSubtasks([]);
+            setIsPlanting(true);
+          }}
+          onOpenScheduleEvent={() => setShowScheduleEventModal(true)}
+          onOpenBrainDump={() => setShowCompost(true)}
+          onParsedRoute={handleOmniAddParsedRoute}
+        />
+      </TourHighlight>
+      </div>
 
       <AnimatePresence>
         {showSpiritMirror && (
@@ -2494,9 +2566,12 @@ function GardenDashboard({ firstDayStep, onFirstDayStepChange } = {}) {
         open={showProjectPlanner || (activeTab === 'planner' && planView === 'projects')}
         onClose={() => {
           setShowProjectPlanner(false);
+          setProjectPlannerPrefill({ prefillTitle: '', prefillParentGoalId: '' });
           if (activeTab === 'planner') setPlanView('calendar');
         }}
         onCreateGoals={handleProjectGoals}
+        prefillTitle={projectPlannerPrefill.prefillTitle}
+        prefillParentGoalId={projectPlannerPrefill.prefillParentGoalId}
       />
 
       <StartNowModal
@@ -2521,7 +2596,7 @@ function GardenDashboard({ firstDayStep, onFirstDayStepChange } = {}) {
         onClose={() => setShowAccessibilityModal(false)}
       />
 
-      {/* Journal & Insights full-screen modals with Now / Plan / Garden header nav */}
+      {/* Journal & Insights full-screen modals */}
       {showJournalModal && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-stone-900/40 backdrop-blur-sm"
@@ -2535,42 +2610,15 @@ function GardenDashboard({ firstDayStep, onFirstDayStepChange } = {}) {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-stone-200 bg-stone-50/95 backdrop-blur-sm">
-              <div className="flex items-center gap-2">
-                <h2 className="font-serif text-lg text-stone-900">Journal</h2>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="hidden sm:flex items-center gap-1 rounded-full bg-stone-100 border border-stone-200 px-1 py-0.5">
-                  <button
-                    type="button"
-                    onClick={() => { setShowJournalModal(false); setActiveTab('today'); }}
-                    className="px-2 py-1 rounded-full text-xs font-sans text-stone-600 hover:text-amber-500 hover:bg-white"
-                  >
-                    Now
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { setShowJournalModal(false); window.location.hash = '#/plan'; }}
-                    className="px-2 py-1 rounded-full text-xs font-sans text-stone-600 hover:text-moss-600 hover:bg-white"
-                  >
-                    Plan
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { setShowJournalModal(false); setActiveTab('garden'); }}
-                    className="px-2 py-1 rounded-full text-xs font-sans text-stone-600 hover:text-moss-600 hover:bg-white"
-                  >
-                    Garden
-                  </button>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setShowJournalModal(false)}
-                  aria-label="Close"
-                  className="w-9 h-9 flex items-center justify-center rounded-lg text-stone-500 hover:text-stone-800 hover:bg-stone-200"
-                >
-                  ×
-                </button>
-              </div>
+              <h2 className="font-serif text-lg text-stone-900">Journal</h2>
+              <button
+                type="button"
+                onClick={() => setShowJournalModal(false)}
+                aria-label="Close"
+                className="w-9 h-9 flex items-center justify-center rounded-lg text-stone-500 hover:text-stone-800 hover:bg-stone-200"
+              >
+                ×
+              </button>
             </div>
             <div className="flex-1 px-4 py-4 sm:py-6 overflow-y-auto">
               <div className="max-w-2xl mx-auto w-full">
@@ -2648,6 +2696,11 @@ function GardenDashboard({ firstDayStep, onFirstDayStepChange } = {}) {
         addSubtask={addSubtask}
         updateSubtask={updateSubtask}
         deleteSubtask={deleteSubtask}
+        onOpenProjectPlanner={(opts) => {
+          setProjectPlannerPrefill({ prefillTitle: opts?.prefillTitle ?? '', prefillParentGoalId: opts?.prefillParentGoalId ?? '' });
+          setEditingGoal(null);
+          setShowProjectPlanner(true);
+        }}
       />
 
       <SpiritChat
@@ -2958,6 +3011,67 @@ function GardenDashboard({ firstDayStep, onFirstDayStepChange } = {}) {
         onLeaveInVault={() => setNextStepPrompt(null)}
       />
 
+      <HabitStackHandoffPrompt
+        open={!!habitStackHandoff}
+        routineName={habitStackHandoff?.routineName}
+        linkedTaskTitle={habitStackHandoff?.linkedTitle}
+        onStart={() => {
+          if (habitStackHandoff?.linkedGoal) {
+            handleStartNowStart(
+              { goal: habitStackHandoff.linkedGoal, goalId: habitStackHandoff.linkedGoal.id, subtaskId: habitStackHandoff.linkedSubtaskId ?? null },
+              5
+            );
+          }
+          setHabitStackHandoff(null);
+        }}
+        onLater={() => setHabitStackHandoff(null)}
+      />
+
+      {synergySuggestion && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-stone-900/40 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="synergy-modal-title"
+        >
+          <div
+            className="relative w-full max-w-sm rounded-2xl bg-white border-2 border-stone-200 shadow-2xl p-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 id="synergy-modal-title" className="font-serif text-lg text-stone-900 mb-2">
+              💡 Mochi has a suggestion!
+            </h2>
+            <p className="font-sans text-sm text-stone-600 mb-5">{synergySuggestion.pitchText}</p>
+            <div className="flex flex-wrap gap-2 justify-end">
+              <button
+                type="button"
+                onClick={() => setSynergySuggestion(null)}
+                className="px-3 py-2 rounded-xl font-sans text-sm font-medium text-stone-500 hover:text-stone-700 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-amber-400"
+              >
+                No Thanks
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (synergySuggestion.goalId && synergySuggestion.suggestedHabitTitle) {
+                    addSubtask(synergySuggestion.goalId, {
+                      title: synergySuggestion.suggestedHabitTitle,
+                      estimatedHours: 0.1,
+                      completedHours: 0,
+                    });
+                    pushReward({ message: 'Added to stack! 🌱', tone: 'moss', icon: '🌱', sound: null });
+                  }
+                  setSynergySuggestion(null);
+                }}
+                className="px-4 py-2 rounded-xl font-sans text-sm font-bold text-amber-800 bg-amber-100 hover:bg-amber-200 focus:outline-none focus:ring-2 focus:ring-amber-400"
+              >
+                Add to Stack
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {calendarConnectedToast && (
         <motion.div
           initial={{ opacity: 0, y: 8 }}
@@ -3112,6 +3226,16 @@ function GardenDashboard({ firstDayStep, onFirstDayStepChange } = {}) {
           }
         }}
       />
+
+      {showAppGuide && (
+        <FeatureTooltip
+          targetId={GUIDE_STEPS[appGuideStep]?.targetId}
+          message={GUIDE_STEPS[appGuideStep]?.message}
+          onNext={() => updateUserSettings({ appGuideStep: appGuideStep === 5 ? -1 : appGuideStep + 1 })}
+          onDismiss={() => updateUserSettings({ appGuideStep: -1 })}
+          isLastStep={appGuideStep === 5}
+        />
+      )}
     </div>
     </>
   );

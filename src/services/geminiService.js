@@ -503,6 +503,46 @@ Give one short Mochi Spirit insight (2 sentences max): find a pattern or gentle 
 }
 
 /**
+ * Suggest one synergistic habit to stack with a newly created goal (e.g. Gym -> Drink a protein shake).
+ * @param {string} newGoalTitle - Title of the goal the user just created
+ * @returns {Promise<{ hasSynergy: boolean, suggestedHabitTitle: string, pitchText: string }|null>}
+ */
+export async function generateHabitSynergy(newGoalTitle) {
+  const apiKey = getApiKey();
+  if (!apiKey) return null;
+
+  const title = typeof newGoalTitle === 'string' ? newGoalTitle.trim() : '';
+  if (!title) return null;
+
+  try {
+    const { GoogleGenerativeAI } = await import('@google/generative-ai');
+    const genAI = new GoogleGenerativeAI(apiKey);
+
+    const prompt = `The user just created a new goal/routine: '${title.replace(/'/g, "\\'")}'. Identify one highly effective, small 'synergistic' habit they could stack with this (e.g., if they added 'Gym', suggest 'Drink a protein shake' or 'Prep a healthy meal'). Return strictly a JSON object: { "hasSynergy": boolean, "suggestedHabitTitle": "string", "pitchText": "string (A friendly 1-sentence explanation of why they pair well)" }. If the goal is too vague or no good stack comes to mind, set hasSynergy to false and use empty strings for the others. No other text or markdown.`;
+
+    const result = await tryGenerate(genAI, prompt);
+    const text = result?.response?.text?.();
+    if (typeof text !== 'string') return null;
+
+    let raw = sanitizeJsonResponse(text).trim();
+    const objMatch = raw.match(/\{[\s\S]*\}/);
+    if (objMatch) raw = objMatch[0];
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed.hasSynergy !== 'boolean') return null;
+    if (!parsed.hasSynergy) return { hasSynergy: false, suggestedHabitTitle: '', pitchText: '' };
+
+    return {
+      hasSynergy: true,
+      suggestedHabitTitle: typeof parsed.suggestedHabitTitle === 'string' ? parsed.suggestedHabitTitle.trim() : '',
+      pitchText: typeof parsed.pitchText === 'string' ? parsed.pitchText.trim() : '',
+    };
+  } catch (err) {
+    console.warn('Gemini generateHabitSynergy:', err?.message || err);
+    return null;
+  }
+}
+
+/**
  * Break down a task into 3–5 very small, actionable subtasks (max 4 words each).
  * @param {string} taskTitle - The big/vague task to decompose
  * @returns {Promise<string[]|null>} - Array of subtask strings, or null on error/missing key
@@ -1448,6 +1488,105 @@ Guidelines:
       return null;
     }
   }
+}
+
+/**
+ * Proficiency Arc: estimate hours to reach Beginner, Intermediate, and Mastery for a goal/skill.
+ * Used to show RPG-style leveling bars on project/kaizen goals.
+ * @param {string} goalTitle - Goal or project title (e.g. "Learn Spanish", "Piano")
+ * @returns {Promise<{ beginner: number, intermediate: number, mastery: number }|null>}
+ */
+export async function generateProficiencyEstimates(goalTitle) {
+  const title = typeof goalTitle === 'string' ? goalTitle.trim() : '';
+  if (!title) return null;
+
+  const prompt = `The user wants to pursue the following goal/skill: '${title.replace(/'/g, "\\'")}'. Estimate the average number of dedicated hours required for a human to reach three milestones: 1. Beginner (Basic understanding/usage), 2. Intermediate (Competent, average level), 3. Mastery (Advanced/Expert). Return ONLY a strict JSON object with this exact schema: { "beginner": number, "intermediate": number, "mastery": number }. Make the estimates realistic and research-backed (e.g., 20 hours for beginner, 100 for intermediate, 10000 for mastery).`;
+
+  const fallback = { beginner: 20, intermediate: 100, mastery: 10000 };
+
+  try {
+    const apiKey = getApiKey();
+    if (apiKey) {
+      const { GoogleGenerativeAI } = await import('@google/generative-ai');
+      const genAI = new GoogleGenerativeAI(apiKey);
+      const result = await tryGenerate(genAI, prompt);
+      const text = typeof result?.response?.text === 'function' ? result.response.text() : result?.response?.text;
+      if (!text) return fallback;
+      let raw = sanitizeJsonResponse(text);
+      const jsonMatch = raw.match(/\{[\s\S]*\}/);
+      if (jsonMatch) raw = jsonMatch[0];
+      const parsed = JSON.parse(raw);
+      const beginner = Math.max(0, Number(parsed?.beginner));
+      const intermediate = Math.max(beginner, Number(parsed?.intermediate));
+      const mastery = Math.max(intermediate, Number(parsed?.mastery));
+      if (Number.isFinite(beginner) && Number.isFinite(intermediate) && Number.isFinite(mastery)) {
+        return { beginner, intermediate, mastery };
+      }
+    }
+    const groqKey = typeof import.meta !== 'undefined' && import.meta.env?.VITE_GROQ_API_KEY;
+    if (groqKey) {
+      const groqText = await fetchFromGroq(prompt);
+      let raw = sanitizeJsonResponse(groqText);
+      const jsonMatch = raw.match(/\{[\s\S]*\}/);
+      if (jsonMatch) raw = jsonMatch[0];
+      const parsed = JSON.parse(raw);
+      const beginner = Math.max(0, Number(parsed?.beginner));
+      const intermediate = Math.max(beginner, Number(parsed?.intermediate));
+      const mastery = Math.max(intermediate, Number(parsed?.mastery));
+      if (Number.isFinite(beginner) && Number.isFinite(intermediate) && Number.isFinite(mastery)) {
+        return { beginner, intermediate, mastery };
+      }
+    }
+  } catch (err) {
+    console.warn('generateProficiencyEstimates failed:', err?.message || err);
+  }
+  return fallback;
+}
+
+/**
+ * Suggest one concrete project that would support a goal (e.g. "run a marathon" -> "Running plan for 41km").
+ * @param {string} goalTitle - The skill or goal title
+ * @returns {Promise<{ suggestedProjectTitle: string, pitchText: string }|null>}
+ */
+export async function suggestProjectForGoal(goalTitle) {
+  const title = typeof goalTitle === 'string' ? goalTitle.trim() : '';
+  if (!title) return null;
+
+  const prompt = `The user has a goal: "${title.replace(/"/g, '\\"')}". Suggest ONE concrete project they could create to work toward this goal. Examples: goal "run a marathon" -> project "Running plan for 41km"; goal "learn to code" -> project "Build a small website in 4 weeks". Return ONLY a strict JSON object with this exact schema: { "suggestedProjectTitle": "string (short project name)", "pitchText": "string (one friendly sentence encouraging them to create this project)" }. No other text or markdown.`;
+
+  const fallback = { suggestedProjectTitle: '', pitchText: '' };
+
+  try {
+    const apiKey = getApiKey();
+    if (apiKey) {
+      const { GoogleGenerativeAI } = await import('@google/generative-ai');
+      const genAI = new GoogleGenerativeAI(apiKey);
+      const result = await tryGenerate(genAI, prompt);
+      const text = typeof result?.response?.text === 'function' ? result.response.text() : result?.response?.text;
+      if (!text) return fallback;
+      let raw = sanitizeJsonResponse(text);
+      const jsonMatch = raw.match(/\{[\s\S]*\}/);
+      if (jsonMatch) raw = jsonMatch[0];
+      const parsed = JSON.parse(raw);
+      const suggestedProjectTitle = typeof parsed?.suggestedProjectTitle === 'string' ? parsed.suggestedProjectTitle.trim() : '';
+      const pitchText = typeof parsed?.pitchText === 'string' ? parsed.pitchText.trim() : '';
+      if (suggestedProjectTitle || pitchText) return { suggestedProjectTitle, pitchText };
+    }
+    const groqKey = typeof import.meta !== 'undefined' && import.meta.env?.VITE_GROQ_API_KEY;
+    if (groqKey) {
+      const groqText = await fetchFromGroq(prompt);
+      let raw = sanitizeJsonResponse(groqText);
+      const jsonMatch = raw.match(/\{[\s\S]*\}/);
+      if (jsonMatch) raw = jsonMatch[0];
+      const parsed = JSON.parse(raw);
+      const suggestedProjectTitle = typeof parsed?.suggestedProjectTitle === 'string' ? parsed.suggestedProjectTitle.trim() : '';
+      const pitchText = typeof parsed?.pitchText === 'string' ? parsed.pitchText.trim() : '';
+      if (suggestedProjectTitle || pitchText) return { suggestedProjectTitle, pitchText };
+    }
+  } catch (err) {
+    console.warn('suggestProjectForGoal failed:', err?.message || err);
+  }
+  return fallback;
 }
 
 /**

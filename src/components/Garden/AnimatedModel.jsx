@@ -1,21 +1,31 @@
-import React, { useEffect, useRef, useMemo } from 'react';
+import React, { useEffect, useRef, useMemo, useContext } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { useGLTF, useAnimations } from '@react-three/drei';
 import * as THREE from 'three';
 import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
+import { LowPerfContext } from './Garden3D';
 
 export default function AnimatedModel({ path, scale = 1, rotation = [0, 0, 0], isWalking = false }) {
   const groupRef = useRef();
-  const breathingRef = useRef(1);
+  const lowPerf = useContext(LowPerfContext);
   const { scene, animations } = useGLTF(path);
 
   // Safely clone skinned meshes and compute Y-offset so the bottom of the model sits at y = 0
   const { clone, yOffset } = useMemo(() => {
     const c = SkeletonUtils.clone(scene);
+    if (lowPerf) {
+      c.traverse((child) => {
+        if (child.isMesh) {
+          child.castShadow = false;
+          child.receiveShadow = false;
+        }
+      });
+    }
+    c.updateMatrixWorld(true); // Force world matrix so Box3 height is correct (avoids buried models)
     const box = new THREE.Box3().setFromObject(c);
     const offset = box.min.y !== undefined && Number.isFinite(box.min.y) ? -box.min.y : 0;
     return { clone: c, yOffset: offset };
-  }, [scene]);
+  }, [scene, lowPerf]);
 
   const { actions, names } = useAnimations(animations, groupRef);
 

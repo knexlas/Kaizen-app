@@ -1,6 +1,7 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { useGarden } from '../../context/GardenContext';
 import { localISODate } from '../../services/dateUtils';
+import { getAssignmentsForHour } from './TimeSlicer';
 
 const SNOOZE_MS = 30 * 60 * 1000;
 const MAX_SUGGESTIONS = 3;
@@ -209,15 +210,15 @@ export default function NextTinyStep({
     ];
     const out = [];
     for (const hour of HOURS) {
-      const a = assignments?.[hour];
-      if (!a) continue;
-      const goalId = typeof a === 'string' ? a : (a?.goalId ?? a?.parentGoalId);
-      const goal = goals?.find((g) => g.id === goalId);
-      if (!goal) continue;
-      const ritualTitle = typeof a === 'object' && a.ritualTitle ? a.ritualTitle : null;
-      const subtaskId = typeof a === 'object' ? a.subtaskId : null;
-      const isFixed = isAssignmentFixed(a) || goal?.isFixed === true;
-      out.push({ hour, goalId, goal, ritualTitle, subtaskId, isFixed });
+      for (const a of getAssignmentsForHour(assignments, hour)) {
+        const goalId = typeof a === 'string' ? a : (a?.goalId ?? a?.parentGoalId);
+        const goal = goals?.find((g) => g.id === goalId);
+        if (!goal) continue;
+        const ritualTitle = typeof a === 'object' && a.ritualTitle ? a.ritualTitle : null;
+        const subtaskId = typeof a === 'object' ? a.subtaskId : null;
+        const isFixed = isAssignmentFixed(a) || goal?.isFixed === true;
+        out.push({ hour, goalId, goal, ritualTitle, subtaskId, isFixed });
+      }
     }
     return out;
   }, [assignments, goals]);

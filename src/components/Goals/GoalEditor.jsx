@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useGarden } from '../../context/GardenContext';
-import { tweakMilestones } from '../../services/geminiService';
+import { tweakMilestones, generateProficiencyEstimates, suggestProjectForGoal } from '../../services/geminiService';
+import ProficiencyArc from './ProficiencyArc';
 
 const DOMAINS = [
   { id: 'finance', label: 'Finance', emoji: '📈' },
@@ -20,8 +21,8 @@ const DAY_LETTERS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 const ROUTINE_CATEGORIES = ['💪 Wellness', '📁 Life Admin', '🧹 Household', '🧼 Care & Hygiene'];
 
-export default function GoalEditor({ open, goal, onClose, onSave, addSubtask, updateSubtask, deleteSubtask }) {
-  const { metrics = [], addMetric, toggleMilestone } = useGarden();
+export default function GoalEditor({ open, goal, onClose, onSave, addSubtask, updateSubtask, deleteSubtask, onOpenProjectPlanner }) {
+  const { metrics = [], addMetric, toggleMilestone, goals = [] } = useGarden();
   const [title, setTitle] = useState('');
   const [domain, setDomain] = useState('');
   const [color, setColor] = useState('');
@@ -39,6 +40,11 @@ export default function GoalEditor({ open, goal, onClose, onSave, addSubtask, up
   const [isTweaking, setIsTweaking] = useState(false);
   const [rituals, setRituals] = useState([]);
   const [category, setCategory] = useState(''); // routine category for Seedbag grouping
+  const [linkedRoutineId, setLinkedRoutineId] = useState('');
+  const [parentGoalId, setParentGoalId] = useState('');
+  const [isAddingProficiency, setIsAddingProficiency] = useState(false);
+  const [projectSuggestion, setProjectSuggestion] = useState(null);
+  const [loadingProjectSuggestion, setLoadingProjectSuggestion] = useState(false);
   const [expandedPhases, setExpandedPhases] = useState({});
   const togglePhase = (id) => setExpandedPhases((prev) => ({ ...prev, [id]: !prev[id] }));
 
@@ -59,6 +65,9 @@ export default function GoalEditor({ open, goal, onClose, onSave, addSubtask, up
       setProjectDeadline(goal?._projectDeadline ?? '');
       setRituals((goal.rituals ?? []).map((r) => ({ id: r.id, title: r.title ?? '', days: r.days ?? [], frequency: r.frequency || 'weekly', monthDay: r.monthDay ?? null })));
       setCategory(goal.type === 'routine' ? (goal.category ?? '') : '');
+      setLinkedRoutineId(goal.linkedRoutineId ?? '');
+      setParentGoalId(goal.parentGoalId ?? '');
+      setProjectSuggestion(null);
     }
   }, [goal]);
 
@@ -85,6 +94,45 @@ export default function GoalEditor({ open, goal, onClose, onSave, addSubtask, up
   const projectTotalHours = isProject
     ? subtasks.reduce((sum, st) => sum + (Number(st.estimatedHours) || 0), 0)
     : 0;
+
+  const linkedProjectsTotalMinutes = (goal?.id && goals?.length)
+    ? (goals || []).filter((g) => g._projectGoal && g.parentGoalId === goal.id).reduce((sum, g) => sum + (Number(g.totalMinutes) || 0), 0)
+    : 0;
+  const effectiveTotalMinutes = (Number(goal?.totalMinutes) || 0) + linkedProjectsTotalMinutes;
+
+  const handleAddProficiency = async () => {
+    if (!goal?.id || !goal?.title || !onSave) return;
+    setIsAddingProficiency(true);
+    try {
+      const estimates = await generateProficiencyEstimates(goal.title);
+      if (estimates && typeof estimates === 'object') onSave({ proficiencyEstimates: estimates });
+    } catch (e) {
+      console.warn('Proficiency estimates failed', e);
+    } finally {
+      setIsAddingProficiency(false);
+    }
+  };
+
+  const handleSuggestProject = async () => {
+    if (!goal?.title) return;
+    setLoadingProjectSuggestion(true);
+    setProjectSuggestion(null);
+    try {
+      const result = await suggestProjectForGoal(goal.title);
+      if (result && (result.suggestedProjectTitle || result.pitchText)) setProjectSuggestion(result);
+    } catch (e) {
+      console.warn('Project suggestion failed', e);
+    } finally {
+      setLoadingProjectSuggestion(false);
+    }
+  };
+
+  const handleCreateSuggestedProject = () => {
+    if (projectSuggestion?.suggestedProjectTitle && goal?.id && typeof onOpenProjectPlanner === 'function') {
+      onOpenProjectPlanner({ prefillTitle: projectSuggestion.suggestedProjectTitle, parentGoalId: goal.id });
+      onClose?.();
+    }
+  };
 
   const handleTweakMilestones = async (instruction) => {
     if (!goal?.id || !onSave) return;
@@ -152,6 +200,13 @@ export default function GoalEditor({ open, goal, onClose, onSave, addSubtask, up
     }
     if (isProject) {
       updates._projectDeadline = projectDeadline.trim() || undefined;
+    }
+    const showHabitStack = goal?.type === 'kaizen' || goal?._projectGoal === true;
+    if (showHabitStack) {
+      updates.linkedRoutineId = linkedRoutineId || undefined;
+    }
+    if (goal?._projectGoal) {
+      updates.parentGoalId = parentGoalId || undefined;
     }
     onSave?.(updates);
     onClose?.();
@@ -243,6 +298,98 @@ export default function GoalEditor({ open, goal, onClose, onSave, addSubtask, up
                     </p>
                   </>
                 )}
+              </div>
+            )}
+            {!goal?._projectGoal && (goal?.type === 'kaizen' || goal?.type === 'project' || goal?.type === 'vitality') && (
+              <div>
+                <label className="block font-sans text-sm font-medium text-stone-600 mb-1">Race to Mastery</label>
+                {goal?.proficiencyEstimates ? (
+                  <>
+                    <ProficiencyArc goal={goal} effectiveTotalMinutes={effectiveTotalMinutes} />
+                    <button
+                      type="button"
+                      onClick={handleAddProficiency}
+                      disabled={isAddingProficiency}
+                      className="mt-2 font-sans text-xs text-stone-500 hover:text-stone-700 underline focus:outline-none focus:ring-2 focus:ring-moss-500/40 rounded px-1 py-0.5 disabled:opacity-50"
+                    >
+                      {isAddingProficiency ? 'Updating…' : 'Regenerate estimates'}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <p className="font-sans text-xs text-stone-500 mb-2">Track progress from Novice to Master with AI-estimated hour milestones.</p>
+                    <button
+                      type="button"
+                      onClick={handleAddProficiency}
+                      disabled={isAddingProficiency}
+                      className="px-4 py-2 rounded-xl font-sans text-sm font-medium bg-moss-100 text-moss-800 hover:bg-moss-200 focus:outline-none focus:ring-2 focus:ring-moss-500/50 disabled:opacity-50 transition-colors"
+                    >
+                      {isAddingProficiency ? 'Getting estimates…' : 'Add Race to Mastery'}
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+            {goal?.type === 'kaizen' && !goal?._projectGoal && (
+              <div className="rounded-xl border border-stone-200 bg-amber-50/60 p-4 space-y-2">
+                <p className="font-sans text-sm font-medium text-stone-700">Mochi suggests</p>
+                {!projectSuggestion ? (
+                  <button
+                    type="button"
+                    onClick={handleSuggestProject}
+                    disabled={loadingProjectSuggestion}
+                    className="font-sans text-sm text-amber-800 hover:text-amber-900 underline focus:outline-none focus:ring-2 focus:ring-amber-400 rounded disabled:opacity-50"
+                  >
+                    {loadingProjectSuggestion ? 'Thinking…' : 'Suggest a project for this goal'}
+                  </button>
+                ) : (
+                  <>
+                    <p className="font-sans text-xs text-stone-600">{projectSuggestion.pitchText || 'Create a project to break this goal into steps.'}</p>
+                    {typeof onOpenProjectPlanner === 'function' && (
+                      <button
+                        type="button"
+                        onClick={handleCreateSuggestedProject}
+                        className="mt-2 px-4 py-2 rounded-xl font-sans text-sm font-medium bg-amber-200 text-amber-900 hover:bg-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-500/50 transition-colors"
+                      >
+                        Create project: {projectSuggestion.suggestedProjectTitle || 'Project'}
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
+            {(goal?.type === 'kaizen' || goal?._projectGoal === true) && (
+              <div>
+                <label className="block font-sans text-sm font-medium text-stone-600 mb-1">🔗 Habit Stack (Optional)</label>
+                <p className="font-sans text-xs text-stone-500 mb-2">Do this immediately after:</p>
+                <select
+                  value={linkedRoutineId}
+                  onChange={(e) => setLinkedRoutineId(e.target.value)}
+                  className="w-full py-2 px-3 rounded-lg border border-stone-200 bg-white text-stone-900 font-sans focus:outline-none focus:ring-2 focus:ring-moss-500/40 focus:border-moss-500"
+                  aria-label="Anchor routine (do this goal after)"
+                >
+                  <option value="">None</option>
+                  {(goals || []).filter((g) => g.type === 'routine').map((g) => (
+                    <option key={g.id} value={g.id}>{g.title ?? 'Routine'}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+            {goal?._projectGoal === true && (
+              <div>
+                <label className="block font-sans text-sm font-medium text-stone-600 mb-1">Belongs to goal</label>
+                <p className="font-sans text-xs text-stone-500 mb-2">Link this project to a skill goal (e.g. Learn to code).</p>
+                <select
+                  value={parentGoalId}
+                  onChange={(e) => setParentGoalId(e.target.value)}
+                  className="w-full py-2 px-3 rounded-lg border border-stone-200 bg-white text-stone-900 font-sans focus:outline-none focus:ring-2 focus:ring-moss-500/40 focus:border-moss-500"
+                  aria-label="Parent goal (this project belongs to)"
+                >
+                  <option value="">None</option>
+                  {(goals || []).filter((g) => g.type === 'kaizen' && !g._projectGoal && g.id !== goal?.id).map((g) => (
+                    <option key={g.id} value={g.id}>{g.title ?? 'Goal'}</option>
+                  ))}
+                </select>
               </div>
             )}
             <div>

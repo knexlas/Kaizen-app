@@ -50,9 +50,12 @@ export default function TaskDetailModal({
   const [notes, setNotes] = useState('');
   const [subTasks, setSubTasks] = useState([]); // { id, title, completed }[]
   const [recurringDays, setRecurringDays] = useState([]); // [0..6] for routine subtask per-task recurrence
+  const [linkedRoutineId, setLinkedRoutineId] = useState('');
 
   const taskKey = taskRef ? `${taskRef.type}-${taskRef.goalId ?? ''}-${taskRef.subtaskId ?? ''}-${taskRef.milestoneIndex ?? ''}-${taskRef.taskIndex ?? ''}` : '';
   const DAY_LETTERS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+  const routineGoals = (goals || []).filter((g) => g.type === 'routine');
+  const showHabitStack = resolved && (resolved.goal?.type === 'kaizen' || resolved.goal?._projectGoal === true);
 
   useEffect(() => {
     if (!open || !taskRef) return;
@@ -62,6 +65,7 @@ export default function TaskDetailModal({
     setNotes(r.task.notes ?? '');
     setSubTasks(Array.isArray(r.task.subTasks) ? r.task.subTasks.map((s) => ({ ...s, id: s.id || uid(), title: s.title ?? '', completed: !!s.completed })) : []);
     setRecurringDays(Array.isArray(r.task.days) ? [...r.task.days] : []);
+    setLinkedRoutineId(r.task.linkedRoutineId ?? '');
   }, [open, taskKey, goals]);
 
   const handleSave = useCallback(() => {
@@ -69,15 +73,20 @@ export default function TaskDetailModal({
     const notesTrim = notes.trim();
     const subTasksNorm = subTasks.map((s) => ({ id: s.id || uid(), title: String(s.title ?? '').trim(), completed: !!s.completed })).filter((s) => s.title !== '');
     if (resolved.type === 'narrative' && onUpdateNarrativeTask) {
-      onUpdateNarrativeTask(resolved.goal.id, resolved.milestoneIndex, resolved.taskIndex, { title: title.trim() || resolved.task.title, notes: notesTrim || undefined, subTasks: subTasksNorm.length ? subTasksNorm : undefined });
+      const narrativePayload = { title: title.trim() || resolved.task.title, notes: notesTrim || undefined, subTasks: subTasksNorm.length ? subTasksNorm : undefined };
+      if (linkedRoutineId) narrativePayload.linkedRoutineId = linkedRoutineId;
+      else narrativePayload.linkedRoutineId = undefined;
+      onUpdateNarrativeTask(resolved.goal.id, resolved.milestoneIndex, resolved.taskIndex, narrativePayload);
     }
     if (resolved.type === 'subtask' && onUpdateSubtask) {
       const payload = { title: title.trim() || resolved.task.title, notes: notesTrim || undefined, subTasks: subTasksNorm.length ? subTasksNorm : undefined };
       if (resolved.goal?.type === 'routine') payload.days = recurringDays.length > 0 ? recurringDays.slice().sort((a, b) => a - b) : undefined;
+      if (linkedRoutineId) payload.linkedRoutineId = linkedRoutineId;
+      else payload.linkedRoutineId = undefined;
       onUpdateSubtask(resolved.goal.id, resolved.task.id, payload);
     }
     onClose?.();
-  }, [resolved, title, notes, subTasks, recurringDays, onUpdateNarrativeTask, onUpdateSubtask, onClose]);
+  }, [resolved, title, notes, subTasks, recurringDays, linkedRoutineId, onUpdateNarrativeTask, onUpdateSubtask, onClose]);
 
   const addSubTask = useCallback(() => {
     setSubTasks((prev) => [...prev, { id: uid(), title: '', completed: false }]);
@@ -137,6 +146,23 @@ export default function TaskDetailModal({
                     placeholder="Task title"
                   />
                 </div>
+                {showHabitStack && (
+                  <div>
+                    <label className="block font-sans text-sm font-medium text-stone-700 mb-1">🔗 Habit Stack (Optional)</label>
+                    <p className="font-sans text-xs text-stone-500 mb-2">Do this immediately after:</p>
+                    <select
+                      value={linkedRoutineId}
+                      onChange={(e) => setLinkedRoutineId(e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg border border-stone-300 font-sans text-stone-900 focus:ring-2 focus:ring-moss-500/50 focus:border-moss-500"
+                      aria-label="Anchor routine (do this task after)"
+                    >
+                      <option value="">None</option>
+                      {routineGoals.map((g) => (
+                        <option key={g.id} value={g.id}>{g.title ?? 'Routine'}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
                 {resolved.type === 'subtask' && resolved.goal?.type === 'routine' && (
                   <div>
                     <label className="block font-sans text-sm font-medium text-stone-700 mb-1">Recurring days</label>

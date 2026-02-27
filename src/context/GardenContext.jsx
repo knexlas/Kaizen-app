@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../firebase/firebaseConfig';
-import { subscribeToCompost, addCompostItem, deleteCompostItem, subscribeToDailyPlan, saveDailyPlan, getDailyPlan } from '../firebase/services';
+import { subscribeToCompost, addCompostItem, deleteCompostItem, subscribeToDailyPlan, saveDailyPlan, getDailyPlan, saveCheckInForDate, getCheckInsForLastDays } from '../firebase/services';
 import { recordVibe } from '../services/energyDictionaryService';
 import { loginWithGoogle, logoutUser } from '../services/authService';
 import { loginWithMicrosoft, logoutMicrosoft, fetchOutlookEvents, getAccessTokenSilently } from '../services/microsoftCalendarService';
@@ -31,6 +31,7 @@ const defaultData = {
     dayStartsAt: '00:00', // midnight reset: '00:00' | '01:00' ... '05:00' — when the "day" flips (e.g. 3 AM = 1:30 AM Tue is still "Monday")
     isWorkScheduler: true,
     workHours: { start: '09:00', end: '17:00' },
+    appGuideStep: 0, // Day 1 Guide: 0–3 = current step, -1 = dismissed
   }, // scheduling: used by TimeSlicer + schedulerService (startHour/endHour)
   dailyEnergyModifier: 0,
   dailySpoonCount: null, // 0–12 from check-in; 0 = compost-only day, used as maxSlots when set
@@ -140,7 +141,7 @@ export function GardenProvider({ children }) {
   const [spiritConfig, setSpiritConfigState] = useState(defaultData.spiritConfig);
   const [compost, setCompost] = useState(defaultData.compost);
   const [soilNutrients, setSoilNutrients] = useState(defaultData.soilNutrients ?? 0);
-  const [assignments, setAssignments] = useState({}); // daily schedule { [hour]: goalId | assignmentObject }
+  const [assignments, setAssignments] = useState({}); // daily schedule { [hour]: assignment | assignment[], anytime?: assignment[] }
   const [planDate, setPlanDate] = useState(() => getLogicalToday(new Date(), 0)); // logical "today" for plan subscription (respects userSettings.dayStartsAt)
   const [weekAssignments, setWeekAssignments] = useState({}); // cache: { [dateStr]: { [hour]: assignment } }
   const weekAssignmentsRef = useRef({});
@@ -152,6 +153,7 @@ export function GardenProvider({ children }) {
   const [terrainMap, setTerrainMap] = useState(defaultData.terrainMap);
   const [unlockedAnimals, setUnlockedAnimals] = useState(defaultData.unlockedAnimals ?? []);
   const [activeTool, setActiveTool] = useState(null); // UI only: { type: 'paint', material } | { type: 'plant', goalId } | { type: 'place', decorationId } | null
+  const [tourStep, setTourStep] = useState(0); // Interactive onboarding: 0 = off, 1 = Morning Check-in, 2 = OmniAdd, 3 = Task checkbox, 4 = Garden Spirit
   const [metrics, setMetrics] = useState(defaultData.metrics);
   const [fertilizerCount, setFertilizerCount] = useState(defaultData.fertilizerCount ?? 0);
   const [waterDrops, setWaterDrops] = useState(defaultData.waterDrops ?? 5);
@@ -432,18 +434,22 @@ export function GardenProvider({ children }) {
     if (!dayPlan || typeof dayPlan !== 'object') return;
     const goalMap = new Map((goals ?? []).map((g) => [g.id, g]));
     const toReschedule = [];
-    Object.entries(dayPlan).forEach(([hour, a]) => {
-      if (a == null) return;
-      if (!isAssignmentFixed(a)) return; // flexible: just clear (don't add to list)
-      const goalId = typeof a === 'string' ? a : a.goalId;
-      const goal = goalMap.get(goalId);
-      const title = goal?.title ?? a.title ?? a.ritualTitle ?? 'Task';
-      toReschedule.push({
-        id: `pause-${targetDate}-${hour}-${Date.now()}`,
-        sourceDate: targetDate,
-        hour,
-        assignment: typeof a === 'object' ? { ...a } : { goalId: a },
-        title,
+    Object.entries(dayPlan).forEach(([hour, val]) => {
+      if (hour === 'anytime') return;
+      const list = Array.isArray(val) ? val : val != null ? [val] : [];
+      list.forEach((a) => {
+        if (a == null) return;
+        if (!isAssignmentFixed(a)) return; // flexible: just clear (don't add to list)
+        const goalId = typeof a === 'string' ? a : a.goalId;
+        const goal = goalMap.get(goalId);
+        const title = goal?.title ?? a.title ?? a.ritualTitle ?? 'Task';
+        toReschedule.push({
+          id: `pause-${targetDate}-${hour}-${Date.now()}`,
+          sourceDate: targetDate,
+          hour,
+          assignment: typeof a === 'object' ? { ...a } : { goalId: a },
+          title,
+        });
       });
     });
     await saveDayPlanForDate(targetDate, {});
@@ -458,7 +464,9 @@ export function GardenProvider({ children }) {
     if (!item?.id || !saveDayPlanForDate || !loadDayPlan) return;
     const existing = await loadDayPlan(targetDateStr);
     const next = { ...(existing && typeof existing === 'object' ? existing : {}) };
-    next[String(item.hour)] = item.assignment;
+    const hourKey = String(item.hour);
+    const existingList = Array.isArray(next[hourKey]) ? next[hourKey] : next[hourKey] != null ? [next[hourKey]] : [];
+    next[hourKey] = [...existingList, item.assignment];
     await saveDayPlanForDate(targetDateStr, next);
     setNeedsRescheduling((prev) => prev.filter((r) => r.id !== item.id));
   }, [saveDayPlanForDate, loadDayPlan]);
@@ -817,7 +825,10 @@ export function GardenProvider({ children }) {
             return g?.title ?? goalId ?? 'Task';
           };
           const titles = new Set();
-          Object.values(yesterdayAssignments).forEach((val) => {
+          const allYesterday = Object.values(yesterdayAssignments).flatMap((val) =>
+            Array.isArray(val) ? val : val != null ? [val] : []
+          );
+          allYesterday.forEach((val) => {
             const goalId = getGoalId(val);
             const title = getTitle(val, goalId);
             if (title && !titles.has(title)) {
@@ -847,7 +858,10 @@ export function GardenProvider({ children }) {
       return g?.title ?? goalId ?? 'Task';
     };
     const titles = new Set();
-    Object.values(assignments || {}).forEach((val) => {
+    const allAssignments = Object.values(assignments || {}).flatMap((val) =>
+      Array.isArray(val) ? val : val != null ? [val] : []
+    );
+    allAssignments.forEach((val) => {
       const goalId = getGoalId(val);
       const title = getTitle(val, goalId);
       if (title && !titles.has(title)) {
@@ -871,7 +885,10 @@ export function GardenProvider({ children }) {
       return g?.title ?? goalId ?? 'Task';
     };
     const titles = new Set();
-    Object.values(assignments || {}).forEach((val) => {
+    const allAssignments = Object.values(assignments || {}).flatMap((val) =>
+      Array.isArray(val) ? val : val != null ? [val] : []
+    );
+    allAssignments.forEach((val) => {
       const goalId = getGoalId(val);
       const title = getTitle(val, goalId);
       if (title && !titles.has(title)) {
@@ -915,7 +932,10 @@ export function GardenProvider({ children }) {
         const { assignments: dayAssignments } = await getDailyPlan(uid, dateStr);
         if (!dayAssignments || typeof dayAssignments !== 'object') continue;
         const titles = new Set();
-        Object.values(dayAssignments).forEach((val) => {
+        const allDay = Object.values(dayAssignments).flatMap((val) =>
+          Array.isArray(val) ? val : val != null ? [val] : []
+        );
+        allDay.forEach((val) => {
           const goalId = getGoalId(val);
           const title = getTitle(val, goalId);
           if (title && !titles.has(title)) {
@@ -949,7 +969,10 @@ export function GardenProvider({ children }) {
       try {
         const { assignments: dayAssignments } = await getDailyPlan(uid, dateStr);
         if (!dayAssignments || typeof dayAssignments !== 'object') continue;
-        Object.values(dayAssignments).forEach((val) => {
+        const allDay = Object.values(dayAssignments).flatMap((val) =>
+          Array.isArray(val) ? val : val != null ? [val] : []
+        );
+        allDay.forEach((val) => {
           const goalId = getGoalId(val);
           if (goalId) {
             const cur = earliestByGoal.get(goalId);
@@ -983,9 +1006,11 @@ export function GardenProvider({ children }) {
               }
               return;
             }
-            const a = prev[key];
-            if (getGoalId(a) === goal.id) {
-              delete next[key];
+            const raw = prev[key];
+            const list = Array.isArray(raw) ? raw : raw != null ? [raw] : [];
+            const filtered = list.filter((a) => getGoalId(a) !== goal.id);
+            if (filtered.length !== list.length) {
+              next[key] = filtered.length > 0 ? filtered : [];
               changed = true;
             }
           });
@@ -1342,17 +1367,26 @@ export function GardenProvider({ children }) {
 
   const completeMorningCheckIn = useCallback((energyLevelOrModifier) => {
     const n = Number(energyLevelOrModifier);
+    let spoonCount = null;
+    let energyModifier = null;
     if (n >= 1 && n <= 10) {
       setDailySpoonCount(n);
       setDailyEnergyModifier(0);
+      spoonCount = n;
     } else if (n === 0) {
       setDailySpoonCount(0);
       setDailyEnergyModifier(0);
+      spoonCount = 0;
     } else {
       setDailyEnergyModifier(n);
+      energyModifier = n;
     }
     setLastCheckInDate(planDate);
-  }, []);
+    const uid = googleUser?.uid;
+    if (uid && planDate) {
+      saveCheckInForDate(uid, planDate, { spoonCount, energyModifier }).catch((e) => console.warn('saveCheckInForDate failed', e));
+    }
+  }, [googleUser?.uid, planDate]);
 
   const markSundayRitualComplete = useCallback(() => {
     setLastSundayRitualDate(getThisWeekSundayLocal());
@@ -1580,6 +1614,10 @@ export function GardenProvider({ children }) {
     soilNutrients,
     consumeSoilNutrients,
     today: planDate,
+    getCheckInHistory: useCallback(() => {
+      const uid = googleUser?.uid;
+      return uid ? getCheckInsForLastDays(uid, 7) : Promise.resolve([]);
+    }, [googleUser?.uid]),
     assignments,
     setAssignments,
     gentleResetToToday,
@@ -1618,6 +1656,8 @@ export function GardenProvider({ children }) {
     paintTerrain,
     activeTool,
     setActiveTool,
+    tourStep,
+    setTourStep,
     unlockedAnimals,
     addUnlockedAnimal,
     spendEmbers,

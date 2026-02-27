@@ -61,14 +61,27 @@ function isAssignmentFixed(a) {
   return a.isFixed === true || a.type === 'fixed' || a.fixed === true;
 }
 
-/** Resolve assignment for a slot; supports both "14:00" and "14" keys (CalendarView uses getHours()). */
+/** Return array of assignments for a slot (supports legacy single value). Hour keys: "14:00" or "14". Exported for consumers (NextTinyStep, SpiritChat, etc.). */
+export function getAssignmentsForHour(assignments, hour) {
+  if (!assignments || !hour) return [];
+  let a = assignments[hour];
+  if (a == null) {
+    const hourNum = parseInt(String(hour).replace(/:.*$/, ''), 10);
+    if (!Number.isNaN(hourNum)) a = assignments[String(hourNum)];
+  }
+  if (a == null) return [];
+  return Array.isArray(a) ? a : [a];
+}
+
+/** True if the hour has no assignments. */
+function isSlotEmpty(assignments, hour) {
+  return getAssignmentsForHour(assignments, hour).length === 0;
+}
+
+/** First assignment for a slot (backward compatibility). */
 function getAssignmentForHour(assignments, hour) {
-  if (!assignments || !hour) return null;
-  const a = assignments[hour];
-  if (a != null) return a;
-  const hourNum = parseInt(String(hour).replace(/:.*$/, ''), 10);
-  if (!Number.isNaN(hourNum)) return assignments[String(hourNum)] ?? null;
-  return null;
+  const list = getAssignmentsForHour(assignments, hour);
+  return list[0] ?? null;
 }
 
 /** Parse duration in minutes from a title string (e.g. "5 mins", "10-minute stretch"). */
@@ -76,6 +89,22 @@ function parseDurationFromTitle(title) {
   if (!title || typeof title !== 'string') return null;
   const m = title.match(/(\d+)\s*(?:min|minute|mins?)\b/i) || title.match(/(\d+)-minute/i);
   return m ? parseInt(m[1], 10) : null;
+}
+
+/** Get duration in minutes for an assignment (for capacity and proportional height). */
+function getDurationMinutesFromAssignment(assignment, goals) {
+  if (!assignment) return 15;
+  if (typeof assignment === 'object' && typeof assignment.duration === 'number') return Math.max(1, assignment.duration);
+  const goalId = getGoalIdFromAssignment(assignment);
+  const goal = goals?.find((g) => g.id === goalId);
+  return Math.max(1, Number(goal?.estimatedMinutes) || 15);
+}
+
+/** Get duration in minutes for a value about to be dropped (for capacity check). */
+function getDurationMinutesFromValue(value, goal) {
+  if (!value) return 15;
+  if (typeof value === 'object' && typeof value.duration === 'number') return Math.max(1, value.duration);
+  return Math.max(1, Number(goal?.estimatedMinutes) || 15);
 }
 
 /** Backlog category display labels with emoji for section headers. */
@@ -211,7 +240,7 @@ const MOBILE_BREAKPOINT = 640;
 
 function TimeSlot({
   hour,
-  assignment,
+  assignmentsList = [],
   goals,
   filledOrderIndex,
   filledCount,
@@ -223,26 +252,24 @@ function TimeSlot({
   now = null,
   isMobile = false,
   onEmptySlotClick,
+  onRemoveSlotItem,
   disableConfetti = false,
   hourStart = HOUR_START,
   hourEnd = HOUR_END,
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: hour });
-  const goalId = getGoalIdFromAssignment(assignment);
-  const slotRitualTitle = getRitualTitleFromAssignment(assignment);
-  const subtask = getSubtaskFromAssignment(assignment);
-  const routineSession = isRoutineSession(assignment);
-  const isRoutineTemplate = assignment && typeof assignment === 'object' && assignment.type === 'routineTemplate';
-  const isRecovery = assignment && typeof assignment === 'object' && assignment.type === 'recovery';
-  const isPriority = isPriorityAssignment(assignment);
-  const isFixed = isAssignmentFixed(assignment);
-  const isFixedAndPriority = isPriority && isFixed;
-  const goal = goalId ? goals?.find((g) => g.id === goalId) : null;
-  const isCriticalMass = goal?.criticalMass === true;
-  const isEmpty = !goal && !routineSession && !isRoutineTemplate && !isRecovery;
-  const thisSlotOverLimit = goal && filledCount > maxSlots;
-  const firstUncompleted = goal?.milestones?.find((m) => !m.completed);
-  const milestoneTitle = firstUncompleted?.title ?? firstUncompleted?.text;
+  const list = Array.isArray(assignmentsList) ? assignmentsList : (assignmentsList != null ? [assignmentsList] : []);
+  const isEmpty = list.length === 0;
+  const firstAssignment = list[0] ?? null;
+  const goalIdFirst = getGoalIdFromAssignment(firstAssignment);
+  const goalFirst = goalIdFirst ? goals?.find((g) => g.id === goalIdFirst) : null;
+  const thisSlotOverLimit = goalFirst && filledCount > maxSlots;
+  const routineFirst = firstAssignment && isRoutineSession(firstAssignment);
+  const estFirst = goalFirst?.estimatedMinutes ?? 0;
+  const totalFirst = goalFirst?.totalMinutes ?? 0;
+  const isFullyHarvestedFirst = estFirst > 0 && totalFirst >= estFirst;
+  const isSlotCompletedFirst = (goalFirst && isGoalCompleted(goalFirst)) || (routineFirst && isFullyHarvestedFirst);
+  const isFixedAndPriorityFirst = firstAssignment && isPriorityAssignment(firstAssignment) && isAssignmentFixed(firstAssignment);
 
   const slotHourNum = parseInt(hour.slice(0, 2), 10);
   const isCurrentHour = now && slotHourNum === now.getHours() && slotHourNum >= hourStart && slotHourNum <= hourEnd;
@@ -251,33 +278,8 @@ function TimeSlot({
 
   const slotBg = isEmpty
     ? 'bg-stone-100 border-2 border-dashed border-stone-300'
-    : isRecovery
-      ? 'bg-stone-100 border border-stone-300 text-stone-600'
-      : routineSession || isRoutineTemplate
-        ? 'bg-slate-200 border border-slate-300 text-stone-800'
-        : thisSlotOverLimit
-          ? 'bg-orange-200 border border-orange-300 text-orange-900'
-          : 'bg-moss-200 border border-moss-500/50 text-stone-800';
-  /** When slot has a task, the outer area is neutral; the chip gets the colored slotBg. */
-  const slotBgForChip = slotBg;
+    : 'bg-stone-50 border border-stone-200';
   const slotBgWhenFilled = 'bg-stone-50 border border-stone-200';
-
-  const estimatedMins = goal?.estimatedMinutes ?? 0;
-  const totalMins = goal?.totalMinutes ?? 0;
-  const durationLabel = estimatedMins > 0 ? `${estimatedMins}m` : null;
-  const progressPercent = estimatedMins > 0 ? Math.min(100, (totalMins / estimatedMins) * 100) : 0;
-  const isFullyHarvested = estimatedMins > 0 && totalMins >= estimatedMins;
-  const progressBarColor =
-    progressPercent >= 100 ? 'bg-moss-500' : progressPercent > 0 ? 'bg-amber-500' : 'bg-stone-400';
-  /** Slot is "done" — stays in place with distinct completed styling (opacity, strikethrough, soft grey). */
-  const isSlotCompleted = (goal && isGoalCompleted(goal)) || (routineSession && isFullyHarvested);
-
-  const routineDuration = routineSession ? (assignment.duration ?? 60) : 0;
-  /** Duration in minutes for this assignment (for fluid chip height). Default 60 if unknown. */
-  const durationMinutes = routineSession ? routineDuration : ((goal?.estimatedMinutes ?? estimatedMins) || 60);
-  /** Fluid chip: height proportional to duration (min 28px, max 52px) so short tasks don't block the whole hour. */
-  const ROW_MIN_HEIGHT = 52;
-  const chipHeight = isEmpty ? 0 : Math.max(28, Math.min(ROW_MIN_HEIGHT, Math.round((durationMinutes / 60) * ROW_MIN_HEIGHT)));
 
   const triggerHarvestConfetti = (e) => {
     try {
@@ -325,9 +327,9 @@ function TimeSlot({
         onKeyDown={isEmpty && onEmptySlotClick ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onEmptySlotClick(hour); } } : undefined}
         className={`flex-1 min-h-[52px] rounded-lg flex flex-col ${isEmpty ? 'justify-center' : 'justify-start'} px-3 py-2 transition-colors relative overflow-hidden ${isEmpty ? slotBg : slotBgWhenFilled} ${
           isOver && isEmpty ? 'ring-2 ring-moss-500/50 ring-offset-1' : ''
-        } ${isFullyHarvested && !routineSession ? 'border-moss-600/60' : ''} ${isEmpty && onEmptySlotClick ? 'cursor-pointer hover:bg-stone-200/80 active:bg-stone-300/80' : ''} ${
-          isFixedAndPriority ? 'ring-2 ring-amber-400/70 bg-amber-50/90 border-amber-300/80' : ''
-        } ${isSlotCompleted ? 'opacity-75 bg-stone-200/80 border-stone-300 text-stone-500' : ''}`}
+        } ${!isEmpty && isFullyHarvestedFirst && !routineFirst ? 'border-moss-600/60' : ''} ${isEmpty && onEmptySlotClick ? 'cursor-pointer hover:bg-stone-200/80 active:bg-stone-300/80' : ''} ${
+          isFixedAndPriorityFirst ? 'ring-2 ring-amber-400/70 bg-amber-50/90 border-amber-300/80' : ''
+        } ${isSlotCompletedFirst ? 'opacity-75 bg-stone-200/80 border-stone-300 text-stone-500' : ''}`}
       >
         {/* Blocked overlay: striped + stone texture when over capacity or empty at capacity */}
         {thisSlotOverLimit && (
@@ -340,151 +342,165 @@ function TimeSlot({
             aria-hidden
           />
         )}
-        {/* North Star priority: Golden Star highlight */}
-        {isPriority && !isCriticalMass && (
-          <span className="absolute top-2 left-2 text-amber-400 drop-shadow-sm" title="North Star priority" aria-hidden>⭐</span>
-        )}
-        {/* Critical Mass: maintenance task overdue — pin with orange dot and empathetic message */}
-        {isCriticalMass && (
-          <span className="absolute top-2 left-2 w-2.5 h-2.5 rounded-full bg-orange-500 shrink-0" title="Critical Mass" aria-hidden />
-        )}
-        {!isEmpty && chipHeight > 0 ? (
-          <>
-            <div
-              className={`rounded-lg flex flex-col justify-center min-w-0 shrink-0 overflow-hidden px-2 py-1.5 border ${slotBgForChip} ${isSlotCompleted ? 'opacity-90 border-stone-300' : ''}`}
-              style={{ minHeight: chipHeight }}
-            >
-        {routineSession ? (
-          <>
-            <div className={`flex items-center justify-between gap-2 ${isFullyHarvested ? 'line-through text-stone-400 opacity-60 transition-all duration-500' : ''} ${isPriority ? 'pl-5' : ''}`}>
-              <div className="flex items-center gap-2 min-w-0">
-                <RepeatIcon />
-                <span className="font-sans text-sm font-medium truncate">{assignment.title ?? goal?.title ?? 'Routine'}</span>
-              </div>
-              {onStartFocus && goal && (
-                <button
-                  type="button"
-                  onClick={() => onStartFocus(goal.id, hour, undefined, assignment?.subtaskId)}
-                  className="shrink-0 flex items-center gap-1 px-2 py-1 rounded font-sans text-xs bg-stone-800 text-stone-50 hover:bg-stone-700 focus:outline-none focus:ring-2 focus:ring-moss-500/50"
-                >
-                  <span aria-hidden>▶</span>
-                  <span>Play</span>
-                </button>
+        {/* North Star priority / Critical Mass from first assignment */}
+        {firstAssignment && (() => {
+          const gid = getGoalIdFromAssignment(firstAssignment);
+          const g = gid ? goals?.find((gr) => gr.id === gid) : null;
+          const isP = isPriorityAssignment(firstAssignment);
+          const isCM = g?.criticalMass === true;
+          return (
+            <>
+              {isP && !isCM && (
+                <span className="absolute top-2 left-2 text-amber-400 drop-shadow-sm" title="North Star priority" aria-hidden>⭐</span>
               )}
-            </div>
-            {routineDuration > 0 && (
-              <span className="font-sans text-xs text-stone-500 mt-0.5">{routineDuration}m</span>
-            )}
-            {subtask?.title && (
-              <span className="font-sans text-xs text-moss-700 mt-0.5 truncate block" title={subtask.title}>🌱 {subtask.title}</span>
-            )}
-          </>
-        ) : isRoutineTemplate ? (
-          <>
-            <div className="flex items-center gap-2 min-w-0">
-              <RepeatIcon />
-              <span className="font-sans text-sm font-medium truncate">{assignment.title ?? 'Routine'}</span>
-            </div>
-            {(assignment.duration > 0) && (
-              <span className="font-sans text-xs text-stone-500 mt-0.5">{assignment.duration}m</span>
-            )}
-          </>
-        ) : isRecovery ? (
-          <span className="font-sans text-sm font-medium text-stone-600">{assignment.title ?? 'Rest'}</span>
-        ) : goal ? (
-          <>
-            {durationLabel && !isFullyHarvested && (
-              <span className="absolute top-2 right-2 font-sans text-xs text-stone-500" aria-hidden>
-                {durationLabel}
-              </span>
-            )}
-            <div className={`flex flex-col gap-0.5 ${isCriticalMass ? 'pl-5' : ''} ${isPriority && !isCriticalMass ? 'pl-5' : ''}`}>
-            <div className={`flex items-center justify-between gap-2 pr-24 ${isFullyHarvested ? 'line-through text-stone-400 opacity-60 transition-all duration-500' : ''}`}>
-              <span className="font-sans text-sm font-medium truncate">{goal.title}</span>
-              {cloudSaved && (
-                <motion.span
-                  initial={{ scale: 0, opacity: 0 }}
-                  animate={{ scale: 1, opacity: 1 }}
-                  transition={{ type: 'spring', stiffness: 400, damping: 20 }}
-                  className="shrink-0 flex items-center"
-                  title="Saved to Google Calendar"
-                >
-                  <CloudUploadIcon />
-                </motion.span>
+              {isCM && (
+                <span className="absolute top-2 left-2 w-2.5 h-2.5 rounded-full bg-orange-500 shrink-0" title="Critical Mass" aria-hidden />
               )}
-              {onStartFocus && !isFullyHarvested && (
-                <button
-                  type="button"
-                  onClick={() => onStartFocus(goal.id, hour, slotRitualTitle ?? undefined, assignment?.subtaskId)}
-                  className="shrink-0 flex items-center gap-1 px-2 py-1 rounded font-sans text-xs bg-stone-800 text-stone-50 hover:bg-stone-700 focus:outline-none focus:ring-2 focus:ring-moss-500/50"
-                >
-                  <span aria-hidden>▶</span>
-                  <span>Play</span>
-                </button>
-              )}
-              {onStartFocus && isFullyHarvested && (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    triggerHarvestConfetti(e);
-                    onHarvestedClick?.();
-                    onStartFocus(goal.id, hour, slotRitualTitle ?? undefined, assignment?.subtaskId);
-                  }}
-                  className="shrink-0 flex items-center gap-1 px-2 py-1 rounded font-sans text-xs bg-moss-600/90 text-stone-50 font-medium hover:bg-moss-600 focus:outline-none focus:ring-2 focus:ring-moss-500/50"
-                  title="Harvested — tap to focus again"
-                >
-                  <span aria-hidden>✔</span>
-                  <span>Harvested</span>
-                </button>
-              )}
-            </div>
-            {isCriticalMass && (
-              <p className="font-sans text-xs text-orange-700 mt-0.5" role="status">Critical Mass: Let&apos;s tackle this before it becomes overwhelming.</p>
-            )}
-            {isFullyHarvested && onStartFocus && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  triggerHarvestConfetti(e);
-                  onHarvestedClick?.();
-                  onStartFocus(goal.id, hour, slotRitualTitle ?? undefined, assignment?.subtaskId);
-                }}
-                className="self-start mt-1 font-sans text-xs text-moss-700 hover:text-moss-800 underline underline-offset-1 focus:outline-none focus:ring-2 focus:ring-moss-500/40 rounded"
-              >
-                Over-water (add more)
-              </button>
-            )}
-            {estimatedMins > 0 && (
-              <div className="mt-2 w-full">
-                <div className="h-1 w-full rounded-full bg-stone-300 overflow-hidden" role="progressbar" aria-valuenow={Math.round(progressPercent)} aria-valuemin={0} aria-valuemax={100}>
-                  <div
-                    className={`h-full rounded-full transition-all duration-300 ${progressBarColor}`}
-                    style={{ width: `${Math.min(100, progressPercent)}%` }}
-                  />
+            </>
+          );
+        })()}
+        {!isEmpty ? (
+          (() => {
+            const slotDurations = list.map((a) => getDurationMinutesFromAssignment(a, goals));
+            const totalDuration = slotDurations.reduce((s, d) => s + d, 0);
+            const SLOT_BASE_HEIGHT_PX = 80;
+            const slotHeightPx = Math.max(SLOT_BASE_HEIGHT_PX, Math.round((totalDuration / 60) * SLOT_BASE_HEIGHT_PX));
+            return (
+          <div className="flex flex-col gap-1 p-1 overflow-auto" style={{ minHeight: SLOT_BASE_HEIGHT_PX, height: slotHeightPx }}>
+            {list.map((assignment, index) => {
+              const goalId = getGoalIdFromAssignment(assignment);
+              const slotRitualTitle = getRitualTitleFromAssignment(assignment);
+              const subtask = getSubtaskFromAssignment(assignment);
+              const routineSession = isRoutineSession(assignment);
+              const isRoutineTemplate = assignment && typeof assignment === 'object' && assignment.type === 'routineTemplate';
+              const isRecovery = assignment && typeof assignment === 'object' && assignment.type === 'recovery';
+              const isPriority = isPriorityAssignment(assignment);
+              const isFixed = isAssignmentFixed(assignment);
+              const isFixedAndPriority = isPriority && isFixed;
+              const goal = goalId ? goals?.find((g) => g.id === goalId) : null;
+              const isCriticalMass = goal?.criticalMass === true;
+              const estimatedMins = goal?.estimatedMinutes ?? 0;
+              const totalMins = goal?.totalMinutes ?? 0;
+              const durationLabel = estimatedMins > 0 ? `${estimatedMins}m` : null;
+              const progressPercent = estimatedMins > 0 ? Math.min(100, (totalMins / estimatedMins) * 100) : 0;
+              const isFullyHarvested = estimatedMins > 0 && totalMins >= estimatedMins;
+              const progressBarColor = progressPercent >= 100 ? 'bg-moss-500' : progressPercent > 0 ? 'bg-amber-500' : 'bg-stone-400';
+              const isSlotCompleted = (goal && isGoalCompleted(goal)) || (routineSession && isFullyHarvested);
+              const routineDuration = routineSession ? (assignment.duration ?? 60) : 0;
+              const durationMinutes = routineSession ? routineDuration : ((goal?.estimatedMinutes ?? estimatedMins) || 60);
+              const heightPx = totalDuration > 0 ? Math.max(12, Math.round((durationMinutes / totalDuration) * slotHeightPx)) : slotHeightPx;
+              const isMicroTask = durationMinutes < 20;
+              const slotBgForChip = isRecovery ? 'bg-stone-100 border-stone-300 text-stone-600' : routineSession || isRoutineTemplate ? 'bg-slate-200 border-slate-300 text-stone-800' : isCriticalMass ? 'bg-orange-200 border-orange-300' : 'bg-moss-200 border-moss-500/50 text-stone-800';
+              const firstUncompleted = goal?.milestones?.find((m) => !m.completed);
+              const milestoneTitle = firstUncompleted?.title ?? firstUncompleted?.text;
+              return (
+                <div key={assignment.id ?? `${hour}-${index}`} className="flex items-start gap-2 min-w-0 flex-shrink-0" style={{ height: heightPx, minHeight: 12 }}>
+                  <div className={`flex-1 min-w-0 h-full rounded-lg overflow-hidden px-2 border ${slotBgForChip} ${isSlotCompleted ? 'opacity-90 border-stone-300' : ''} ${isMicroTask ? 'flex flex-row items-center py-1' : 'flex flex-col justify-center py-1.5'}`}>
+                    {routineSession ? (
+                      isMicroTask ? (
+                        <div className="flex items-center gap-1.5 min-w-0 w-full">
+                          <RepeatIcon />
+                          <span className={`font-sans text-xs font-medium truncate ${isFullyHarvested ? 'line-through text-stone-400 opacity-60' : ''}`}>{assignment.title ?? goal?.title ?? 'Routine'}</span>
+                          {onStartFocus && goal && (
+                            <button type="button" onClick={() => onStartFocus(goal.id, hour, undefined, assignment?.subtaskId)} className="shrink-0 ml-auto flex items-center gap-0.5 px-1.5 py-0.5 rounded font-sans text-[10px] bg-stone-800 text-stone-50 hover:bg-stone-700 focus:outline-none focus:ring-2 focus:ring-moss-500/50"><span aria-hidden>▶</span></button>
+                          )}
+                        </div>
+                      ) : (
+                      <>
+                        <div className={`flex items-center justify-between gap-2 ${isFullyHarvested ? 'line-through text-stone-400 opacity-60' : ''} ${isPriority ? 'pl-5' : ''}`}>
+                          <div className="flex items-center gap-2 min-w-0">
+                            <RepeatIcon />
+                            <span className="font-sans text-sm font-medium truncate">{assignment.title ?? goal?.title ?? 'Routine'}</span>
+                          </div>
+                          {onStartFocus && goal && (
+                            <button type="button" onClick={() => onStartFocus(goal.id, hour, undefined, assignment?.subtaskId)} className="shrink-0 flex items-center gap-1 px-2 py-1 rounded font-sans text-xs bg-stone-800 text-stone-50 hover:bg-stone-700 focus:outline-none focus:ring-2 focus:ring-moss-500/50">
+                              <span aria-hidden>▶</span><span>Play</span>
+                            </button>
+                          )}
+                        </div>
+                        {routineDuration > 0 && <span className="font-sans text-xs text-stone-500 mt-0.5">{routineDuration}m</span>}
+                        {subtask?.title && <span className="font-sans text-xs text-moss-700 mt-0.5 truncate block" title={subtask.title}>🌱 {subtask.title}</span>}
+                      </>
+                      )
+                    ) : isRoutineTemplate ? (
+                      isMicroTask ? (
+                        <div className="flex items-center gap-1.5 min-w-0 w-full">
+                          <RepeatIcon />
+                          <span className="font-sans text-xs font-medium truncate">{assignment.title ?? 'Routine'}</span>
+                        </div>
+                      ) : (
+                      <>
+                        <div className="flex items-center gap-2 min-w-0">
+                          <RepeatIcon />
+                          <span className="font-sans text-sm font-medium truncate">{assignment.title ?? 'Routine'}</span>
+                        </div>
+                        {(assignment.duration > 0) && <span className="font-sans text-xs text-stone-500 mt-0.5">{assignment.duration}m</span>}
+                      </>
+                      )
+                    ) : isRecovery ? (
+                      <span className={`font-sans font-medium text-stone-600 ${isMicroTask ? 'text-xs' : 'text-sm'}`}>{assignment.title ?? 'Rest'}</span>
+                    ) : goal ? (
+                      isMicroTask ? (
+                        <div className="flex items-center gap-1.5 min-w-0 w-full">
+                          {durationLabel && !isFullyHarvested && <span className="font-sans text-[10px] text-stone-500 shrink-0" aria-hidden>{durationLabel}</span>}
+                          <span className={`font-sans text-xs font-medium truncate min-w-0 ${isFullyHarvested ? 'line-through text-stone-400 opacity-60' : ''}`}>{goal.title}</span>
+                          {cloudSaved && index === 0 && (
+                            <motion.span initial={{ scale: 0, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: 'spring', stiffness: 400, damping: 20 }} className="shrink-0" title="Saved to Google Calendar"><CloudUploadIcon /></motion.span>
+                          )}
+                          {onStartFocus && !isFullyHarvested && (
+                            <button type="button" onClick={() => onStartFocus(goal.id, hour, slotRitualTitle ?? undefined, assignment?.subtaskId)} className="shrink-0 ml-auto flex items-center gap-0.5 px-1.5 py-0.5 rounded font-sans text-[10px] bg-stone-800 text-stone-50 hover:bg-stone-700 focus:outline-none focus:ring-2 focus:ring-moss-500/50"><span aria-hidden>▶</span></button>
+                          )}
+                          {onStartFocus && isFullyHarvested && (
+                            <button type="button" onClick={(e) => { triggerHarvestConfetti(e); onHarvestedClick?.(); onStartFocus(goal.id, hour, slotRitualTitle ?? undefined, assignment?.subtaskId); }} className="shrink-0 ml-auto flex items-center gap-0.5 px-1.5 py-0.5 rounded font-sans text-[10px] bg-moss-600/90 text-stone-50 font-medium hover:bg-moss-600 focus:outline-none focus:ring-2 focus:ring-moss-500/50" title="Harvested"><span aria-hidden>✔</span></button>
+                          )}
+                        </div>
+                      ) : (
+                      <>
+                        {durationLabel && !isFullyHarvested && <span className="absolute top-2 right-2 font-sans text-xs text-stone-500" aria-hidden>{durationLabel}</span>}
+                        <div className={`flex flex-col gap-0.5 ${isCriticalMass ? 'pl-5' : ''} ${isPriority && !isCriticalMass ? 'pl-5' : ''}`}>
+                          <div className={`flex items-center justify-between gap-2 pr-24 ${isFullyHarvested ? 'line-through text-stone-400 opacity-60' : ''}`}>
+                            <span className="font-sans text-sm font-medium truncate">{goal.title}</span>
+                            {cloudSaved && index === 0 && (
+                              <motion.span initial={{ scale: 0, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: 'spring', stiffness: 400, damping: 20 }} className="shrink-0" title="Saved to Google Calendar"><CloudUploadIcon /></motion.span>
+                            )}
+                            {onStartFocus && !isFullyHarvested && (
+                              <button type="button" onClick={() => onStartFocus(goal.id, hour, slotRitualTitle ?? undefined, assignment?.subtaskId)} className="shrink-0 flex items-center gap-1 px-2 py-1 rounded font-sans text-xs bg-stone-800 text-stone-50 hover:bg-stone-700 focus:outline-none focus:ring-2 focus:ring-moss-500/50"><span aria-hidden>▶</span><span>Play</span></button>
+                            )}
+                            {onStartFocus && isFullyHarvested && (
+                              <button type="button" onClick={(e) => { triggerHarvestConfetti(e); onHarvestedClick?.(); onStartFocus(goal.id, hour, slotRitualTitle ?? undefined, assignment?.subtaskId); }} className="shrink-0 flex items-center gap-1 px-2 py-1 rounded font-sans text-xs bg-moss-600/90 text-stone-50 font-medium hover:bg-moss-600 focus:outline-none focus:ring-2 focus:ring-moss-500/50" title="Harvested — tap to focus again"><span aria-hidden>✔</span><span>Harvested</span></button>
+                            )}
+                          </div>
+                          {isCriticalMass && <p className="font-sans text-xs text-orange-700 mt-0.5" role="status">Critical Mass: Let&apos;s tackle this before it becomes overwhelming.</p>}
+                          {isFullyHarvested && onStartFocus && (
+                            <button type="button" onClick={(e) => { triggerHarvestConfetti(e); onHarvestedClick?.(); onStartFocus(goal.id, hour, slotRitualTitle ?? undefined, assignment?.subtaskId); }} className="self-start mt-1 font-sans text-xs text-moss-700 hover:text-moss-800 underline underline-offset-1 focus:outline-none focus:ring-2 focus:ring-moss-500/40 rounded">Over-water (add more)</button>
+                          )}
+                          {estimatedMins > 0 && (
+                            <div className="mt-2 w-full">
+                              <div className="h-1 w-full rounded-full bg-stone-300 overflow-hidden" role="progressbar" aria-valuenow={Math.round(progressPercent)} aria-valuemin={0} aria-valuemax={100}>
+                                <div className={`h-full rounded-full transition-all duration-300 ${progressBarColor}`} style={{ width: `${Math.min(100, progressPercent)}%` }} />
+                              </div>
+                            </div>
+                          )}
+                          {milestoneTitle && firstUncompleted && (
+                            <div className="flex items-center gap-2 mt-1.5">
+                              <input type="checkbox" checked={false} onChange={() => onMilestoneCheck?.(goal.id, firstUncompleted.id, true)} className="rounded border-stone-300 text-moss-500 focus:ring-moss-500/50 shrink-0" aria-label={`Complete milestone: ${milestoneTitle}`} />
+                              <span className="font-sans text-xs text-stone-600 truncate">Next: {milestoneTitle}</span>
+                            </div>
+                          )}
+                        </div>
+                      </>
+                      )
+                    ) : null}
+                  </div>
+                  {typeof onRemoveSlotItem === 'function' && (
+                    <button type="button" onClick={() => onRemoveSlotItem(hour, index)} className="shrink-0 p-1.5 rounded text-stone-400 hover:text-stone-600 hover:bg-stone-200 focus:outline-none focus:ring-2 focus:ring-moss-500/50" aria-label={`Remove from ${hour}`}>×</button>
+                  )}
                 </div>
-              </div>
-            )}
-            {milestoneTitle && firstUncompleted && (
-              <div className="flex items-center gap-2 mt-1.5">
-                <input
-                  type="checkbox"
-                  checked={false}
-                  onChange={() => onMilestoneCheck?.(goal.id, firstUncompleted.id, true)}
-                  className="rounded border-stone-300 text-moss-500 focus:ring-moss-500/50 shrink-0"
-                  aria-label={`Complete milestone: ${milestoneTitle}`}
-                />
-                <span className="font-sans text-xs text-stone-600 truncate">
-                  Next: {milestoneTitle}
-                </span>
-              </div>
-            )}
-            </div>
-          </>
-        ) : null}
-            </div>
-            <div className="flex-1 min-h-[4px]" aria-hidden />
-          </>
-        ) : (
+              );
+            })}
+          </div>
+            );
+          })() ) : (
           <span className="font-sans text-sm relative z-10 text-stone-400">
             {onEmptySlotClick ? (isMobile ? 'Tap to add' : 'Add task') : 'Add task'}
           </span>
@@ -650,21 +666,26 @@ function GoalMenu({ goal, onEdit, onCompost, onClose, anchorRef }) {
 /** Planned minutes for this goal from current week assignments (kaizen: by goalId; routine: by routine sessions). hours defaults to HOURS if not provided. */
 function getPlannedMinutesForGoal(goalId, assignments, goalEstimatedMinutes = 60, hours = HOURS) {
   if (!assignments || !goalId) return 0;
-  return hours.reduce((sum, hour) => {
-    const a = getAssignmentForHour(assignments, hour);
-    const gid = getGoalIdFromAssignment(a);
-    return gid === goalId ? sum + goalEstimatedMinutes : sum;
-  }, 0);
+  let total = 0;
+  for (const hour of hours) {
+    for (const a of getAssignmentsForHour(assignments, hour)) {
+      if (getGoalIdFromAssignment(a) === goalId) total += goalEstimatedMinutes;
+    }
+  }
+  return total;
 }
 
 /** Planned minutes for a routine goal: sum duration of all slots with parentGoalId === goalId. hours defaults to HOURS if not provided. */
 function getPlannedMinutesForRoutine(goalId, assignments, hours = HOURS) {
   if (!assignments || !goalId) return 0;
-  return hours.reduce((sum, hour) => {
-    const a = getAssignmentForHour(assignments, hour);
-    if (!isRoutineSession(a) || a.parentGoalId !== goalId) return sum;
-    return sum + (a.duration ?? 60);
-  }, 0);
+  let total = 0;
+  for (const hour of hours) {
+    for (const a of getAssignmentsForHour(assignments, hour)) {
+      if (!isRoutineSession(a) || a.parentGoalId !== goalId) continue;
+      total += a.duration ?? 60;
+    }
+  }
+  return total;
 }
 
 /** Subtask status: bloom (done), withered (deadline passed), else bud */
@@ -1618,7 +1639,7 @@ function TimeSlicer({
   monthlyRoadmap = null,
   zenMode = false,
 }) {
-  const { googleToken: googleTokenContext, spiritConfig, addLog } = useGarden();
+  const { googleToken: googleTokenContext, spiritConfig, addLog, tourStep, setTourStep } = useGarden();
   const { pushReward } = useReward();
   const googleToken = googleTokenProp ?? googleTokenContext ?? null;
 
@@ -1714,8 +1735,19 @@ function TimeSlicer({
     if (time === 'anytime') {
       next.anytime = [...(next.anytime || []), value];
     } else {
-      next[time] = value;
+      next[time] = [...getAssignmentsForHour(next, time), value];
     }
+    if (isControlled) safeOnAssignmentsChange(next);
+    else setInternalAssignments(next);
+  };
+
+  const removeAssignment = (hour, index) => {
+    const list = getAssignmentsForHour(assignments, hour);
+    if (index < 0 || index >= list.length) return;
+    const next = { ...assignments };
+    const newList = list.filter((_, i) => i !== index);
+    next[hour] = newList.length > 0 ? newList : [];
+    if (newList.length === 0) delete next[hour];
     if (isControlled) safeOnAssignmentsChange(next);
     else setInternalAssignments(next);
   };
@@ -1729,6 +1761,7 @@ function TimeSlicer({
 
   /** Complete an Anytime item: remove from list and show post-task vibe toast (Energized/Drained). */
   const handleCompleteAnytimeWithVibe = useCallback((index) => {
+    if (tourStep === 3 && typeof setTourStep === 'function') setTourStep(4);
     const list = assignments?.anytime ?? [];
     const assignment = list[index];
     if (assignment == null) {
@@ -1750,7 +1783,7 @@ function TimeSlicer({
         addLog?.({ taskId: goalId, taskTitle, minutes: 0, date: new Date(), vibe, energyCost });
       },
     });
-  }, [assignments, safeGoals, removeFromAnytime, pushReward, addLog]);
+  }, [assignments, safeGoals, removeFromAnytime, pushReward, addLog, tourStep, setTourStep]);
 
   useEffect(() => {
     if (recentlyExportedSlot == null) return;
@@ -1783,24 +1816,24 @@ function TimeSlicer({
           : Math.max(1, baseCapacity + dailyEnergyModifier);
   const isLowEnergy =
     (typeof dailySpoonCount === 'number' && dailySpoonCount <= 3) || dailyEnergyModifier === -2;
-  const filledTimes = hoursArray.filter((h) => getAssignmentForHour(assignments, h) != null);
+  const filledTimes = hoursArray.filter((h) => !isSlotEmpty(assignments, h));
   /** Timeline is always in strict chronological order (hoursArray). No re-sorting — tasks stay in their time slot. */
-  /** Today's tasks for "Help Me Prioritize" AI: one entry per goal (id, title, isFixed). */
+  /** Today's tasks for "Help Me Prioritize" AI: one entry per goal (id, title, isFixed), from flattened assignments. */
   const todayTasks = useMemo(() => {
     const seen = new Set();
     const list = [];
     for (const hour of hoursArray) {
-      const a = getAssignmentForHour(assignments, hour);
-      if (!a) continue;
-      const id = getGoalIdFromAssignment(a);
-      if (!id || seen.has(id)) continue;
-      seen.add(id);
-      const goal = safeGoals?.find((g) => g.id === id);
-      list.push({
-        id,
-        title: goal?.title ?? (a && typeof a === 'object' && a.title) ?? 'Task',
-        isFixed: isAssignmentFixed(a),
-      });
+      for (const a of getAssignmentsForHour(assignments, hour)) {
+        const id = getGoalIdFromAssignment(a);
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        const goal = safeGoals?.find((g) => g.id === id);
+        list.push({
+          id,
+          title: goal?.title ?? (a && typeof a === 'object' && a.title) ?? 'Task',
+          isFixed: isAssignmentFixed(a),
+        });
+      }
     }
     for (const a of assignments?.anytime ?? []) {
       const id = getGoalIdFromAssignment(a);
@@ -1826,8 +1859,9 @@ function TimeSlicer({
   const hasAnyPrioritizedToday = useMemo(() => {
     for (const key of Object.keys(assignments)) {
       if (key === 'anytime') continue;
-      const a = assignments[key];
-      if (a && typeof a === 'object' && a.priority === true) return true;
+      for (const a of getAssignmentsForHour(assignments, key)) {
+        if (a && typeof a === 'object' && a.priority === true) return true;
+      }
     }
     for (const a of assignments?.anytime ?? []) {
       if (a && typeof a === 'object' && a.priority === true) return true;
@@ -1844,14 +1878,16 @@ function TimeSlicer({
   const anytimeCount = (assignments?.anytime ?? []).length;
   const hasNoAssignments = filledTimes.length === 0 && anytimeCount === 0;
   const filledSpoonTotal = useMemo(() => {
-    return hoursArray.reduce((sum, h) => {
-      const a = getAssignmentForHour(assignments, h);
-      if (!a) return sum;
-      if (a && typeof a === 'object' && (a.type === 'recovery' || a.spoonCost === 0)) return sum;
-      const gid = getGoalIdFromAssignment(a);
-      const goal = safeGoals.find((g) => g.id === gid);
-      return sum + getSpoonCost(goal ?? a);
-    }, 0);
+    let total = 0;
+    for (const h of hoursArray) {
+      for (const a of getAssignmentsForHour(assignments, h)) {
+        if (a && typeof a === 'object' && (a.type === 'recovery' || a.spoonCost === 0)) continue;
+        const gid = getGoalIdFromAssignment(a);
+        const goal = safeGoals.find((g) => g.id === gid);
+        total += getSpoonCost(goal ?? a);
+      }
+    }
+    return total;
   }, [assignments, safeGoals, hoursArray]);
   const isOverCapacity = filledSpoonTotal > maxSlots;
 
@@ -1940,7 +1976,7 @@ function TimeSlicer({
 
   const handlePrioritizeSelectTask = (goal) => {
     if (!goal?.id) return;
-    const firstEmpty = hoursArray.find((h) => !getAssignmentForHour(assignments, h));
+    const firstEmpty = hoursArray.find((h) => isSlotEmpty(assignments, h));
     if (!firstEmpty) {
       window.dispatchEvent(new CustomEvent('kaizen:toast', { detail: { message: "Your day is full. Lighten your load or pick another day." } }));
       return;
@@ -1982,7 +2018,7 @@ function TimeSlicer({
 
   const handleTapAddToNextHour = useCallback(() => {
     const { goal, item, routine } = seedBagTapTarget || {};
-    const firstEmpty = hoursArray.find((h) => !getAssignmentForHour(assignments, h));
+    const firstEmpty = hoursArray.find((h) => isSlotEmpty(assignments, h));
     if (!firstEmpty) {
       window.dispatchEvent(new CustomEvent('kaizen:toast', { detail: { message: "Your day is full. Lighten your load or pick another day." } }));
       setSeedBagTapTarget(null);
@@ -2019,7 +2055,7 @@ function TimeSlicer({
   /** Plant one 1h routine block in the first empty slot. Used by [+1h] on routine cards. */
   const handlePlantRoutineBlock = (goal) => {
     if (!goal?.id || goal?.type !== 'routine') return;
-    const firstEmpty = hoursArray.find((h) => !getAssignmentForHour(assignments, h));
+    const firstEmpty = hoursArray.find((h) => isSlotEmpty(assignments, h));
     if (!firstEmpty) return;
     const value = {
       id: crypto.randomUUID?.() ?? `s-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
@@ -2029,9 +2065,7 @@ function TimeSlicer({
       duration: 60,
       spoonCost: getSpoonCost(goal),
     };
-    const next = { ...assignments, [firstEmpty]: value };
-    if (isControlled) safeOnAssignmentsChange(next);
-    else setInternalAssignments(next);
+    applyAssignment(firstEmpty, value);
   };
 
   const handleMilestoneCheck = useCallback((goalId, milestoneId, completed) => {
@@ -2084,7 +2118,7 @@ function TimeSlicer({
     }
 
     if (!hoursArray.includes(time)) return;
-    const targetWasEmpty = !getAssignmentForHour(assignments, time);
+    const targetWasEmpty = isSlotEmpty(assignments, time);
 
     let value;
     if (goal?.type === 'routine') {
@@ -2111,6 +2145,15 @@ function TimeSlicer({
       value = ritualTitle ? { goalId, ritualTitle } : goalId;
     } else {
       value = ritualTitle ? { goalId, ritualTitle } : goalId;
+    }
+
+    const existingTotalMins = getAssignmentsForHour(assignments, time).reduce(
+      (sum, a) => sum + getDurationMinutesFromAssignment(a, safeGoals),
+      0
+    );
+    const newTaskMins = getDurationMinutesFromValue(value, goal);
+    if (existingTotalMins + newTaskMins > 60) {
+      window.dispatchEvent(new CustomEvent('kaizen:toast', { detail: { message: 'This hour is getting a bit crowded!' } }));
     }
 
     applyAssignment(time, value);
@@ -2214,14 +2257,16 @@ function TimeSlicer({
   const currentNextItem = useMemo(() => {
     if (!zenMode) return null;
     const nowMins = now.getHours() * 60 + now.getMinutes();
-    const items = hoursArray.filter((h) => getAssignmentForHour(assignments, h)).map((hour) => {
-      const a = getAssignmentForHour(assignments, hour);
-      const goalId = getGoalIdFromAssignment(a);
-      const goal = safeGoals.find((g) => g.id === goalId);
+    const items = [];
+    for (const hour of hoursArray) {
       const [h] = hour.split(':').map(Number);
       const slotMins = h * 60;
-      return { hour, goalId, goal, slotMins, ritualTitle: getRitualTitleFromAssignment(a), subtaskId: getSubtaskFromAssignment(a)?.id };
-    });
+      for (const a of getAssignmentsForHour(assignments, hour)) {
+        const goalId = getGoalIdFromAssignment(a);
+        const goal = safeGoals.find((g) => g.id === goalId);
+        items.push({ hour, goalId, goal, slotMins, ritualTitle: getRitualTitleFromAssignment(a), subtaskId: getSubtaskFromAssignment(a)?.id });
+      }
+    }
     if (items.length === 0) return null;
     const sorted = [...items].sort((a, b) => a.slotMins - b.slotMins);
     const upcoming = sorted.filter((i) => i.slotMins >= nowMins);
@@ -2265,16 +2310,23 @@ function TimeSlicer({
               onClick={(e) => {
                 e.stopPropagation();
                 const dateStr = editingDate || localISODate();
-                const dayEvents = hoursArray
-                  .filter((h) => getAssignmentForHour(assignments, h))
-                  .map((h) => {
-                    const gid = getGoalIdFromAssignment(getAssignmentForHour(assignments, h));
+                const dayEvents = [];
+                for (const h of hoursArray) {
+                  const list = getAssignmentsForHour(assignments, h);
+                  const [hourNum] = h.split(':').map(Number);
+                  let offsetMins = 0;
+                  for (let i = 0; i < list.length; i++) {
+                    const a = list[i];
+                    const gid = getGoalIdFromAssignment(a);
                     const goal = safeGoals.find((g) => g.id === gid);
-                    const hourNum = parseInt(h);
-                    const startTime = new Date(dateStr + 'T' + h + ':00');
-                    const endTime = new Date(startTime.getTime() + 60 * 60 * 1000);
-                    return { id: 'kz-' + h, title: goal?.title || 'Kaizen Task', start: startTime, end: endTime };
-                  });
+                    const durationMins = goal?.estimatedMinutes ?? 60;
+                    const startTime = new Date(dateStr + 'T' + String(hourNum).padStart(2, '0') + ':00');
+                    startTime.setMinutes(startTime.getMinutes() + offsetMins);
+                    const endTime = new Date(startTime.getTime() + durationMins * 60 * 1000);
+                    dayEvents.push({ id: `kz-${h}-${i}`, title: goal?.title || 'Kaizen Task', start: startTime, end: endTime });
+                    offsetMins += durationMins;
+                  }
+                }
                 if (dayEvents.length === 0) return;
                 downloadICS(dayEvents, 'kaizen-' + dateStr + '.ics');
               }}
@@ -2463,7 +2515,7 @@ function TimeSlicer({
                   <TimeSlot
                     key={hour}
                     hour={hour}
-                    assignment={getAssignmentForHour(assignments, hour)}
+                    assignmentsList={getAssignmentsForHour(assignments, hour)}
                     goals={goals}
                     filledOrderIndex={filledTimes.indexOf(hour)}
                     filledCount={filledSpoonTotal}
@@ -2475,6 +2527,7 @@ function TimeSlicer({
                     now={now}
                     isMobile={isMobile}
                     onEmptySlotClick={(h) => setSeedPickerTargetHour(h)}
+                    onRemoveSlotItem={removeAssignment}
                     disableConfetti={getSettings().lowStim || shouldReduceMotion(getSettings())}
                     hourStart={hourStart}
                     hourEnd={hourEnd}

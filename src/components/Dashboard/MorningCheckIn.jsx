@@ -95,7 +95,7 @@ function Sparkline({ data }) {
 }
 
 export default function MorningCheckIn({ onComplete, onDismiss, goals = [], logMetric, yesterdayPlan = null }) {
-  const { smallJoys, clearDaySchedule, today } = useGarden();
+  const { smallJoys, clearDaySchedule, today, tourStep } = useGarden();
   const [randomJoy] = useState(() => {
     if (!smallJoys || smallJoys.length === 0) return null;
     return smallJoys[Math.floor(Math.random() * smallJoys.length)];
@@ -184,6 +184,11 @@ export default function MorningCheckIn({ onComplete, onDismiss, goals = [], logM
           >
             ×
           </button>
+        )}
+        {tourStep === 1 && (
+          <p className="mb-4 px-3 py-2 rounded-xl bg-moss-100 text-moss-800 text-sm font-sans text-center" role="status">
+            Start here! Tell me how much energy you have today.
+          </p>
         )}
         <AnimatePresence mode="wait">
           {step === 'energy' && (

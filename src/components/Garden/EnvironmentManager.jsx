@@ -1,6 +1,7 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useContext } from 'react';
 import { Stars } from '@react-three/drei';
 import { useGarden } from '../../context/GardenContext';
+import { LowPerfContext } from './Garden3D';
 
 const PHASE_COLORS = {
   night: { bg: '#0f172a', ambient: 0.2, lightColor: '#93c5fd' },
@@ -18,6 +19,7 @@ const ENERGY_MOOD = {
 
 export default function EnvironmentManager({ setTimePhase }) {
   const [phase, setPhase] = useState('day');
+  const lowPerf = useContext(LowPerfContext);
   const { dailySpoonCount } = useGarden();
 
   useEffect(() => {
@@ -67,8 +69,8 @@ export default function EnvironmentManager({ setTimePhase }) {
         position={[10, 20, 10]}
         intensity={colors.dirIntensity}
         color={colors.lightColor}
-        castShadow
-        shadow-mapSize={[2048, 2048]}
+        castShadow={!lowPerf}
+        shadow-mapSize={lowPerf ? [512, 512] : [2048, 2048]}
       />
       {phase === 'night' && (
         <Stars radius={50} depth={50} count={2000} factor={4} saturation={0} fade speed={1} />

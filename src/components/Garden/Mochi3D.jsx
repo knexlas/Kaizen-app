@@ -1,12 +1,15 @@
-import { useRef, useState, useEffect } from 'react';
+import { useRef, useState, useEffect, useContext } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { Sphere, Cone, Html } from '@react-three/drei';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useGarden } from '../../context/GardenContext';
 import { getGoalProgressPercent } from './GardenWalk';
+import { LowPerfContext } from './Garden3D';
 
 export default function Mochi3D({ isWalking }) {
   const { goals } = useGarden();
+  const lowPerf = useContext(LowPerfContext);
+  const shadow = !lowPerf;
   const group = useRef(null);
   const [thought, setThought] = useState(null);
   const [isHappy, setIsHappy] = useState(false);
@@ -65,7 +68,7 @@ export default function Mochi3D({ isWalking }) {
       onPointerOver={() => (document.body.style.cursor = 'pointer')}
       onPointerOut={() => (document.body.style.cursor = 'auto')}
     >
-      <Sphere args={[0.5, 32, 32]} castShadow>
+      <Sphere args={[0.5, 32, 32]} castShadow={shadow}>
         <meshStandardMaterial color="#ffffff" roughness={0.2} />
       </Sphere>
       <Sphere args={[0.06, 16, 16]} position={[-0.18, 0.1, 0.45]}>
@@ -107,17 +110,17 @@ export default function Mochi3D({ isWalking }) {
       {/* Watering Can */}
       <group position={[0.4, -0.05, 0.45]} rotation={[0, -0.4, -0.2]}>
         {/* Can Body */}
-        <mesh castShadow>
+        <mesh castShadow={shadow}>
           <cylinderGeometry args={[0.12, 0.12, 0.2, 16]} />
           <meshStandardMaterial color="#94a3b8" metalness={0.4} roughness={0.3} />
         </mesh>
         {/* Spout */}
-        <mesh position={[0.15, -0.02, 0]} rotation={[0, 0, -1.2]} castShadow>
+        <mesh position={[0.15, -0.02, 0]} rotation={[0, 0, -1.2]} castShadow={shadow}>
           <cylinderGeometry args={[0.02, 0.04, 0.2, 8]} />
           <meshStandardMaterial color="#94a3b8" metalness={0.4} roughness={0.3} />
         </mesh>
         {/* Handle */}
-        <mesh position={[-0.1, 0.05, 0]} castShadow>
+        <mesh position={[-0.1, 0.05, 0]} castShadow={shadow}>
           <torusGeometry args={[0.06, 0.02, 8, 16, Math.PI]} />
           <meshStandardMaterial color="#94a3b8" metalness={0.4} roughness={0.3} />
         </mesh>

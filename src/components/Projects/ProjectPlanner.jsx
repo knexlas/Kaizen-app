@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { sliceProject } from '../../services/geminiService';
 import { useGarden } from '../../context/GardenContext';
@@ -13,11 +13,14 @@ function parseWeekRange(weekRangeStr, totalWeeks = 14) {
   return { start: Math.min(start, end), end };
 }
 
-export default function ProjectPlanner({ open, onClose, onCreateGoals }) {
+const skillGoals = (goals) => (goals || []).filter((g) => g.type === 'kaizen' && !g._projectGoal);
+
+export default function ProjectPlanner({ open, onClose, onCreateGoals, prefillTitle = '', prefillParentGoalId = '' }) {
   const { goals } = useGarden();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [deadline, setDeadline] = useState('');
+  const [parentGoalId, setParentGoalId] = useState('');
   const [skillLevel, setSkillLevel] = useState('intermediate'); // 'beginner' | 'intermediate' | 'expert'
   const [isSlicing, setIsSlicing] = useState(false);
   const [plan, setPlan] = useState(null);
@@ -25,6 +28,12 @@ export default function ProjectPlanner({ open, onClose, onCreateGoals }) {
   const [selectedTasks, setSelectedTasks] = useState(new Set());
   const [linkedGoals, setLinkedGoals] = useState({});
   const [feedback, setFeedback] = useState('');
+  const [isCreating, setIsCreating] = useState(false);
+
+  useEffect(() => {
+    if (open && prefillTitle) setName(prefillTitle);
+    if (open && prefillParentGoalId) setParentGoalId(prefillParentGoalId);
+  }, [open, prefillTitle, prefillParentGoalId]);
 
   const handleGeneratePlan = useCallback(async (userFeedback = '') => {
     if (!name.trim()) return;
@@ -59,8 +68,10 @@ export default function ProjectPlanner({ open, onClose, onCreateGoals }) {
     }
   }, [name, deadline, description, goals, skillLevel]);
 
-  const handleCreate = useCallback(() => {
-    if (!plan || !onCreateGoals) return;
+  const handleCreate = useCallback(async () => {
+    if (!plan || !onCreateGoals || isCreating) return;
+    setIsCreating(true);
+    try {
     const totalWeeks = Math.max(1, Number(plan.totalWeeks) || 14);
     const uid = () => crypto.randomUUID?.() ?? `id-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 
@@ -100,10 +111,12 @@ export default function ProjectPlanner({ open, onClose, onCreateGoals }) {
     if (deadline) notesParts.push(`Deadline: ${deadline}`);
     const notes = notesParts.filter(Boolean).join(' \u00b7 ');
 
+    const projectTitle = name.trim() || 'Project';
+
     const projectGoal = {
       id: uid(),
       type: 'kaizen',
-      title: name.trim() || 'Project',
+      title: projectTitle,
       domain: 'mind',
       estimatedMinutes: 60,
       targetHours: subtasks.reduce((sum, st) => sum + (st.estimatedHours || 0), 0) || 5,
@@ -111,10 +124,11 @@ export default function ProjectPlanner({ open, onClose, onCreateGoals }) {
       subtasks,
       notes,
       rituals: [],
-      _projectName: name.trim() || 'Project',
+      _projectName: projectTitle,
       _projectDeadline: deadline || null,
       _projectTotalWeeks: totalWeeks,
       _projectGoal: true,
+      ...(parentGoalId && { parentGoalId }),
     };
 
     onCreateGoals([projectGoal]);
@@ -123,12 +137,16 @@ export default function ProjectPlanner({ open, onClose, onCreateGoals }) {
     setName('');
     setDescription('');
     setDeadline('');
+    setParentGoalId('');
     setSkillLevel('intermediate');
     setPlan(null);
     setSliceError(null);
     setSelectedTasks(new Set());
     setLinkedGoals({});
-  }, [plan, selectedTasks, linkedGoals, name, deadline, onCreateGoals, onClose]);
+    } finally {
+      setIsCreating(false);
+    }
+  }, [plan, selectedTasks, linkedGoals, name, deadline, parentGoalId, onCreateGoals, onClose, isCreating]);
 
   const toggleTask = (title) => {
     setSelectedTasks((prev) => {
@@ -212,6 +230,23 @@ export default function ProjectPlanner({ open, onClose, onCreateGoals }) {
                     onChange={(e) => setDeadline(e.target.value)}
                     className="w-full py-2.5 px-3 rounded-lg border border-stone-200 bg-stone-50 font-sans text-sm focus:outline-none focus:ring-2 focus:ring-moss-500/40 focus:border-moss-500"
                   />
+                </div>
+                <div>
+                  <label className="block font-sans text-sm font-medium text-stone-600 mb-1">
+                    Belongs to goal <span className="text-stone-400 font-normal">(optional)</span>
+                  </label>
+                  <select
+                    value={parentGoalId}
+                    onChange={(e) => setParentGoalId(e.target.value)}
+                    className="w-full py-2.5 px-3 rounded-lg border border-stone-200 bg-stone-50 font-sans text-sm focus:outline-none focus:ring-2 focus:ring-moss-500/40 focus:border-moss-500"
+                    aria-label="Link this project to a skill goal"
+                  >
+                    <option value="">None</option>
+                    {skillGoals(goals).map((g) => (
+                      <option key={g.id} value={g.id}>{g.title ?? 'Goal'}</option>
+                    ))}
+                  </select>
+                  <p className="font-sans text-xs text-stone-500 mt-0.5">e.g. &quot;Learn to code&quot; — this project will count toward that goal.</p>
                 </div>
                 <div>
                   <label className="block font-sans text-sm font-medium text-stone-600 mb-1">Current Skill Level</label>
@@ -362,9 +397,10 @@ export default function ProjectPlanner({ open, onClose, onCreateGoals }) {
                 <button
                   type="button"
                   onClick={handleCreate}
-                  className="flex-1 py-2.5 rounded-lg bg-moss-600 text-white font-sans text-sm font-medium hover:bg-moss-700 focus:outline-none focus:ring-2 focus:ring-moss-500/50 transition-colors"
+                  disabled={isCreating}
+                  className="flex-1 py-2.5 rounded-lg bg-moss-600 text-white font-sans text-sm font-medium hover:bg-moss-700 focus:outline-none focus:ring-2 focus:ring-moss-500/50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
-                  Create project goal
+                  {isCreating ? 'Planting…' : 'Create project goal'}
                 </button>
               </>
             )}

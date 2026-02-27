@@ -1,6 +1,7 @@
-import { useRef, Component } from 'react';
+import { useRef, Component, useContext } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { Sparkles, Float } from '@react-three/drei';
+import { LowPerfContext } from './Garden3D';
 import AnimatedModel from './AnimatedModel';
 import Mochi3D from './Mochi3D';
 import Owl3D from './Owl3D';
@@ -8,7 +9,8 @@ import Rabbit3D from './Rabbit3D';
 import Frog3D from './Frog3D';
 import Butterfly3D from './Butterfly3D';
 
-function FlameSpirit() {
+function FlameSpirit({ lowPerf }) {
+  const count = lowPerf ? 5 : 30;
   return (
     <Float speed={1.5} floatIntensity={0.5}>
       <group>
@@ -16,13 +18,14 @@ function FlameSpirit() {
           <coneGeometry args={[0.3, 0.8, 16]} />
           <meshStandardMaterial emissive="#ea580c" emissiveIntensity={2} color="#ea580c" />
         </mesh>
-        <Sparkles count={30} scale={1.5} color="#fef08a" speed={2} />
+        <Sparkles count={count} scale={1.5} color="#fef08a" speed={2} />
       </group>
     </Float>
   );
 }
 
-function CloudSpirit() {
+function CloudSpirit({ lowPerf }) {
+  const count = lowPerf ? 5 : 20;
   return (
     <Float speed={2} floatIntensity={2}>
       <group>
@@ -38,20 +41,21 @@ function CloudSpirit() {
           <sphereGeometry args={[0.3, 16, 16]} />
           <meshStandardMaterial color="#ffffff" roughness={0.9} />
         </mesh>
-        <Sparkles count={20} scale={2} color="#ffffff" opacity={0.5} />
+        <Sparkles count={count} scale={2} color="#ffffff" opacity={0.5} />
       </group>
     </Float>
   );
 }
 
-function WispSpirit() {
+function WispSpirit({ lowPerf }) {
+  const count = lowPerf ? 5 : 40;
   return (
     <Float speed={3} floatIntensity={1.5}>
       <mesh>
         <sphereGeometry args={[0.4, 32, 32]} />
         <meshStandardMaterial color="#c084fc" emissive="#818cf8" emissiveIntensity={2} transparent opacity={0.8} />
       </mesh>
-      <Sparkles count={40} scale={2} color="#e879f9" speed={1.5} size={3} />
+      <Sparkles count={count} scale={2} color="#e879f9" speed={1.5} size={3} />
       <pointLight color="#c084fc" intensity={2} distance={4} />
     </Float>
   );
@@ -84,19 +88,20 @@ function CatSpirit({ isWalking }) {
 }
 
 export default function DynamicSpirit3D({ form, position = [0, 0, 0], isWalking = false }) {
+  const lowPerf = useContext(LowPerfContext);
   const key = form != null && String(form).length > 0 ? String(form).toLowerCase() : 'mochi';
 
   switch (key) {
     case 'flame':
       return (
         <group position={position}>
-          <FlameSpirit />
+          <FlameSpirit lowPerf={lowPerf} />
         </group>
       );
     case 'cloud':
       return (
         <group position={position}>
-          <CloudSpirit />
+          <CloudSpirit lowPerf={lowPerf} />
         </group>
       );
     case 'guide':
@@ -134,7 +139,7 @@ export default function DynamicSpirit3D({ form, position = [0, 0, 0], isWalking 
     default:
       return (
         <group position={position}>
-          <WispSpirit />
+          <WispSpirit lowPerf={lowPerf} />
         </group>
       );
   }

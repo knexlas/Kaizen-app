@@ -5,6 +5,7 @@ import { db } from './firebaseConfig';
 const GARDEN_DOC = 'data';
 const COMPOST_COLLECTION = 'compost';
 const DAILY_PLANS_COLLECTION = 'dailyPlans';
+const USER_INSIGHTS_COLLECTION = 'userInsights';
 
 /**
  * Normalize a Firestore compost doc to { id, text, createdAt } (createdAt as ISO string).
@@ -109,10 +110,10 @@ export function subscribeToDailyPlan(uid, date, callback) {
 }
 
 /**
- * Fetch the daily plan for a date (one-time read).
+ * Fetch the daily plan for a date (one-time read). Also returns check-in data if present.
  * @param {string} uid - Firebase user id
  * @param {string} date - YYYY-MM-DD
- * @returns {Promise<{ assignments: Object }>}
+ * @returns {Promise<{ assignments: Object, spoonCount?: number, energyModifier?: number }>}
  */
 export async function getDailyPlan(uid, date) {
   if (!uid || !date) return { assignments: {} };
@@ -120,7 +121,97 @@ export async function getDailyPlan(uid, date) {
   const snap = await getDoc(docRef);
   const data = snap.exists() ? snap.data() : {};
   const assignments = data?.assignments && typeof data.assignments === 'object' ? data.assignments : {};
-  return { assignments };
+  const spoonCount = typeof data?.spoonCount === 'number' ? data.spoonCount : undefined;
+  const energyModifier = typeof data?.energyModifier === 'number' ? data.energyModifier : undefined;
+  return { assignments, spoonCount, energyModifier };
+}
+
+/**
+ * Save check-in (spoons/energy) for a date. Merges into the daily plan doc without overwriting assignments.
+ * @param {string} uid - Firebase user id
+ * @param {string} date - YYYY-MM-DD
+ * @param {{ spoonCount?: number, energyModifier?: number }} payload
+ */
+export async function saveCheckInForDate(uid, date, payload) {
+  if (!uid || !date) return;
+  const docRef = doc(db, 'users', uid, 'garden', GARDEN_DOC, DAILY_PLANS_COLLECTION, date);
+  await setDoc(
+    docRef,
+    {
+      spoonCount: payload.spoonCount ?? null,
+      energyModifier: payload.energyModifier ?? null,
+      checkInAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    },
+    { merge: true }
+  );
+}
+
+/**
+ * Fetch check-in data for the last N days (for Insights charts).
+ * @param {string} uid - Firebase user id
+ * @param {number} days - Number of days (default 7)
+ * @returns {Promise<Array<{ dateStr: string, spoonCount?: number, energyModifier?: number }>>}
+ */
+export async function getCheckInsForLastDays(uid, days = 7) {
+  if (!uid) return [];
+  const result = [];
+  const now = new Date();
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(now);
+    d.setDate(d.getDate() - i);
+    const dateStr = d.toISOString().slice(0, 10);
+    const docRef = doc(db, 'users', uid, 'garden', GARDEN_DOC, DAILY_PLANS_COLLECTION, dateStr);
+    const snap = await getDoc(docRef);
+    const data = snap.exists() ? snap.data() : {};
+    result.push({
+      dateStr,
+      spoonCount: typeof data?.spoonCount === 'number' ? data.spoonCount : undefined,
+      energyModifier: typeof data?.energyModifier === 'number' ? data.energyModifier : undefined,
+    });
+  }
+  return result;
+}
+
+/**
+ * Save a weekly narrative insight. Id = week id (e.g. "2025-W09"). Schema: { id, text, generatedAt }.
+ * @param {string} uid - Firebase user id
+ * @param {string} weekId - e.g. "2025-W09"
+ * @param {string} text - Narrative text from AI
+ * @returns {Promise<void>}
+ */
+export async function saveUserInsight(uid, weekId, text) {
+  if (!uid || !weekId || typeof text !== 'string') return;
+  const docRef = doc(db, 'users', uid, USER_INSIGHTS_COLLECTION, weekId);
+  await setDoc(
+    docRef,
+    {
+      id: weekId,
+      text: text.trim(),
+      generatedAt: serverTimestamp(),
+    },
+    { merge: true }
+  );
+}
+
+/**
+ * Fetch the cached narrative insight for a week.
+ * @param {string} uid - Firebase user id
+ * @param {string} weekId - e.g. "2025-W09"
+ * @returns {Promise<{ id: string, text: string, generatedAt?: string } | null>}
+ */
+export async function getUserInsight(uid, weekId) {
+  if (!uid || !weekId) return null;
+  const docRef = doc(db, 'users', uid, USER_INSIGHTS_COLLECTION, weekId);
+  const snap = await getDoc(docRef);
+  if (!snap.exists()) return null;
+  const data = snap.data();
+  const generatedAt = data?.generatedAt?.toDate?.();
+  return {
+    id: data?.id ?? weekId,
+    text: typeof data?.text === 'string' ? data.text : '',
+    generatedAt: generatedAt ? generatedAt.toISOString() : undefined,
+  };
 }
 
 /**

@@ -1,5 +1,4 @@
 import { useMemo, useState, useCallback } from 'react';
-
 /**
  * Parse a range string that may mention 'Week' or 'Day', and return column indices for the current scale.
  * @param {string} rangeStr - e.g. 'Week 1', 'Week 2-4', 'Day 8-10'
@@ -291,7 +290,11 @@ export default function HorizonsGantt({
                 >
                   <td className="py-2 px-3 flex items-center gap-2">
                     <span className="text-stone-400 text-xs w-4 shrink-0" aria-hidden>{isProjectCollapsed ? '▶' : '▼'}</span>
-                    <span className="font-medium text-stone-800 font-serif truncate block max-w-[150px] sm:max-w-[250px] lg:max-w-[350px]" title={goal.title}>{goal.title}</span>
+                    <span className="font-medium text-stone-800 font-serif truncate max-w-[150px] sm:max-w-[250px] lg:max-w-[350px]" title={goal.title}>{goal.title}</span>
+                    {goal.parentGoalId && (() => {
+                      const parent = goals.find((g) => g.id === goal.parentGoalId);
+                      return parent ? <span className="text-stone-400 text-xs font-normal truncate" title={parent.title}>→ {parent.title}</span> : null;
+                    })()}
                     {isProjectCollapsed && (
                       <span className="text-stone-400 text-xs font-normal">({goal.milestones?.length ?? 0} phases)</span>
                     )}

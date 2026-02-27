@@ -10,6 +10,15 @@ function getTerrainAt(terrainMap, x, z) {
   return terrainMap[key];
 }
 
+/** Surface Y at (x,z) so creatures walk on top of tiles. Matches tile tops in Garden3D. */
+function getSurfaceHeightAt(terrainMap, x, z) {
+  const material = getTerrainAt(terrainMap, x, z);
+  if (material === 'water') return 0.02;
+  if (material === 'sand') return 0.01;
+  if (material === 'stone') return 0.025;
+  return 0; // grass / undefined
+}
+
 function hasAnyWaterTile(terrainMap) {
   if (!terrainMap || typeof terrainMap !== 'object') return false;
   return Object.values(terrainMap).some((v) => v === 'water');
@@ -44,7 +53,7 @@ export default function WanderingCreature({
   timePhase = 'day',
   campfirePositions = [],
 }) {
-  const { terrainMap, earnEmbers } = useGarden();
+  const { terrainMap, earnEmbers, tourStep, setTourStep } = useGarden();
   const groupRef = useRef();
   const [target, setTarget] = useState(() => new THREE.Vector3(0, 0, 0));
   const [isWalking, setIsWalking] = useState(false);
@@ -75,9 +84,12 @@ export default function WanderingCreature({
           const radius = 1.2 + Math.random() * 1.5;
           const tx = (fire.x ?? fire[0] ?? 0) + Math.cos(angle) * radius;
           const tz = (fire.z ?? fire[2] ?? 0) + Math.sin(angle) * radius;
-          setTarget(new THREE.Vector3(tx, 0, tz));
+          const ty = getSurfaceHeightAt(terrainMap, tx, tz);
+          setTarget(new THREE.Vector3(tx, ty, tz));
         } else {
-          setTarget(new THREE.Vector3(Math.random() * 2 - 1, 0, Math.random() * 2 - 1));
+          const tx = Math.random() * 2 - 1;
+          const tz = Math.random() * 2 - 1;
+          setTarget(new THREE.Vector3(tx, getSurfaceHeightAt(terrainMap, tx, tz), tz));
         }
         idleRotationRef.current = null;
         const delay = 4000 + Math.random() * 4000;
@@ -91,7 +103,10 @@ export default function WanderingCreature({
       if (useGoalTarget && goals.length > 0) {
         const pos = goals[Math.floor(Math.random() * goals.length)];
         if (Array.isArray(pos) && pos.length >= 3) {
-          setTarget(new THREE.Vector3(pos[0], pos[1] ?? 0, pos[2]));
+          const px = pos[0];
+          const pz = pos[2];
+          const py = getSurfaceHeightAt(terrainMap, px, pz);
+          setTarget(new THREE.Vector3(px, py, pz));
           idleRotationRef.current = null;
           const delay = 3000 + Math.random() * 5000;
           timeoutRef.current = setTimeout(pickTarget, delay);
@@ -116,8 +131,11 @@ export default function WanderingCreature({
       const validTiles = [];
       const cxInt = Math.round(cx);
       const czInt = Math.round(cz);
+      const worldMin = -28;
+      const worldMax = 28;
       for (let x = cxInt - maxRadius; x <= cxInt + maxRadius; x++) {
         for (let z = czInt - maxRadius; z <= czInt + maxRadius; z++) {
+          if (x < worldMin || x > worldMax || z < worldMin || z > worldMax) continue;
           const dist = Math.sqrt((x - cx) ** 2 + (z - cz) ** 2);
           if (dist >= minRadius && dist <= maxRadius && isTerrainAllowed(terrainMap, x, z, allowedTerrain)) {
             validTiles.push({ x, z });
@@ -127,7 +145,8 @@ export default function WanderingCreature({
 
       if (validTiles.length > 0) {
         const tile = validTiles[Math.floor(Math.random() * validTiles.length)];
-        setTarget(new THREE.Vector3(tile.x, 0, tile.z));
+        const ty = getSurfaceHeightAt(terrainMap, tile.x, tile.z);
+        setTarget(new THREE.Vector3(tile.x, ty, tile.z));
         idleRotationRef.current = null;
       }
 
@@ -144,6 +163,7 @@ export default function WanderingCreature({
   const walkSpeed = speed * 0.65; // Slightly reduced for a more relaxed pace
 
   const handlePet = () => {
+    if (displayName === 'Spirit' && tourStep === 4 && typeof setTourStep === 'function') setTourStep(0);
     setIsInteracting(true);
     const now = Date.now();
     const cooldownPassed = now - lastPetTimeRef.current >= PET_COOLDOWN_MS;
@@ -160,8 +180,10 @@ export default function WanderingCreature({
   useFrame((state, delta) => {
     if (!groupRef.current) return;
 
+    const surfaceY = getSurfaceHeightAt(terrainMap, groupRef.current.position.x, groupRef.current.position.z);
+
     if (isInteracting) {
-      groupRef.current.position.y = zOffset + Math.abs(Math.sin(state.clock.elapsedTime * 10)) * 0.3;
+      groupRef.current.position.y = surfaceY + zOffset + Math.abs(Math.sin(state.clock.elapsedTime * 10)) * 0.3;
       return;
     }
 
@@ -169,7 +191,7 @@ export default function WanderingCreature({
 
     if (distance > 0.1) {
       groupRef.current.position.lerp(target, delta * walkSpeed);
-      groupRef.current.position.y = zOffset;
+      groupRef.current.position.y = getSurfaceHeightAt(terrainMap, groupRef.current.position.x, groupRef.current.position.z) + zOffset;
       setIsWalking(true);
       idleRotationRef.current = null;
 
@@ -182,9 +204,9 @@ export default function WanderingCreature({
       setIsWalking(false);
       // Night + at rest (reached target): ultra-slow, shallow "deep sleep" breathing
       if (timePhase === 'night') {
-        groupRef.current.position.y = zOffset + Math.sin(state.clock.elapsedTime * 0.35) * 0.015;
+        groupRef.current.position.y = surfaceY + zOffset + Math.sin(state.clock.elapsedTime * 0.35) * 0.015;
       } else {
-        groupRef.current.position.y = zOffset;
+        groupRef.current.position.y = surfaceY + zOffset;
       }
 
       const idleRot = idleRotationRef.current;

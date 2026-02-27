@@ -98,6 +98,20 @@ export function getThisWeekSundayLocal(date = new Date()) {
 }
 
 /**
+ * ISO week-based id for caching (e.g. "2025-W09"). Same week = same id.
+ * @param {Date} [date=new Date()]
+ * @returns {string}
+ */
+export function getWeekId(date = new Date()) {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() + 4 - (d.getDay() || 7)); // Thursday of this week
+  const yearStart = new Date(d.getFullYear(), 0, 1);
+  const weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+  return `${d.getFullYear()}-W${String(weekNo).padStart(2, '0')}`;
+}
+
+/**
  * Number of days from start to end (end - start).
  * @param {string} endDate - YYYY-MM-DD
  * @param {string} startDate - YYYY-MM-DD
