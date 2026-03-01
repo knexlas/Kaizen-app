@@ -7,16 +7,12 @@ import { useReward } from './context/RewardContext';
 import { generateDailyPlan, hourFromTimeStr } from './services/schedulerService';
 import { buildReward } from './services/dopamineEngine';
 import { useTheme } from './context/ThemeContext';
-import { getOnboardingCompleted, setOnboardingCompleted } from './services/onboardingStateService';
+import { getOnboardingCompleted } from './services/onboardingStateService';
 import SundayRitualController from './components/Rituals/SundayRitualController';
 import GardenDashboard from './components/Dashboard/GardenDashboard';
-import CommandCenterLayout from './components/CommandCenter/CommandCenterLayout';
 import MissedDayModal from './components/Onboarding/MissedDayModal';
-import WelcomeGarden from './components/Onboarding/WelcomeGarden';
-import WelcomeOnboarding from './components/Onboarding/WelcomeOnboarding';
+import FirstRunFlow from './components/Onboarding/FirstRunFlow';
 import SeasonParticles from './components/SeasonParticles';
-import GlobalToast from './components/GlobalToast';
-
 /** YYYY-MM-DD for yesterday, local timezone. */
 function yesterdayString() {
   const d = new Date();
@@ -27,7 +23,6 @@ function yesterdayString() {
 function App() {
   const [view, setView] = useState('loading');
   const [onboardingComplete, setOnboardingComplete] = useState(true);
-  const [firstDayStep, setFirstDayStep] = useState('none'); // 'none' | 'welcome_validation' | 'welcome_garden' | 'spirit_origins' | 'spirit_tour' | 'done'
   const {
     hydrated,
     lastCheckInDate,
@@ -50,7 +45,6 @@ function App() {
   const { pushReward } = useReward();
 
   const hasOnboarded = userSettings?.hasOnboarded === true;
-  const needsWelcome = !hasOnboarded;
   const yesterdayPlan =
     lastCheckInDate === yesterdayString()
       ? { modifier: dailyEnergyModifier, spoonCount: dailySpoonCount }
@@ -63,6 +57,18 @@ function App() {
     window.addEventListener('accessibility-settings-changed', fn);
     return () => window.removeEventListener('accessibility-settings-changed', fn);
   }, []);
+
+  /** Single feedback path for kaizen:toast: route to RewardOverlay only. */
+  useEffect(() => {
+    const handler = (e) => {
+      const message = e?.detail?.message;
+      if (message != null && String(message).trim() !== '' && typeof pushReward === 'function') {
+        pushReward({ message: String(message).trim(), tone: 'moss', icon: '✨', sound: null });
+      }
+    };
+    window.addEventListener('kaizen:toast', handler);
+    return () => window.removeEventListener('kaizen:toast', handler);
+  }, [pushReward]);
 
   const textSizeClass = a11y.textSize === 'sm' ? 'text-sm' : a11y.textSize === 'lg' ? 'text-lg' : 'text-base';
   const a11yClasses = [textSizeClass, a11y.highContrast ? 'hc' : '', a11y.lowStim ? 'lowstim' : ''].filter(Boolean).join(' ');
@@ -83,10 +89,15 @@ function App() {
     }
   }, [hydrated, lastCheckInDate, lastSundayRitualDate]);
 
+  const [initialTabFromHash, setInitialTabFromHash] = useState(null); // 'planner' when navigated via #/plan
   useEffect(() => {
     if (!hydrated) return;
     const syncFromHash = () => {
-      if (window.location.hash === '#/plan') setView('plan');
+      if (window.location.hash === '#/plan') {
+        setView('dashboard');
+        setInitialTabFromHash('planner');
+        window.history.replaceState(null, '', window.location.pathname + window.location.search);
+      }
     };
     syncFromHash();
     window.addEventListener('hashchange', syncFromHash);
@@ -97,29 +108,6 @@ function App() {
     if (!hydrated) return;
     setOnboardingComplete(getOnboardingCompleted());
   }, [hydrated]);
-
-  // Initialize / keep basic first-day onboarding step in sync for early steps only.
-  useEffect(() => {
-    if (!hydrated) return;
-    // Once we've moved past the initial welcome steps, don't reset from derived state.
-    if (firstDayStep !== 'none' && firstDayStep !== 'welcome_validation' && firstDayStep !== 'welcome_garden') return;
-
-    if (!onboardingComplete) {
-      setFirstDayStep('welcome_validation');
-    } else if (!hasOnboarded) {
-      setFirstDayStep('welcome_garden');
-    } else {
-      setFirstDayStep('none');
-    }
-  }, [hydrated, onboardingComplete, hasOnboarded, firstDayStep]);
-
-  const handleOnboardingComplete = useCallback((action) => {
-    setOnboardingCompleted(true);
-    setOnboardingComplete(true);
-    // Move into the full WelcomeGarden flow next.
-    setFirstDayStep((prev) => (prev === 'welcome_validation' ? 'welcome_garden' : prev));
-    if (action === 'set_spoons') setView('intro');
-  }, []);
 
   const handleRitualComplete = (plan) => {
     updateWeeklyEvents(Array.isArray(plan) ? plan : plan?.events ?? []);
@@ -146,55 +134,26 @@ function App() {
       <div className={`min-h-screen font-sans relative ${theme.containerClass} ${a11yClasses}`}>
         {!a11y.lowStim && <SeasonParticles particleType={theme.particleType} />}
         <div className="relative z-10">
-          {view === 'loading' && (
+          {(!hydrated || (hasOnboarded && view === 'loading')) && (
             <div className="flex min-h-screen items-center justify-center text-stone-500">
               <span className="animate-pulse">Loading…</span>
             </div>
           )}
-          {view === 'sunday_ritual' && (
+          {hydrated && !hasOnboarded && (
+            <FirstRunFlow onComplete={() => setOnboardingComplete(true)} />
+          )}
+          {hasOnboarded && view === 'sunday_ritual' && (
             <SundayRitualController onComplete={handleRitualComplete} />
           )}
-          {view === 'intro' && (firstDayStep === 'none' || firstDayStep === 'done') && (
+          {hasOnboarded && view === 'intro' && (
             <MissedDayModal open={true} onChoose={handleMissedDayChoose} />
           )}
-          {view === 'dashboard' && (
+          {hasOnboarded && view === 'dashboard' && (
             <GardenDashboard
-              firstDayStep={firstDayStep}
-              onFirstDayStepChange={setFirstDayStep}
+              initialTab={initialTabFromHash}
+              onConsumeInitialTab={() => setInitialTabFromHash(null)}
             />
           )}
-          {view === 'plan' && (
-            <CommandCenterLayout
-              onBack={() => {
-                window.location.hash = '';
-                setView('dashboard');
-              }}
-              onNavigateToDashboard={({ tab } = {}) => {
-                if (tab === 'garden') window.location.hash = '#/garden';
-                else window.location.hash = '';
-                setView('dashboard');
-              }}
-            />
-          )}
-
-          {/* Validation-first onboarding (ADHD/disability); show before morning check-in on first launch */}
-          {hydrated && firstDayStep === 'welcome_validation' && (
-            <WelcomeOnboarding
-              open
-              onClose={() => {}}
-              onComplete={handleOnboardingComplete}
-              addGoal={addGoal}
-            />
-          )}
-
-          {/* Full onboarding wizard (name, spirit, first seed) — after simple welcome so all users see it */}
-          {hydrated && firstDayStep === 'welcome_garden' && (
-            <WelcomeGarden
-              onComplete={() => setFirstDayStep('spirit_origins')}
-            />
-          )}
-
-          <GlobalToast />
         </div>
 
         {/* Beta feedback — always visible */}

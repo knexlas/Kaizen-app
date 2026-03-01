@@ -432,7 +432,17 @@ export default function CommandCenterLayout({ onBack, onNavigateToDashboard }) {
                           onClick={() => setExpandedGoalId(isExpanded ? null : goal.id)}
                           className="w-full flex items-center justify-between gap-3 py-2 px-3 text-left hover:bg-stone-100/80 transition-colors focus:outline-none focus:ring-2 focus:ring-moss-500/40 focus:ring-inset"
                         >
-                          <span className="font-sans text-sm font-medium text-stone-800 truncate">{goal.title}</span>
+                          <span className="min-w-0 flex-1 flex flex-col items-start">
+                            <span className="font-sans text-sm font-medium text-stone-800 truncate w-full">{goal.title}</span>
+                            {goal.linkedToGoalId && (() => {
+                              const parent = backlogGoals.find((g) => g.id === goal.linkedToGoalId);
+                              return parent ? (
+                                <span className="font-sans text-xs text-stone-500 dark:text-stone-400 mt-0.5" title={`Supports: ${parent.title}`}>
+                                  Supports {parent.title}
+                                </span>
+                              ) : null;
+                            })()}
+                          </span>
                           <span className="shrink-0 flex items-center gap-2">
                             <span className="font-sans text-xs text-stone-500">
                               {goal.type === 'routine' ? 'Routine' : goal.type === 'vitality' ? 'Vitality' : goal.type === 'project' ? 'Project' : 'Kaizen'}

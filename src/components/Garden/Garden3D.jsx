@@ -153,7 +153,7 @@ function TerrainTiles() {
   );
 }
 
-function Ground({ onClick, disabled }) {
+function Ground({ onPointerDown, disabled }) {
   const lowPerf = useContext(LowPerfContext);
   return (
     <RoundedBox
@@ -161,7 +161,7 @@ function Ground({ onClick, disabled }) {
       radius={0.1}
       position={[0, -0.3, 0]}
       receiveShadow={!lowPerf}
-      onClick={disabled ? undefined : onClick}
+      onPointerDown={disabled ? undefined : onPointerDown}
     >
       <meshStandardMaterial color="#256330" roughness={0.95} metalness={0} />
     </RoundedBox>
@@ -208,10 +208,12 @@ function AmbientScatter() {
   );
 }
 
-function GoalNode({ goal, onGoalClick, onToolUsed, activeTool, waterGoal, fireToast, setActiveTool, positionOverride }) {
+function GoalNode({ goal, onGoalClick, onToolUsed, activeTool, waterGoal, fireToast, setActiveTool, positionOverride, isArchitectMode, selectedObjectId, setSelectedObjectId }) {
   const [hovered, setHovered] = useState(false);
   const [justWatered, setJustWatered] = useState(false);
   const lowPerf = useContext(LowPerfContext);
+  const groupRef = useRef(null);
+  const targetRef = useRef(new THREE.Vector3());
   const estimatedMinutes = goal.estimatedMinutes ?? (Number(goal.targetHours) || 0) * 60 || 1;
   const totalMinutes = Number(goal.totalMinutes) || 0;
   const progressRatio = Math.min(1, totalMinutes / estimatedMinutes);
@@ -226,6 +228,7 @@ function GoalNode({ goal, onGoalClick, onToolUsed, activeTool, waterGoal, fireTo
 
   const handleClick = (e) => {
     e.stopPropagation();
+    if (isArchitectMode) return;
     if (activeTool?.type === 'move') {
       setActiveTool?.({ type: 'place', item: goal, isRelocating: true, originalType: 'goal' });
       return;
@@ -250,11 +253,36 @@ function GoalNode({ goal, onGoalClick, onToolUsed, activeTool, waterGoal, fireTo
     ? positionOverride
     : goal.position3D;
 
+  const px = Number(position?.[0]) || 0;
+  const py = Number(position?.[1]) || 0;
+  const pz = Number(position?.[2]) || 0;
+  const objectKey = `goal:${goal?.isGroup && goal?._firstMemberId ? goal._firstMemberId : goal?.id}`;
+  const isSelected = selectedObjectId === objectKey;
+
+  useEffect(() => {
+    targetRef.current.set(px, py, pz);
+    if (groupRef.current && groupRef.current.__initPos !== true) {
+      groupRef.current.position.copy(targetRef.current);
+      groupRef.current.__initPos = true;
+    }
+  }, [px, py, pz]);
+
+  useFrame((_, delta) => {
+    if (!groupRef.current) return;
+    const t = 1 - Math.pow(0.001, delta);
+    groupRef.current.position.lerp(targetRef.current, t);
+  });
+
   return (
     <group
-      position={position}
+      ref={groupRef}
       scale={finalScale}
       onClick={handleClick}
+      onPointerDown={(e) => {
+        if (!isArchitectMode) return;
+        e.stopPropagation();
+        setSelectedObjectId?.(objectKey);
+      }}
       onPointerOver={(e) => {
         e.stopPropagation();
         setHovered(true);
@@ -265,6 +293,12 @@ function GoalNode({ goal, onGoalClick, onToolUsed, activeTool, waterGoal, fireTo
         document.body.style.cursor = 'auto';
       }}
     >
+      {isSelected && (
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.06, 0]}>
+          <torusGeometry args={[0.85, 0.08, 16, 32]} />
+          <meshStandardMaterial color="#fbbf24" emissive="#fbbf24" emissiveIntensity={0.8} transparent opacity={0.95} />
+        </mesh>
+      )}
       <ProceduralFlora goal={goal} isHovered={hovered} />
       {justWatered && (
         <Sparkles count={lowPerf ? 5 : 20} scale={[2, 2, 2]} position={[0, 1.2, 0]} size={2} speed={0.3} color="#93c5fd" />
@@ -273,22 +307,56 @@ function GoalNode({ goal, onGoalClick, onToolUsed, activeTool, waterGoal, fireTo
   );
 }
 
-function DecorationNode({ decoration, activeTool, setActiveTool, positionOverride }) {
+function DecorationNode({ decoration, activeTool, setActiveTool, positionOverride, isArchitectMode, selectedObjectId, setSelectedObjectId }) {
   if (!decoration?.position3D || !Array.isArray(decoration.position3D) || !decoration.model) return null;
   const isOrganic = decoration.id?.startsWith('anim_') || decoration.id?.startsWith('dec_pot') || decoration.id?.startsWith('dec_lily');
   const yRotation = useMemo(() => (isOrganic ? Math.random() * Math.PI * 2 : 0), [isOrganic]);
+  const groupRef = useRef(null);
+  const targetRef = useRef(new THREE.Vector3());
+  const pos = Array.isArray(positionOverride) && positionOverride.length >= 3 ? positionOverride : decoration.position3D;
+  const px = Number(pos?.[0]) || 0;
+  const py = Number(pos?.[1]) || 0;
+  const pz = Number(pos?.[2]) || 0;
+  const objectKey = `decoration:${decoration.id}`;
+  const isSelected = selectedObjectId === objectKey;
+
+  useEffect(() => {
+    targetRef.current.set(px, py, pz);
+    if (groupRef.current && groupRef.current.__initPos !== true) {
+      groupRef.current.position.copy(targetRef.current);
+      groupRef.current.__initPos = true;
+    }
+  }, [px, py, pz]);
+
+  useFrame((_, delta) => {
+    if (!groupRef.current) return;
+    const t = 1 - Math.pow(0.001, delta);
+    groupRef.current.position.lerp(targetRef.current, t);
+  });
   return (
     <group
-      position={Array.isArray(positionOverride) && positionOverride.length >= 3 ? positionOverride : decoration.position3D}
+      ref={groupRef}
       onClick={(e) => {
         e.stopPropagation();
+        if (isArchitectMode) return;
         if (activeTool?.type === 'move') {
           setActiveTool?.({ type: 'place', item: decoration, isRelocating: true, originalType: 'decoration' });
         }
       }}
+      onPointerDown={(e) => {
+        if (!isArchitectMode) return;
+        e.stopPropagation();
+        setSelectedObjectId?.(objectKey);
+      }}
       onPointerOver={() => activeTool?.type === 'move' && (document.body.style.cursor = 'grab')}
       onPointerOut={() => document.body.style.cursor = 'auto'}
     >
+      {isSelected && (
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.06, 0]}>
+          <torusGeometry args={[0.9, 0.08, 16, 32]} />
+          <meshStandardMaterial color="#fbbf24" emissive="#fbbf24" emissiveIntensity={0.8} transparent opacity={0.95} />
+        </mesh>
+      )}
       <AnimatedModel
         path={`/models/${decoration.model}`}
         rotation={[0, yRotation, 0]}
@@ -298,7 +366,7 @@ function DecorationNode({ decoration, activeTool, setActiveTool, positionOverrid
   );
 }
 
-function Scene({ placedGoals, onPlant, onGoalClick, onToolUsed, timePhase, activeTool, waterGoal, fireToast, setActiveTool, decorations, canvasInteractionDisabled, campfirePositions = [] }) {
+function Scene({ placedGoals, onPlant, onGoalClick, onToolUsed, timePhase, activeTool, waterGoal, fireToast, setActiveTool, decorations, canvasInteractionDisabled, campfirePositions = [], isArchitectMode, selectedObjectId, setSelectedObjectId, updateObjectPosition }) {
   const { terrainMap } = useGarden();
   const isItemBeingMoved = (id, kind) =>
     activeTool?.type === 'place' && activeTool?.isRelocating && activeTool?.originalType === kind && (activeTool?.item?.id === id || activeTool?.decorationId === id || activeTool?.decoration?.id === id);
@@ -330,7 +398,22 @@ function Scene({ placedGoals, onPlant, onGoalClick, onToolUsed, timePhase, activ
   return (
     <>
       <TerrainTiles />
-      <Ground onClick={onPlant} disabled={canvasInteractionDisabled} />
+      <Ground
+        disabled={canvasInteractionDisabled}
+        onPointerDown={(e) => {
+          if (canvasInteractionDisabled) return;
+          if (isArchitectMode) {
+            if (!selectedObjectId) return;
+            e.stopPropagation();
+            const x = Math.round(Number(e.point?.x) || 0);
+            const z = Math.round(Number(e.point?.z) || 0);
+            updateObjectPosition?.(selectedObjectId, x, z);
+            setSelectedObjectId?.(null);
+            return;
+          }
+          onPlant?.(e);
+        }}
+      />
       <AmbientScatter />
       {visibleDecorations.map((dec) => (
         <DecorationNode
@@ -338,6 +421,9 @@ function Scene({ placedGoals, onPlant, onGoalClick, onToolUsed, timePhase, activ
           decoration={dec}
           activeTool={activeTool}
           setActiveTool={setActiveTool}
+          isArchitectMode={isArchitectMode}
+          selectedObjectId={selectedObjectId}
+          setSelectedObjectId={setSelectedObjectId}
           positionOverride={
             Array.isArray(dec.position3D) && dec.position3D.length >= 3
               ? [
@@ -359,6 +445,9 @@ function Scene({ placedGoals, onPlant, onGoalClick, onToolUsed, timePhase, activ
           waterGoal={waterGoal}
           fireToast={fireToast}
           setActiveTool={setActiveTool}
+          isArchitectMode={isArchitectMode}
+          selectedObjectId={selectedObjectId}
+          setSelectedObjectId={setSelectedObjectId}
           positionOverride={
             Array.isArray(goal.position3D) && goal.position3D.length >= 3
               ? [
@@ -535,9 +624,12 @@ export default function Garden3D({ onGoalClick, onOpenShop, focusGoal, onOpenJou
   const [timePhase, setTimePhase] = useState('day');
   const [dpr, setDpr] = useState([1, 2]);
   const [lowPerf, setLowPerf] = useState(false);
-  const { goals, editGoal, activeTool, setActiveTool, paintTerrain, updateDecoration, waterGoal, decorations = [], spiritConfig, userSettings } = useGarden();
+  const { goals, editGoal, activeTool, setActiveTool, paintTerrain, updateDecoration, waterGoal, decorations = [], spiritConfig, userSettings, isArchitectMode, selectedObjectId, setSelectedObjectId, updateObjectPosition } = useGarden();
   const chosenForm = spiritTypeToForm(spiritConfig, userSettings);
   const allGoals = goals ?? [];
+  const shopStandPosition3D = Array.isArray(userSettings?.gardenLayout?.shopStandPosition3D) && userSettings.gardenLayout.shopStandPosition3D.length >= 3
+    ? userSettings.gardenLayout.shopStandPosition3D
+    : [8, 0, -8];
 
   const placedGoalsForScene = useMemo(() => {
     const nonRoutine = allGoals.filter((g) => g.type !== 'routine' && Array.isArray(g.position3D) && g.position3D.length >= 3);
@@ -675,6 +767,10 @@ export default function Garden3D({ onGoalClick, onOpenShop, focusGoal, onOpenJou
               onPlant={handlePlant}
               onGoalClick={onGoalClick}
               onToolUsed={onToolUsed}
+              isArchitectMode={isArchitectMode}
+              selectedObjectId={selectedObjectId}
+              setSelectedObjectId={setSelectedObjectId}
+              updateObjectPosition={updateObjectPosition}
               timePhase={timePhase}
               activeTool={activeTool}
               waterGoal={waterGoal}
@@ -687,12 +783,19 @@ export default function Garden3D({ onGoalClick, onOpenShop, focusGoal, onOpenJou
             {onOpenShop && (
           <group>
             <ShopStand
-              position={[8, 0, -8]}
+              position={shopStandPosition3D}
               onClick={(e) => {
                 e.stopPropagation();
+                if (isArchitectMode) {
+                  setSelectedObjectId?.('shop-stand');
+                  return;
+                }
                 onOpenShop();
               }}
               timePhase={timePhase}
+              isArchitectMode={isArchitectMode}
+              selectedObjectId={selectedObjectId}
+              setSelectedObjectId={setSelectedObjectId}
             />
             <Suspense fallback={null}>
               <ShopCornerTree />

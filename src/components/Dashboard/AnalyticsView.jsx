@@ -1,52 +1,31 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  BarChart,
-  Bar,
-  Cell,
-} from 'recharts';
 import { useGarden } from '../../context/GardenContext';
 import { localISODate, getWeekId } from '../../services/dateUtils';
 import { getUserInsight, saveUserInsight } from '../../firebase/services';
 import { generateSpiritInsight } from '../../services/geminiService';
+import { buildReflectionInsights } from '../../services/insightsReflectionService';
 
-const DOMAINS = [
-  { id: 'body', label: 'Body', emoji: '🌿', color: '#4A5D23' },
-  { id: 'mind', label: 'Mind', emoji: '🧠', color: '#5B21B6' },
-  { id: 'spirit', label: 'Spirit', emoji: '✨', color: '#B45309' },
-  { id: 'finance', label: 'Finance', emoji: '📈', color: '#0E7490' },
-];
-
-const SPOON_COLOR = '#fbbf24';
-const SPOON_GLOW = '0 0 12px rgba(251, 191, 36, 0.6)';
+const CARD_CLASS = 'rounded-2xl border border-stone-200/90 bg-white/90 dark:bg-stone-800/90 dark:border-stone-600/50 p-4 shadow-sm';
+const MOSS_SOFT = 'text-moss-800 dark:text-moss-200';
+const MOSS_MUTED = 'text-moss-700/90 dark:text-moss-300/90';
 
 /** Total minutes (all-time) from logs. */
 function useTotalHarvest(logs) {
-  return useMemo(() => {
-    return (logs ?? []).reduce((sum, log) => sum + (Number(log.minutes) || 0), 0);
-  }, [logs]);
+  return useMemo(() => (logs ?? []).reduce((sum, log) => sum + (Number(log.minutes) || 0), 0), [logs]);
 }
 
-/** Minutes per day for last 30 days. */
-function useFocusTrend(logs) {
+/** Last 14 days for soft trend. */
+function useFocusTrendShort(logs) {
   return useMemo(() => {
     const days = [];
     const now = new Date();
-    const numDays = 30;
-    for (let i = numDays - 1; i >= 0; i--) {
+    for (let i = 13; i >= 0; i--) {
       const d = new Date(now);
       d.setDate(d.getDate() - i);
       const dateStr = localISODate(d);
       const mins = (logs ?? []).reduce((sum, log) => {
         const logDate = typeof log.date === 'string' ? log.date.slice(0, 10) : (log.date ? localISODate(new Date(log.date)) : '');
-        if (logDate !== dateStr) return sum;
-        return sum + (Number(log.minutes) || 0);
+        return logDate === dateStr ? sum + (Number(log.minutes) || 0) : sum;
       }, 0);
       days.push({ date: dateStr, minutes: mins, label: d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) });
     }
@@ -54,257 +33,45 @@ function useFocusTrend(logs) {
   }, [logs]);
 }
 
-/** By domain (from goal lookup). */
-function useDistribution(logs, goals) {
-  return useMemo(() => {
-    const byDomain = { body: 0, mind: 0, spirit: 0, finance: 0 };
-    const goalMap = new Map((goals ?? []).map((g) => [g.id, g]));
-    (logs ?? []).forEach((log) => {
-      const goal = goalMap.get(log.taskId);
-      const domain = goal?.domain && byDomain.hasOwnProperty(goal.domain) ? goal.domain : 'body';
-      byDomain[domain] = (byDomain[domain] || 0) + (Number(log.minutes) || 0);
-    });
-    return DOMAINS.map((d) => ({ id: d.id, label: d.label, emoji: d.emoji, color: d.color, minutes: byDomain[d.id] || 0 })).filter(
-      (x) => x.minutes > 0
-    );
-  }, [logs, goals]);
-}
-
-/** Last 7 days: totalMinutes per goal (for Time Distribution chart). */
-function useTimeDistributionLast7(logs, goals) {
-  return useMemo(() => {
-    const now = new Date();
-    const cutoff = new Date(now);
-    cutoff.setDate(cutoff.getDate() - 7);
-    const cutoffStr = localISODate(cutoff);
-    const goalMap = new Map((goals ?? []).map((g) => [g.id, g]));
-    const byGoal = {};
-    (logs ?? []).forEach((log) => {
-      const logDate = typeof log.date === 'string' ? log.date.slice(0, 10) : (log.date ? localISODate(new Date(log.date)) : '');
-      if (logDate < cutoffStr) return;
-      const mins = Number(log.minutes) || 0;
-      const goalId = log.taskId;
-      const goal = goalMap.get(goalId);
-      const name = goal?.title ?? log.taskTitle ?? 'Other';
-      byGoal[name] = (byGoal[name] || 0) + mins;
-    });
-    return Object.entries(byGoal)
-      .map(([name, minutes]) => ({ name: name.length > 20 ? name.slice(0, 18) + '…' : name, minutes, hours: (minutes / 60).toFixed(1) }))
-      .sort((a, b) => b.minutes - a.minutes)
-      .slice(0, 10);
-  }, [logs, goals]);
-}
-
-/** GitHub-style: activity per day for last ~3 months (14 weeks). */
-function useActivityHeatmap(logs) {
-  return useMemo(() => {
-    const byDate = {};
-    (logs ?? []).forEach((log) => {
-      const dateStr = typeof log.date === 'string' ? log.date.slice(0, 10) : (log.date ? localISODate(new Date(log.date)) : '');
-      if (!dateStr) return;
-      const mins = Number(log.minutes) || 0;
-      byDate[dateStr] = (byDate[dateStr] || 0) + mins;
-    });
-    const now = new Date();
-    const days = [];
-    const totalDays = 14 * 7;
-    for (let i = totalDays - 1; i >= 0; i--) {
-      const d = new Date(now);
-      d.setDate(d.getDate() - i);
-      const dateStr = localISODate(d);
-      days.push({ date: dateStr, minutes: byDate[dateStr] || 0 });
-    }
-    const maxMins = Math.max(1, ...days.map((x) => x.minutes));
-    return { days, maxMins };
-  }, [logs]);
-}
-
-function FocusTrendChart({ data }) {
-  if (!data?.length) return <p className="font-sans text-sm text-stone-500 italic">No focus data yet.</p>;
+/** Soft trend line — minimal, elegant. */
+function SoftTrendChart({ data }) {
+  if (!data?.length) return null;
   const maxM = Math.max(1, ...data.map((d) => d.minutes));
-  const w = 320;
-  const h = 120;
-  const pad = { t: 8, r: 8, b: 24, l: 36 };
+  const w = 280;
+  const h = 72;
+  const pad = { t: 4, r: 8, b: 20, l: 28 };
   const chartW = w - pad.l - pad.r;
   const chartH = h - pad.t - pad.b;
-  const points = data.map((d, i) => {
-    const x = pad.l + (i / (data.length - 1 || 1)) * chartW;
-    const y = pad.t + chartH - (d.minutes / maxM) * chartH;
-    return `${x},${y}`;
-  }).join(' ');
+  const points = data
+    .map((d, i) => {
+      const x = pad.l + (i / (data.length - 1 || 1)) * chartW;
+      const y = pad.t + chartH - (d.minutes / maxM) * chartH;
+      return `${x},${y}`;
+    })
+    .join(' ');
   return (
-    <div className="rounded-xl border border-stone-200 bg-white p-4">
-      <h3 className="font-serif text-stone-800 text-sm mb-3">Focus Trend (last 30 days)</h3>
-      <svg viewBox={`0 0 ${w} ${h}`} className="w-full max-w-full h-32" aria-hidden>
-        <polyline
-          fill="none"
-          stroke="#4A5D23"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          points={points}
-        />
-        <text x={pad.l} y={pad.t + 10} className="fill-stone-400 font-sans text-[10px]">{maxM}m</text>
-        <text x={w - pad.r - 24} y={h - 4} className="fill-stone-400 font-sans text-[10px]">Today</text>
-      </svg>
-    </div>
-  );
-}
-
-function DistributionChart({ data }) {
-  if (!data?.length) return <p className="font-sans text-sm text-stone-500 italic">No domain data yet.</p>;
-  const total = data.reduce((s, d) => s + d.minutes, 0);
-  if (total === 0) return <p className="font-sans text-sm text-stone-500 italic">No focus logged yet.</p>;
-  const r = 60;
-  const cx = 70;
-  const cy = 70;
-  let acc = 0;
-  const segments = data.map((d) => {
-    const pct = d.minutes / total;
-    const start = acc;
-    acc += pct;
-    const startAngle = (start - 0.25) * 2 * Math.PI;
-    const endAngle = (acc - 0.25) * 2 * Math.PI;
-    const x1 = cx + r * Math.cos(startAngle);
-    const y1 = cy + r * Math.sin(startAngle);
-    const x2 = cx + r * Math.cos(endAngle);
-    const y2 = cy + r * Math.sin(endAngle);
-    const large = pct > 0.5 ? 1 : 0;
-    const path = `M ${cx} ${cy} L ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2} Z`;
-    return { path, color: d.color, label: d.label, emoji: d.emoji, pct: (pct * 100).toFixed(0) };
-  });
-  return (
-    <div className="rounded-xl border border-stone-200 bg-white p-4">
-      <h3 className="font-serif text-stone-800 text-sm mb-3">Domain Balance</h3>
-      <div className="flex items-center gap-4">
-        <svg viewBox="0 0 140 140" className="w-32 h-32 shrink-0" aria-hidden>
-          {segments.map((seg, i) => (
-            <path key={i} d={seg.path} fill={seg.color} stroke="#fff" strokeWidth="1" />
-          ))}
-        </svg>
-        <ul className="font-sans text-sm text-stone-700 space-y-1">
-          {segments.map((seg, i) => (
-            <li key={i} className="flex items-center gap-2">
-              <span style={{ width: 10, height: 10, borderRadius: 2, backgroundColor: seg.color }} aria-hidden />
-              {seg.emoji} {seg.label}: {seg.pct}%
-            </li>
-          ))}
-        </ul>
-      </div>
-    </div>
-  );
-}
-
-function ActivityHeatmap({ days, maxMins }) {
-  const cols = 7;
-  const rows = Math.ceil(days.length / cols);
-  const cellSize = 12;
-  const gap = 2;
-  const w = cols * (cellSize + gap) - gap;
-  const h = rows * (cellSize + gap) - gap;
-  return (
-    <div className="rounded-xl border border-stone-200 bg-white p-4">
-      <h3 className="font-serif text-stone-800 text-sm mb-3">Vitality Streak</h3>
-      <svg viewBox={`0 0 ${w} ${h}`} className="w-full max-w-full" style={{ maxHeight: 140 }} aria-hidden>
-        {days.map((d, i) => {
-          const row = Math.floor(i / cols);
-          const col = i % cols;
-          const x = col * (cellSize + gap);
-          const y = row * (cellSize + gap);
-          const intensity = maxMins > 0 ? d.minutes / maxMins : 0;
-          const fill = intensity === 0 ? '#f5f5f4' : intensity < 0.33 ? '#bbf7d0' : intensity < 0.66 ? '#86efac' : '#4ade80';
-          return <rect key={d.date} x={x} y={y} width={cellSize} height={cellSize} rx={2} fill={fill} />;
-        })}
-      </svg>
-      <p className="font-sans text-xs text-stone-500 mt-2">Lighter = less focus · Darker = more focus</p>
-    </div>
-  );
-}
-
-function TotalHarvest({ totalMinutes }) {
-  const hours = (totalMinutes / 60).toFixed(1);
-  return (
-    <div className="rounded-xl border border-stone-200 bg-moss-50/50 p-4">
-      <h3 className="font-serif text-stone-800 text-sm mb-1">Total Harvest</h3>
-      <p className="font-sans text-2xl font-medium text-moss-800 tabular-nums">{hours} hours</p>
-      <p className="font-sans text-xs text-stone-500 mt-1">All-time focus logged</p>
-    </div>
-  );
-}
-
-/** Spoons/Energy over last 7 days — Recharts LineChart with soft glow. */
-function SpoonsLineChart({ data }) {
-  if (!data?.length) return <p className="font-sans text-sm text-stone-500 italic">No check-in data for the last 7 days. Complete your morning check-in to see Spoons here.</p>;
-  const hasAny = data.some((d) => typeof d.spoons === 'number');
-  if (!hasAny) return <p className="font-sans text-sm text-stone-500 italic">No Spoons logged yet. Check in each morning to see your energy over time.</p>;
-  return (
-    <div className="rounded-xl border border-stone-200 bg-white p-4">
-      <h3 className="font-serif text-stone-800 text-sm mb-3">Energy / Spoons over time</h3>
-      <div className="h-48 w-full">
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#e7e5e4" />
-            <XAxis dataKey="dayLabel" tick={{ fontSize: 11 }} stroke="#a8a29e" />
-            <YAxis domain={[0, 10]} tick={{ fontSize: 11 }} stroke="#a8a29e" />
-            <Tooltip
-              formatter={(value) => [value != null ? `${value} spoons` : '—', 'Spoons']}
-              contentStyle={{ fontSize: 12, borderRadius: 8 }}
-            />
-            <Line
-              type="monotone"
-              dataKey="spoons"
-              stroke={SPOON_COLOR}
-              strokeWidth={2.5}
-              dot={{ fill: SPOON_COLOR, strokeWidth: 0 }}
-              activeDot={{ r: 5, fill: SPOON_COLOR, stroke: '#fff', strokeWidth: 2 }}
-              style={{ filter: `drop-shadow(${SPOON_GLOW})` }}
-              connectNulls
-            />
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
-    </div>
-  );
-}
-
-/** Time distribution by goal — last 7 days, Recharts BarChart. */
-function TimeDistributionBarChart({ data }) {
-  if (!data?.length) return <p className="font-sans text-sm text-stone-500 italic">No focus logged in the last 7 days. Log time on goals to see where your time went.</p>;
-  const colors = ['#4A5D23', '#5B21B6', '#B45309', '#0E7490', '#64748b', '#059669', '#be185d', '#0369a1'];
-  return (
-    <div className="rounded-xl border border-stone-200 bg-white p-4">
-      <h3 className="font-serif text-stone-800 text-sm mb-3">Time distribution (last 7 days)</h3>
-      <div className="h-56 w-full">
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={data} layout="vertical" margin={{ top: 4, right: 8, left: 8, bottom: 4 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#e7e5e4" horizontal={false} />
-            <XAxis type="number" unit=" min" tick={{ fontSize: 11 }} stroke="#a8a29e" />
-            <YAxis type="category" dataKey="name" width={100} tick={{ fontSize: 11 }} stroke="#a8a29e" />
-            <Tooltip formatter={(value) => [`${(value / 60).toFixed(1)} hrs`, 'Minutes']} contentStyle={{ fontSize: 12, borderRadius: 8 }} />
-            <Bar dataKey="minutes" radius={4} fill="#4A5D23" name="Minutes">
-              {data.map((_, i) => (
-                <Cell key={i} fill={colors[i % colors.length]} />
-              ))}
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
-    </div>
+    <svg viewBox={`0 0 ${w} ${h}`} className="w-full max-w-full h-20 opacity-90" aria-hidden>
+      <defs>
+        <linearGradient id="insightsTrendGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="rgb(74, 93, 35)" stopOpacity="0.25" />
+          <stop offset="100%" stopColor="rgb(74, 93, 35)" stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <polygon fill="url(#insightsTrendGrad)" points={`${pad.l},${pad.t + chartH} ${points} ${w - pad.r},${pad.t + chartH}`} />
+      <polyline
+        fill="none"
+        stroke="rgb(74, 93, 35)"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        points={points}
+      />
+    </svg>
   );
 }
 
 export default function AnalyticsView() {
-  const {
-    logs,
-    goals,
-    googleUser,
-    weeklyEvents,
-    getCheckInHistory,
-    today,
-    lastCheckInDate,
-    dailySpoonCount,
-  } = useGarden();
-
+  const { logs, goals, googleUser, weeklyEvents, getCheckInHistory, today, lastCheckInDate, dailySpoonCount, spiritPoints } = useGarden();
   const weekId = getWeekId();
   const [cachedInsight, setCachedInsight] = useState(null);
   const [insightLoading, setInsightLoading] = useState(true);
@@ -312,10 +79,17 @@ export default function AnalyticsView() {
   const [spoonChartData, setSpoonChartData] = useState([]);
 
   const totalMinutes = useTotalHarvest(logs);
-  const focusTrend = useFocusTrend(logs);
-  const distribution = useDistribution(logs, goals);
-  const heatmap = useActivityHeatmap(logs);
-  const timeDistributionLast7 = useTimeDistributionLast7(logs, goals);
+  const focusTrendShort = useFocusTrendShort(logs);
+
+  const checkInRowsForInsights = useMemo(
+    () => spoonChartData.map((r) => ({ dateStr: r.dateStr, spoonCount: r.spoons })),
+    [spoonChartData]
+  );
+
+  const reflection = useMemo(
+    () => buildReflectionInsights(logs, goals, checkInRowsForInsights, spiritPoints),
+    [logs, goals, checkInRowsForInsights, spiritPoints]
+  );
 
   useEffect(() => {
     const uid = googleUser?.uid;
@@ -324,9 +98,7 @@ export default function AnalyticsView() {
       return;
     }
     getUserInsight(uid, weekId)
-      .then((insight) => {
-        setCachedInsight(insight);
-      })
+      .then((insight) => setCachedInsight(insight))
       .catch(() => setCachedInsight(null))
       .finally(() => setInsightLoading(false));
   }, [googleUser?.uid, weekId]);
@@ -339,9 +111,7 @@ export default function AnalyticsView() {
         const d = new Date(r.dateStr + 'T12:00:00');
         const dayLabel = dayLabels[d.getDay()];
         let spoons = r.spoonCount;
-        if (r.dateStr === today && lastCheckInDate === today && typeof dailySpoonCount === 'number') {
-          spoons = dailySpoonCount;
-        }
+        if (r.dateStr === today && lastCheckInDate === today && typeof dailySpoonCount === 'number') spoons = dailySpoonCount;
         return { ...r, dayLabel, spoons: spoons ?? null };
       });
       setSpoonChartData(merged);
@@ -355,73 +125,179 @@ export default function AnalyticsView() {
     const events = Array.isArray(weeklyEvents) ? weeklyEvents : [];
     generateSpiritInsight(logs ?? [], goals ?? [], events)
       .then((text) => {
-        if (text) {
-          return saveUserInsight(uid, weekId, text).then(() => {
-            setCachedInsight({ id: weekId, text, generatedAt: new Date().toISOString() });
-          });
-        }
+        if (text) return saveUserInsight(uid, weekId, text).then(() => setCachedInsight({ id: weekId, text, generatedAt: new Date().toISOString() }));
       })
       .catch((err) => console.warn('Generate insight failed', err))
       .finally(() => setGenerating(false));
   }, [googleUser?.uid, weekId, logs, goals, weeklyEvents]);
 
+  const { whatHappened, whatHelped, pattern, suggestion, gardenStory } = reflection;
+  const hasAnyData = whatHappened.weekSessions > 0 || whatHappened.totalHarvest > 0;
+
   return (
-    <div className="space-y-10">
+    <div className="space-y-8 pb-6">
+      {/* Header */}
       <div>
-        <h2 className="font-serif text-stone-900 text-xl mb-1">Insights</h2>
-        <p className="font-sans text-sm text-stone-600">Your progress over time — patterns, focus, and growth.</p>
+        <h2 className="font-serif text-stone-900 dark:text-stone-100 text-xl mb-1">Reflection</h2>
+        <p className="font-sans text-sm text-stone-500 dark:text-stone-400">
+          A calm look at what happened, what helped, and what to try next.
+        </p>
       </div>
 
-      {/* Executive summary: AI narrative (cover letter) at top */}
-      <section className="rounded-2xl border-2 border-stone-200 bg-gradient-to-b from-amber-50/80 to-stone-50 p-6 shadow-sm">
-        <h3 className="font-serif text-stone-800 text-base mb-3">Weekly snapshot</h3>
+      {/* 1. Lead with interpretation: "What actually worked" */}
+      <section className={`${CARD_CLASS} border-moss-200/60 dark:border-moss-800/40 bg-gradient-to-b from-moss-50/50 to-white/80 dark:from-moss-900/20 dark:to-stone-800/80`}>
+        <h3 className="font-serif text-stone-800 dark:text-stone-200 text-sm font-medium mb-2">What actually worked</h3>
         {insightLoading ? (
-          <p className="font-sans text-sm text-stone-500 italic">Loading…</p>
+          <p className="font-sans text-sm text-stone-500 dark:text-stone-400 italic">Loading…</p>
         ) : cachedInsight?.text ? (
           <>
-            <p className="font-serif text-stone-800 text-[15px] leading-relaxed whitespace-pre-wrap">{cachedInsight.text}</p>
-            <div className="mt-4 flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={handleGenerateInsight}
-                disabled={generating}
-                className="px-3 py-1.5 rounded-full text-xs font-sans font-medium bg-stone-200 text-stone-700 hover:bg-stone-300 focus:outline-none focus:ring-2 focus:ring-amber-500/50 disabled:opacity-50"
-              >
-                {generating ? '…' : '🔄 Regenerate'}
-              </button>
-            </div>
-          </>
-        ) : (
-          <>
-            <p className="font-sans text-sm text-stone-500 italic mb-4">No insight generated for this week yet.</p>
+            <p className="font-sans text-[15px] leading-relaxed text-stone-700 dark:text-stone-300 whitespace-pre-wrap">{cachedInsight.text}</p>
             <button
               type="button"
               onClick={handleGenerateInsight}
               disabled={generating}
-              className="px-4 py-2 rounded-xl font-sans text-sm font-medium bg-amber-500 text-stone-900 hover:bg-amber-600 focus:outline-none focus:ring-2 focus:ring-amber-500/50 disabled:opacity-50"
+              className="mt-3 text-xs font-sans text-stone-500 hover:text-stone-700 dark:text-stone-400 dark:hover:text-stone-200 focus:outline-none focus:ring-2 focus:ring-moss-500/40 rounded px-2 py-1"
             >
-              {generating ? 'Generating…' : '🪄 Generate Snapshot'}
+              {generating ? '…' : 'Regenerate'}
+            </button>
+          </>
+        ) : (
+          <>
+            {hasAnyData ? (
+              <p className="font-sans text-[15px] leading-relaxed text-stone-700 dark:text-stone-300">
+                This week you had {whatHappened.weekSessions} session{whatHappened.weekSessions !== 1 ? 's' : ''} over {whatHappened.weekTendingDays} day
+                {whatHappened.weekTendingDays !== 1 ? 's' : ''} — {whatHappened.weekMinutes} minutes of focus.
+                {whatHappened.topGoalNames.length > 0 && ` Your attention went most to ${whatHappened.topGoalNames.slice(0, 2).join(' and ')}.`}
+              </p>
+            ) : (
+              <p className="font-sans text-sm text-stone-500 dark:text-stone-400 italic">No focus logged yet. When you complete sessions, a short summary will appear here.</p>
+            )}
+            <button
+              type="button"
+              onClick={handleGenerateInsight}
+              disabled={generating}
+              className="mt-3 px-3 py-1.5 rounded-lg font-sans text-sm font-medium bg-moss-100 dark:bg-moss-900/40 text-moss-800 dark:text-moss-200 hover:bg-moss-200 dark:hover:bg-moss-800/50 focus:outline-none focus:ring-2 focus:ring-moss-500/50 disabled:opacity-50"
+            >
+              {generating ? '…' : 'Generate a snapshot with Mochi'}
             </button>
           </>
         )}
       </section>
 
-      {/* Appendices: hard data and charts */}
+      {/* 2. What happened? */}
       <section>
-        <h3 className="font-serif text-stone-800 text-base mb-4">Data</h3>
-        <div className="space-y-6">
-          <TotalHarvest totalMinutes={totalMinutes} />
-
-          <div className="grid gap-6 sm:grid-cols-1 lg:grid-cols-2">
-            <SpoonsLineChart data={spoonChartData} />
-            <TimeDistributionBarChart data={timeDistributionLast7} />
+        <h3 className="font-serif text-stone-800 dark:text-stone-200 text-base mb-3">What happened?</h3>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <div className={`${CARD_CLASS}`}>
+            <p className="font-sans text-xs text-stone-500 dark:text-stone-400 uppercase tracking-wider">This week</p>
+            <p className={`font-serif text-xl font-medium tabular-nums mt-0.5 ${MOSS_SOFT}`}>
+              {whatHappened.weekSessions} session{whatHappened.weekSessions !== 1 ? 's' : ''} · {whatHappened.weekMinutes} min
+            </p>
+            <p className="font-sans text-xs text-stone-500 dark:text-stone-400 mt-1">{whatHappened.weekTendingDays} day{whatHappened.weekTendingDays !== 1 ? 's' : ''} you showed up</p>
           </div>
+          {whatHappened.topGoalNames.length > 0 && (
+            <div className={`${CARD_CLASS}`}>
+              <p className="font-sans text-xs text-stone-500 dark:text-stone-400 uppercase tracking-wider">Top focus</p>
+              <ul className="font-sans text-sm text-stone-700 dark:text-stone-300 mt-1 space-y-0.5">
+                {whatHappened.topGoalNames.slice(0, 3).map((name) => (
+                  <li key={name} className="truncate">
+                    {name.length > 28 ? name.slice(0, 26) + '…' : name}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <div className={`${CARD_CLASS}`}>
+            <p className="font-sans text-xs text-stone-500 dark:text-stone-400 uppercase tracking-wider">All-time harvest</p>
+            <p className={`font-serif text-xl font-medium tabular-nums mt-0.5 ${MOSS_SOFT}`}>
+              {(whatHappened.totalHarvest / 60).toFixed(1)} hours
+            </p>
+            <p className="font-sans text-xs text-stone-500 dark:text-stone-400 mt-1">Total focus logged</p>
+          </div>
+        </div>
+        {focusTrendShort.length > 0 && (
+          <div className={`${CARD_CLASS} mt-3`}>
+            <p className="font-sans text-xs text-stone-500 dark:text-stone-400 mb-2">Last 14 days</p>
+            <SoftTrendChart data={focusTrendShort} />
+          </div>
+        )}
+      </section>
 
-          <FocusTrendChart data={focusTrend} />
-          <DistributionChart data={distribution} />
-          <ActivityHeatmap days={heatmap.days} maxMins={heatmap.maxMins} />
+      {/* 3. What helped? — insight cards */}
+      <section>
+        <h3 className="font-serif text-stone-800 dark:text-stone-200 text-base mb-3">What helped?</h3>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {whatHelped.bestDayOfWeek && (
+            <div className={`${CARD_CLASS} border-l-4 border-moss-400/50 dark:border-moss-600/50`}>
+              <p className="font-sans text-xs text-stone-500 dark:text-stone-400 mb-1">Best focus window</p>
+              <p className={`font-sans text-sm ${MOSS_MUTED}`}>Your focus tended to cluster on {whatHelped.bestDayOfWeek}s.</p>
+            </div>
+          )}
+          {whatHelped.checkInEffect && (
+            <div className={`${CARD_CLASS} border-l-4 border-moss-400/50 dark:border-moss-600/50`}>
+              <p className="font-sans text-xs text-stone-500 dark:text-stone-400 mb-1">Check-in & focus</p>
+              <p className={`font-sans text-sm ${MOSS_MUTED}`}>{whatHelped.checkInEffect}</p>
+            </div>
+          )}
+          {whatHelped.shortVsLong && (
+            <div className={`${CARD_CLASS} border-l-4 border-moss-400/50 dark:border-moss-600/50`}>
+              <p className="font-sans text-xs text-stone-500 dark:text-stone-400 mb-1">Short vs longer sessions</p>
+              <p className={`font-sans text-sm ${MOSS_MUTED}`}>{whatHelped.shortVsLong}</p>
+            </div>
+          )}
+          {whatHelped.lowEnergyNote && (
+            <div className={`${CARD_CLASS} border-l-4 border-moss-400/50 dark:border-moss-600/50`}>
+              <p className="font-sans text-xs text-stone-500 dark:text-stone-400 mb-1">Lower-energy days</p>
+              <p className={`font-sans text-sm ${MOSS_MUTED}`}>{whatHelped.lowEnergyNote}</p>
+            </div>
+          )}
+          {!whatHelped.bestDayOfWeek && !whatHelped.checkInEffect && !whatHelped.shortVsLong && !whatHelped.lowEnergyNote && hasAnyData && (
+            <div className={`${CARD_CLASS}`}>
+              <p className="font-sans text-sm text-stone-500 dark:text-stone-400 italic">Keep logging focus and check-ins. Patterns will show up here over time.</p>
+            </div>
+          )}
         </div>
       </section>
+
+      {/* 4. What seems to be the pattern? */}
+      {pattern && (
+        <section>
+          <h3 className="font-serif text-stone-800 dark:text-stone-200 text-base mb-3">What seems to be the pattern?</h3>
+          <div className={`${CARD_CLASS} border-moss-200/60 dark:border-moss-700/40`}>
+            <p className={`font-sans text-[15px] leading-relaxed ${MOSS_MUTED}`}>{pattern}</p>
+          </div>
+        </section>
+      )}
+
+      {/* 5. Weekly reflection ritual + Garden growth + One suggestion */}
+      <section className={`${CARD_CLASS} space-y-5 bg-gradient-to-b from-stone-50/80 to-white/80 dark:from-stone-800/50 dark:to-stone-800/30`}>
+        <h3 className="font-serif text-stone-800 dark:text-stone-200 text-base">Weekly reflection</h3>
+        <p className="font-sans text-sm text-stone-600 dark:text-stone-400">
+          Take a moment: What worked? What was difficult? One pattern you noticed?
+        </p>
+        {gardenStory && (
+          <div className="pt-3 border-t border-stone-200/80 dark:border-stone-600/50">
+            <p className="font-sans text-xs text-stone-500 dark:text-stone-400 uppercase tracking-wider mb-1">How your garden grew</p>
+            <p className={`font-sans text-sm leading-relaxed ${MOSS_MUTED}`}>{gardenStory}</p>
+          </div>
+        )}
+        {suggestion && (
+          <div className="pt-3 border-t border-stone-200/80 dark:border-stone-600/50">
+            <p className="font-sans text-xs text-stone-500 dark:text-stone-400 uppercase tracking-wider mb-1">One thing to try next week</p>
+            <p className={`font-sans text-[15px] leading-relaxed font-medium ${MOSS_SOFT}`}>{suggestion}</p>
+          </div>
+        )}
+      </section>
+
+      {/* 6. What to try next — single recommendation card */}
+      {suggestion && (
+        <section>
+          <div className={`${CARD_CLASS} border-2 border-moss-300/50 dark:border-moss-600/40 bg-moss-50/40 dark:bg-moss-900/20`}>
+            <p className="font-serif text-stone-800 dark:text-stone-200 text-sm font-medium mb-1">What to try next</p>
+            <p className={`font-sans text-[15px] leading-relaxed ${MOSS_MUTED}`}>{suggestion}</p>
+          </div>
+        </section>
+      )}
     </div>
   );
 }

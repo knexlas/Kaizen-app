@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useGarden } from '../../context/GardenContext';
+import { useReward } from '../../context/RewardContext';
 import { suggestGoalStructure } from '../../services/geminiService';
 import InfoTooltip from '../InfoTooltip';
 
@@ -136,8 +137,8 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
   const [milestoneInput, setMilestoneInput] = useState('');
   const [notes, setNotes] = useState('');
   const [linkedVitalityId, setLinkedVitalityId] = useState('');
-  const [toast, setToast] = useState(null);
   const [isSuggesting, setIsSuggesting] = useState(false);
+  const { pushReward } = useReward();
   const [suggestedMetrics, setSuggestedMetrics] = useState([]);
   const [linkedMetrics, setLinkedMetrics] = useState([]); // selected metric names
   // Routine: Schedule mode (Solid vs Liquid) and settings
@@ -169,13 +170,6 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
     () => SEED_CATALOG.filter((s) => Array.isArray(ownedSeeds) && ownedSeeds.includes(s.id)),
     [ownedSeeds]
   );
-
-  useEffect(() => {
-    if (toast) {
-      const t = setTimeout(() => setToast(null), 2800);
-      return () => clearTimeout(t);
-    }
-  }, [toast]);
 
   useEffect(() => {
     if (open && initialTitle) setTitle(initialTitle);
@@ -307,7 +301,6 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
   const handleSuggest = async () => {
     if (!title.trim()) return;
     setIsSuggesting(true);
-    setToast('Mochi is dreaming up a plan...');
 
     try {
       const suggestion = await suggestGoalStructure(
@@ -346,19 +339,24 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
         }
         if (suggestion.strategy && goalType === 'kaizen') setNotes(suggestion.strategy);
 
-        setToast(
-          isFallback
-            ? fallbackReason === 'quota'
-              ? 'Free-tier quota reached for today. Default plan applied — try again tomorrow.'
-              : "Default plan applied (Mochi couldn't connect). Try again for a custom plan."
-            : 'Plan sprouted!'
-        );
+        const msg = isFallback
+          ? fallbackReason === 'quota'
+            ? 'Free-tier quota reached for today. Default plan applied — try again tomorrow.'
+            : "Default plan applied (Mochi couldn't connect). Try again for a custom plan."
+          : 'Plan sprouted!';
+        if (typeof pushReward === 'function') {
+          pushReward({ message: msg, tone: isFallback ? 'slate' : 'moss', icon: '✨', durationMs: 2800 });
+        }
       } else {
-        setToast('Mochi is meditating... try again?');
+        if (typeof pushReward === 'function') {
+          pushReward({ message: "Mochi is meditating... try again?", tone: 'slate', icon: '✨' });
+        }
       }
     } catch (e) {
       console.error(e);
-      setToast('Connection to the spirit realm failed.');
+      if (typeof pushReward === 'function') {
+        pushReward({ message: 'Connection to the spirit realm failed.', tone: 'slate', icon: '⚠️' });
+      }
     } finally {
       setIsSuggesting(false);
     }
@@ -1423,18 +1421,6 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
         </motion.div>
       )}
 
-      {/* Toast */}
-      {toast && (
-        <motion.div
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0 }}
-          className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[60] px-4 py-2 rounded-lg bg-stone-800 text-stone-50 font-sans text-sm shadow-lg"
-          role="status"
-        >
-          {toast}
-        </motion.div>
-      )}
     </AnimatePresence>
   );
 }

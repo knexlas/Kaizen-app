@@ -41,6 +41,16 @@ export default function RewardOverlay() {
           <span className="mr-2 shrink-0" aria-hidden>{top.icon}</span>
           <span className="flex-1 min-w-0">{top.message}</span>
         </div>
+        {(top.variableBonus && (top.variableBonus.embers > 0 || top.variableBonus.waterDrops > 0)) && (
+          <p className="mt-1.5 text-xs opacity-90" aria-hidden>
+            {top.variableBonus.embers > 0 && `+${top.variableBonus.embers} Ember${top.variableBonus.embers !== 1 ? 's' : ''}`}
+            {top.variableBonus.embers > 0 && top.variableBonus.waterDrops > 0 && ' · '}
+            {top.variableBonus.waterDrops > 0 && `+${top.variableBonus.waterDrops} Water`}
+          </p>
+        )}
+        {top.growthLine && (
+          <p className="mt-1 text-xs opacity-90" aria-hidden>{top.growthLine}</p>
+        )}
         {hasVibe && (
           <div className="flex gap-2 mt-3 pt-2 border-t border-current/10">
             <button

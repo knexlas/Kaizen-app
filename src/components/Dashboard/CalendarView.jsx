@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { localISODate } from '../../services/dateUtils';
+import { checkPlacementConflict, findNextAvailableStart, toCanonicalSlotKey } from '../../services/schedulingConflictService';
 
 const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -105,6 +106,7 @@ export default function CalendarView({
   const [quickAddSaving, setQuickAddSaving] = useState(false);
   const [selectedTime, setSelectedTime] = useState('09:00');
   const [selectedDuration, setSelectedDuration] = useState(30);
+  const [quickAddConflict, setQuickAddConflict] = useState(null); // { conflictingItem } when placement would overwrite
 
   const [weekViewStartStr, setWeekViewStartStr] = useState(() => {
     const d = new Date();
@@ -185,6 +187,7 @@ export default function CalendarView({
     setQuickAddTitle('');
     setSelectedTime('09:00');
     setSelectedDuration(30);
+    setQuickAddConflict(null);
   };
 
   const handleDayClick = (dateStr) => {
@@ -196,13 +199,21 @@ export default function CalendarView({
 
   const handleQuickAddGoal = async (dateStr, goalId) => {
     if (!saveDayPlanForDate || !loadDayPlan) return;
+    setQuickAddConflict(null);
     setQuickAddSaving(true);
     try {
-      const exactDateTime = new Date(`${dateStr}T${selectedTime}:00`).toISOString();
       const hour = new Date(`${dateStr}T${selectedTime}:00`).getHours();
       const plan = await loadDayPlan(dateStr);
-      const next = { ...plan };
-      next[String(hour)] = {
+      const planObj = plan && typeof plan === 'object' ? plan : {};
+      const conflict = checkPlacementConflict(planObj, hour, selectedDuration);
+      if (conflict.conflict) {
+        setQuickAddConflict(conflict);
+        setQuickAddSaving(false);
+        return;
+      }
+      const exactDateTime = new Date(`${dateStr}T${selectedTime}:00`).toISOString();
+      const next = { ...planObj };
+      next[toCanonicalSlotKey(hour)] = {
         goalId,
         startTime: exactDateTime,
         duration: selectedDuration,
@@ -218,13 +229,21 @@ export default function CalendarView({
 
   const handleQuickAddFreeform = async () => {
     if (!selectedDate || !quickAddTitle.trim() || !saveDayPlanForDate || !loadDayPlan) return;
+    setQuickAddConflict(null);
     setQuickAddSaving(true);
     try {
-      const exactDateTime = new Date(`${selectedDate}T${selectedTime}:00`).toISOString();
       const hour = new Date(`${selectedDate}T${selectedTime}:00`).getHours();
       const plan = await loadDayPlan(selectedDate);
-      const next = { ...plan };
-      next[String(hour)] = {
+      const planObj = plan && typeof plan === 'object' ? plan : {};
+      const conflict = checkPlacementConflict(planObj, hour, selectedDuration);
+      if (conflict.conflict) {
+        setQuickAddConflict(conflict);
+        setQuickAddSaving(false);
+        return;
+      }
+      const exactDateTime = new Date(`${selectedDate}T${selectedTime}:00`).toISOString();
+      const next = { ...planObj };
+      next[toCanonicalSlotKey(hour)] = {
         type: 'routineTemplate',
         routineId: `quick-${Date.now()}`,
         title: quickAddTitle.trim(),
@@ -237,6 +256,18 @@ export default function CalendarView({
       closeQuickAddModal();
     } finally {
       setQuickAddSaving(false);
+    }
+  };
+
+  const handleQuickAddUseNextSlot = async () => {
+    if (!selectedDate || !loadDayPlan) return;
+    const plan = await loadDayPlan(selectedDate);
+    const planObj = plan && typeof plan === 'object' ? plan : {};
+    const hour = new Date(`${selectedDate}T${selectedTime}:00`).getHours();
+    const nextHour = findNextAvailableStart(planObj, hour + 1, selectedDuration);
+    if (nextHour != null) {
+      setSelectedTime(`${String(nextHour).padStart(2, '0')}:00`);
+      setQuickAddConflict(null);
     }
   };
 
@@ -408,7 +439,7 @@ export default function CalendarView({
                       {all.map((item, i) => (
                         <li
                           key={i}
-                          className={`text-xs px-2 py-1.5 rounded-lg truncate ${
+                          className={`text-xs px-2 py-1.5 rounded-xl truncate transition-shadow hover:shadow-md ${
                             item.type === 'event' ? 'bg-sky-100 text-sky-800' : 'bg-moss-100 text-moss-800'
                           }`}
                         >
@@ -477,6 +508,29 @@ export default function CalendarView({
                     </select>
                   </div>
                 </div>
+                {quickAddConflict?.conflict && (
+                  <div className="p-3 rounded-xl bg-amber-50 border border-amber-200" role="alert">
+                    <p className="font-sans text-sm text-amber-900">
+                      This time overlaps with &quot;{quickAddConflict.conflictingItem?.title ?? 'another item'}&quot;.
+                    </p>
+                    <div className="flex gap-2 mt-2">
+                      <button
+                        type="button"
+                        onClick={() => setQuickAddConflict(null)}
+                        className="px-3 py-1.5 rounded-lg font-sans text-sm font-medium bg-stone-200 text-stone-800 hover:bg-stone-300"
+                      >
+                        Don&apos;t add
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleQuickAddUseNextSlot}
+                        className="px-3 py-1.5 rounded-lg font-sans text-sm font-medium bg-moss-600 text-white hover:bg-moss-700"
+                      >
+                        Find next slot
+                      </button>
+                    </div>
+                  </div>
+                )}
                 <label className="block font-sans text-sm font-medium text-stone-700">Quick add (free-form)</label>
                 <div className="flex gap-2">
                   <input

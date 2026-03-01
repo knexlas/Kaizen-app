@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useReward } from '../../context/RewardContext';
 import { fetchWeeklyEvents } from '../../services/calendarSyncService';
 
 const WEATHER_CYCLE = ['storm', 'cloud', 'sun'];
@@ -27,24 +28,11 @@ function EventRow({ event, weather, onWeatherClick }) {
   );
 }
 
-function Toast({ message, visible }) {
-  if (!visible) return null;
-  return (
-    <div
-      className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg bg-stone-800 text-stone-50 font-sans text-sm shadow-lg"
-      role="status"
-      aria-live="polite"
-    >
-      {message}
-    </div>
-  );
-}
-
 function SundayRitual() {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [overrides, setOverrides] = useState({});
-  const [toast, setToast] = useState(false);
+  const { pushReward } = useReward();
 
   useEffect(() => {
     let cancelled = false;
@@ -103,7 +91,6 @@ function SundayRitual() {
           )}
         </ul>
       </div>
-      <Toast message="Insight saved." visible={toast} />
     </div>
   );
 }

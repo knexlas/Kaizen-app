@@ -11,8 +11,8 @@ function isRoutineOrMaintenance(item) {
   return g?.type === 'routine' || g?.energyType === 'maintenance';
 }
 
-/** True if assignment is fixed/mandatory (from TimeSlicer convention). */
-function isAssignmentFixed(a) {
+/** True if assignment is fixed/mandatory (from TimeSlicer convention). Exported for GardenDashboard recommendation engine. */
+export function isAssignmentFixed(a) {
   if (a == null) return false;
   if (typeof a !== 'object') return false;
   return a.isFixed === true || a.type === 'fixed' || a.fixed === true;
@@ -49,8 +49,9 @@ function getCurrentWeekIndex(projectDeadline, totalWeeks = 14) {
 /** Build 1–3 micro-action suggestions from today's plan, compost inbox, and recent activity.
  * Ensures at least one suggestion is a routine or maintenance task from the day's plan when available.
  * When lowEnergy is true, only suggests tasks with activationEnergy 1 or 2.
+ * Exported for GardenDashboard recommendation engine.
  */
-function useTinyStepSuggestions({
+export function useTinyStepSuggestions({
   todayPlanItems,
   compost = [],
   logs = [],
@@ -487,7 +488,7 @@ export default function NextTinyStep({
         aria-live="polite"
         className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-3 rounded-xl bg-emerald-500 text-white font-sans text-sm font-medium shadow-lg border border-emerald-600/50"
       >
-        ✨ Momentum generated! +1 Spoon recovered
+        ✨ Nice one. Momentum building.
       </div>
     )}
     </>

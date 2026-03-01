@@ -309,7 +309,7 @@ function buildContextNote(context) {
   const { logs = [], goals = [], energy = 0, weather = 'sun' } = context;
   const parts = [];
   if (weather === 'storm') parts.push('Weather: Stormy (gardener may be under pressure).');
-  else if (weather === 'breeze') parts.push('Weather: Breeze (moderate load).');
+  else if (weather === 'leaf') parts.push('Weather: Breeze (moderate load).');
   else parts.push('Weather: Sunny (clear skies).');
   if (energy <= -2) parts.push('Energy: Low Battery — gardener is low on energy.');
   else if (energy < 0) parts.push('Energy: Slightly low.');

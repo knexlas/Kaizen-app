@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useGarden } from '../../context/GardenContext';
 import { tweakMilestones, generateProficiencyEstimates, suggestProjectForGoal } from '../../services/geminiService';
+import { getGoalSupportDomain, resolveSupportSuggestions, createFromSupportSuggestion } from '../../services/domainSupportService';
 import ProficiencyArc from './ProficiencyArc';
 
 const DOMAINS = [
@@ -21,8 +22,9 @@ const DAY_LETTERS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 const ROUTINE_CATEGORIES = ['💪 Wellness', '📁 Life Admin', '🧹 Household', '🧼 Care & Hygiene'];
 
-export default function GoalEditor({ open, goal, onClose, onSave, addSubtask, updateSubtask, deleteSubtask, onOpenProjectPlanner }) {
+export default function GoalEditor({ open, goal, onClose, onSave, addGoal, addSubtask, updateSubtask, deleteSubtask, onOpenProjectPlanner }) {
   const { metrics = [], addMetric, toggleMilestone, goals = [] } = useGarden();
+  const supportSuggestions = useMemo(() => (goal ? resolveSupportSuggestions(goal, 2) : []), [goal]);
   const [title, setTitle] = useState('');
   const [domain, setDomain] = useState('');
   const [color, setColor] = useState('');
@@ -824,6 +826,38 @@ export default function GoalEditor({ open, goal, onClose, onSave, addSubtask, up
                       </li>
                     );
                   })}
+                </ul>
+              </div>
+            )}
+
+            {addGoal && goal?.id && supportSuggestions.length > 0 && (
+              <div className="mt-4 pt-4 border-t border-stone-200 dark:border-stone-600">
+                <p className="font-sans text-xs font-medium text-stone-500 dark:text-stone-400 uppercase tracking-wider mb-1">A little support</p>
+                <p className="font-sans text-sm text-stone-600 dark:text-stone-400 mb-3">Would you like to add one helpful extra? Small steps often make the main goal easier.</p>
+                <ul className="space-y-2">
+                  {supportSuggestions.map((s) => (
+                    <li key={s.id}>
+                      <div className="rounded-xl border border-stone-200 dark:border-stone-600 bg-stone-50/50 dark:bg-stone-700/20 p-2.5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                        <div className="min-w-0 flex-1">
+                          <p className="font-sans text-sm font-medium text-stone-800 dark:text-stone-200">{s.title || s.label}</p>
+                          {s.description && (
+                            <p className="font-sans text-xs text-stone-500 dark:text-stone-400 mt-0.5">{s.description}</p>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const result = createFromSupportSuggestion(s, goal.id);
+                            if (result?.kind === 'goal' && result.goal) addGoal(result.goal);
+                          }}
+                          className="shrink-0 px-2.5 py-1.5 rounded-lg font-sans text-sm font-medium bg-moss-500/90 text-white hover:bg-moss-600 focus:outline-none focus:ring-2 focus:ring-moss-500/50"
+                          aria-label={`Add ${s.title || s.label}`}
+                        >
+                          Add
+                        </button>
+                      </div>
+                    </li>
+                  ))}
                 </ul>
               </div>
             )}

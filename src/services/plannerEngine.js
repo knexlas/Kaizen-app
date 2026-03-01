@@ -57,14 +57,14 @@ export function optimizeDailySchedule(tasks, energyLevel = 'medium') {
   if (energyLevel === 'high' || energyLevel === 'medium') {
     deepTasks.forEach((t, i) => {
       const hour = 9 + i;
-      if (hour < 12) schedule[`${hour}:00`] = t;
+      if (hour < 12) schedule[minutesToHour(hour * 60)] = t;
     });
   }
 
   // 3. Assign remaining to afternoon
   quickTasks.forEach((t, i) => {
     const hour = 13 + i;
-    if (hour < 17) schedule[`${hour}:00`] = t;
+    if (hour < 17) schedule[minutesToHour(hour * 60)] = t;
   });
 
   return schedule;

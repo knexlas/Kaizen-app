@@ -133,6 +133,7 @@ export default function FocusSession({
   activeTask,
   onComplete,
   onExit,
+  onStart,
   durationSeconds = DURATION_SECONDS,
   goals = [],
   onStartNextStep,
@@ -144,6 +145,7 @@ export default function FocusSession({
   const [sessionComplete, setSessionComplete] = useState(false); // timer hit 0 → show Tea Ceremony rating
   const [completedTimeSpentMinutes, setCompletedTimeSpentMinutes] = useState(null);
   const hasPlayedBreakGongRef = useRef(false);
+  const hasFiredOnStartRef = useRef(false);
   const [showControls, setShowControls] = useState(false);
   const [showBrokenPath, setShowBrokenPath] = useState(false);
   const [ambience, setAmbience] = useState(getStoredAmbience);
@@ -181,6 +183,13 @@ export default function FocusSession({
       wakeLockRef.current = null;
     }
   }, []);
+
+  useEffect(() => {
+    if (onStart && !hasFiredOnStartRef.current) {
+      hasFiredOnStartRef.current = true;
+      onStart();
+    }
+  }, [onStart]);
 
   const elapsedSeconds = durationSeconds - secondsLeft;
 

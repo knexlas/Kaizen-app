@@ -6,6 +6,7 @@ import { recordVibe } from '../services/energyDictionaryService';
 import { loginWithGoogle, logoutUser } from '../services/authService';
 import { loginWithMicrosoft, logoutMicrosoft, fetchOutlookEvents, getAccessTokenSilently } from '../services/microsoftCalendarService';
 import { localISODate, getThisWeekSundayLocal, getLogicalToday, getDayStartsAtHour } from '../services/dateUtils';
+import { normalizePlanKeys, toCanonicalSlotKey } from '../services/schedulingConflictService';
 
 const STORAGE_KEY = 'gardenData';
 const LAST_OPEN_DATE_KEY = 'gardenLastOpenDate';
@@ -154,6 +155,9 @@ export function GardenProvider({ children }) {
   const [unlockedAnimals, setUnlockedAnimals] = useState(defaultData.unlockedAnimals ?? []);
   const [activeTool, setActiveTool] = useState(null); // UI only: { type: 'paint', material } | { type: 'plant', goalId } | { type: 'place', decorationId } | null
   const [tourStep, setTourStep] = useState(0); // Interactive onboarding: 0 = off, 1 = Morning Check-in, 2 = OmniAdd, 3 = Task checkbox, 4 = Garden Spirit
+  // Architect Mode: tap-to-select, tap-to-move layout editing (mobile-friendly).
+  const [isArchitectMode, setIsArchitectMode] = useState(false);
+  const [selectedObjectId, setSelectedObjectId] = useState(null); // "goal:<id>" | "decoration:<id>" | "shop-stand" | null
   const [metrics, setMetrics] = useState(defaultData.metrics);
   const [fertilizerCount, setFertilizerCount] = useState(defaultData.fertilizerCount ?? 0);
   const [waterDrops, setWaterDrops] = useState(defaultData.waterDrops ?? 5);
@@ -331,7 +335,7 @@ export function GardenProvider({ children }) {
     const uid = googleUser?.uid;
     if (!uid) return;
     const unsubscribe = subscribeToDailyPlan(uid, planDate, ({ assignments: next }) => {
-      setAssignments(next && typeof next === 'object' ? next : {});
+      setAssignments(normalizePlanKeys(next && typeof next === 'object' ? next : {}));
     });
     return () => unsubscribe();
   }, [googleUser?.uid, planDate]);
@@ -360,15 +364,17 @@ export function GardenProvider({ children }) {
     setWeekAssignments((prev) => ({ ...prev, [planDate]: assignments }));
   }, [planDate, assignments]);
 
+  /** Daily plan is the single source of truth for scheduled assignments; slot keys are normalized to "HH:00". */
   const loadDayPlan = useCallback(async (dateStr) => {
     if (weekAssignmentsRef.current[dateStr]) return weekAssignmentsRef.current[dateStr];
     const uid = googleUser?.uid;
     if (!uid) return {};
     try {
       const { assignments: a } = await getDailyPlan(uid, dateStr);
-      weekAssignmentsRef.current = { ...weekAssignmentsRef.current, [dateStr]: a };
-      setWeekAssignments((prev) => ({ ...prev, [dateStr]: a }));
-      return a;
+      const normalized = normalizePlanKeys(a ?? {});
+      weekAssignmentsRef.current = { ...weekAssignmentsRef.current, [dateStr]: normalized };
+      setWeekAssignments((prev) => ({ ...prev, [dateStr]: normalized }));
+      return normalized;
     } catch (e) {
       console.warn('loadDayPlan failed', e);
       return {};
@@ -376,16 +382,17 @@ export function GardenProvider({ children }) {
   }, [googleUser?.uid]);
 
   const saveDayPlanForDate = useCallback(async (dateStr, dayAssignments) => {
-    weekAssignmentsRef.current = { ...weekAssignmentsRef.current, [dateStr]: dayAssignments };
-    setWeekAssignments((prev) => ({ ...prev, [dateStr]: dayAssignments }));
+    const normalized = normalizePlanKeys(dayAssignments ?? {});
+    weekAssignmentsRef.current = { ...weekAssignmentsRef.current, [dateStr]: normalized };
+    setWeekAssignments((prev) => ({ ...prev, [dateStr]: normalized }));
     if (dateStr === planDate) {
-      setAssignments(dayAssignments);
+      setAssignments(normalized);
       return;
     }
     const uid = googleUser?.uid;
     if (!uid) return;
     try {
-      await saveDailyPlan(uid, dateStr, dayAssignments);
+      await saveDailyPlan(uid, dateStr, normalized);
     } catch (e) {
       console.warn('saveDayPlanForDate failed', e);
     }
@@ -408,7 +415,7 @@ export function GardenProvider({ children }) {
       if (weekAssignmentsRef.current[ds]) {
         results[ds] = weekAssignmentsRef.current[ds];
       } else {
-        promises.push(getDailyPlan(uid, ds).then(({ assignments: a }) => { results[ds] = a; }));
+        promises.push(getDailyPlan(uid, ds).then(({ assignments: a }) => { results[ds] = normalizePlanKeys(a ?? {}); }));
       }
     }
     if (promises.length > 0) await Promise.all(promises);
@@ -464,7 +471,7 @@ export function GardenProvider({ children }) {
     if (!item?.id || !saveDayPlanForDate || !loadDayPlan) return;
     const existing = await loadDayPlan(targetDateStr);
     const next = { ...(existing && typeof existing === 'object' ? existing : {}) };
-    const hourKey = String(item.hour);
+    const hourKey = toCanonicalSlotKey(item.hour) ?? String(item.hour);
     const existingList = Array.isArray(next[hourKey]) ? next[hourKey] : next[hourKey] != null ? [next[hourKey]] : [];
     next[hourKey] = [...existingList, item.assignment];
     await saveDayPlanForDate(targetDateStr, next);
@@ -995,26 +1002,27 @@ export function GardenProvider({ children }) {
         addToCompost(goal.title ?? 'Task');
         deleteGoal(goal.id);
         setAssignments((prev) => {
-          const next = { ...prev };
+          const result = {};
           let changed = false;
-          ['anytime', ...(Object.keys(prev).filter((k) => k !== 'anytime'))].forEach((key) => {
-            if (key === 'anytime') {
-              const list = (prev.anytime ?? []).filter((a) => getGoalId(a) !== goal.id);
-              if (list.length !== (prev.anytime ?? []).length) {
-                next.anytime = list;
-                changed = true;
-              }
-              return;
-            }
+          if ('anytime' in prev) {
+            const list = (prev.anytime ?? []).filter((a) => getGoalId(a) !== goal.id);
+            if (list.length !== (prev.anytime ?? []).length) changed = true;
+            result.anytime = list;
+          }
+          for (const key of Object.keys(prev).filter((k) => k !== 'anytime')) {
+            const canon = toCanonicalSlotKey(key);
+            if (!canon) continue;
             const raw = prev[key];
             const list = Array.isArray(raw) ? raw : raw != null ? [raw] : [];
             const filtered = list.filter((a) => getGoalId(a) !== goal.id);
-            if (filtered.length !== list.length) {
-              next[key] = filtered.length > 0 ? filtered : [];
-              changed = true;
+            if (filtered.length !== list.length) changed = true;
+            if (result[canon] !== undefined) {
+              result[canon] = [...(Array.isArray(result[canon]) ? result[canon] : [result[canon]]), ...filtered];
+            } else {
+              result[canon] = filtered.length > 0 ? filtered : [];
             }
-          });
-          return changed ? next : prev;
+          }
+          return changed ? result : prev;
         });
         composted++;
       } else if (isMaintenance && daysAgo > maxD) {
@@ -1027,6 +1035,7 @@ export function GardenProvider({ children }) {
 
   const FERTILIZER_BONUS_MINUTES = 15;
 
+  /** Add a goal. Preserves optional domain-support fields: supportDomain, linkedToGoalId (backward compatible). */
   const addGoal = useCallback((goal) => {
     const type = goal.type === 'routine' ? 'routine' : goal.type === 'vitality' ? 'vitality' : goal.type === 'volume' ? 'volume' : 'kaizen';
     const milestones = type === 'routine' || type === 'vitality' || type === 'volume'
@@ -1428,6 +1437,33 @@ export function GardenProvider({ children }) {
     });
   }, []);
 
+  /** Update position for any placeable object key ("goal:<id>", "decoration:<id>", "shop-stand"). */
+  const updateObjectPosition = useCallback((objectKey, newX, newZ) => {
+    if (!objectKey) return;
+    const x = Math.round(Number(newX) || 0);
+    const z = Math.round(Number(newZ) || 0);
+
+    if (String(objectKey).startsWith('goal:')) {
+      const id = String(objectKey).slice('goal:'.length);
+      if (id) editGoal(id, { position3D: [x, 0, z] });
+      return;
+    }
+    if (String(objectKey).startsWith('decoration:')) {
+      const id = String(objectKey).slice('decoration:'.length);
+      if (id) updateDecoration(id, { position3D: [x, 0, z] });
+      return;
+    }
+    if (String(objectKey) === 'shop-stand') {
+      setUserSettings((prev) => ({
+        ...prev,
+        gardenLayout: {
+          ...(prev?.gardenLayout || {}),
+          shopStandPosition3D: [x, 0, z],
+        },
+      }));
+    }
+  }, [editGoal, updateDecoration]);
+
   /** Add a monthly quota (e.g. Freelance Client, targetHours). */
   const addMonthlyQuota = useCallback((quota) => {
     const id = quota?.id ?? crypto.randomUUID?.() ?? `quota-${Date.now()}`;
@@ -1658,6 +1694,11 @@ export function GardenProvider({ children }) {
     setActiveTool,
     tourStep,
     setTourStep,
+    isArchitectMode,
+    setIsArchitectMode,
+    selectedObjectId,
+    setSelectedObjectId,
+    updateObjectPosition,
     unlockedAnimals,
     addUnlockedAnimal,
     spendEmbers,

@@ -11,6 +11,7 @@ import {
 } from '@dnd-kit/core';
 import { motion, AnimatePresence } from 'framer-motion';
 import { localISODate } from '../../services/dateUtils';
+import { checkPlacementConflict, findNextAvailableStart, toCanonicalSlotKey } from '../../services/schedulingConflictService';
 
 const WEEKDAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const MAX_DAILY_SPARKS = 10;
@@ -326,6 +327,21 @@ function inputToTimeSlot(str) {
   return h + mins / 60;
 }
 
+/** Get task duration in minutes from backlog task and goals (for scheduling). */
+function getTaskDurationMinutes(selectedTask, goals) {
+  if (!selectedTask || !Array.isArray(goals)) return 60;
+  const goal = goals.find((g) => g.id === selectedTask.goalId);
+  if (selectedTask.subtaskId && goal?.subtasks?.length) {
+    const st = goal.subtasks.find((s) => s.id === selectedTask.subtaskId);
+    const hours = Number(st?.estimatedHours);
+    if (hours > 0) return Math.min(480, Math.round(hours * 60));
+  }
+  if (goal?.estimatedMinutes) return Math.min(480, Math.max(1, Number(goal.estimatedMinutes)));
+  const sparks = Number(selectedTask.estimatedSparks);
+  if (sparks > 0) return Math.min(120, Math.max(30, sparks * 30));
+  return 60;
+}
+
 /** Drawer: "Schedule for [date]" — pick time + task from backlog, or add event/block. */
 export function PlanDayDrawer({ dateStr, open, onClose, backlogTasks, loadDayPlan, saveDayPlanForDate, goals = [] }) {
   const [planMode, setPlanMode] = useState('task'); // 'task' | 'event'
@@ -333,13 +349,18 @@ export function PlanDayDrawer({ dateStr, open, onClose, backlogTasks, loadDayPla
   const [timeInput, setTimeInput] = useState('09:00');
   const [selectedTask, setSelectedTask] = useState(null);
   const [eventTitle, setEventTitle] = useState('');
+  const [eventDuration, setEventDuration] = useState(60);
   const [saving, setSaving] = useState(false);
   const [existingPlan, setExistingPlan] = useState(null);
+  const [conflictResult, setConflictResult] = useState(null); // { conflictingItem, occupiedHours } when placement would overwrite
+  const [scheduleAsAnytime, setScheduleAsAnytime] = useState(false); // true = add to "anytime" (loosely planned), false = hard-scheduled at time
 
   useEffect(() => {
     if (!open || !dateStr) return;
     setSelectedTask(null);
     setEventTitle('');
+    setConflictResult(null);
+    setScheduleAsAnytime(false);
     let cancelled = false;
     (async () => {
       try {
@@ -347,9 +368,8 @@ export function PlanDayDrawer({ dateStr, open, onClose, backlogTasks, loadDayPla
         if (cancelled) return;
         const planObj = plan && typeof plan === 'object' ? plan : {};
         setExistingPlan(planObj);
-        const usedSlots = new Set(Object.keys(planObj).map(Number));
-        const firstFree = TIME_SLOT_OPTIONS.find((s) => !usedSlots.has(s));
-        const slot = firstFree !== undefined ? firstFree : 9;
+        const firstFreeHour = findNextAvailableStart(planObj, 8, 60);
+        const slot = firstFreeHour !== null ? firstFreeHour : 9;
         setTimeSlot(slot);
         setTimeInput(timeSlotToInput(slot));
       } catch {
@@ -364,23 +384,45 @@ export function PlanDayDrawer({ dateStr, open, onClose, backlogTasks, loadDayPla
 
   const handleSave = useCallback(async (addAnother = false) => {
     if (!dateStr || !selectedTask || typeof loadDayPlan !== 'function' || typeof saveDayPlanForDate !== 'function') return;
+    setConflictResult(null);
     setSaving(true);
     try {
       const plan = await loadDayPlan(dateStr);
-      const next = { ...(plan && typeof plan === 'object' ? plan : {}) };
-      next[String(timeSlot)] = {
-        goalId: selectedTask.goalId,
-        title: selectedTask.title,
-      };
+      const planObj = plan && typeof plan === 'object' ? plan : {};
+      const next = { ...planObj };
+
+      if (scheduleAsAnytime) {
+        next.anytime = Array.isArray(next.anytime) ? [...next.anytime] : [];
+        next.anytime.push({
+          goalId: selectedTask.goalId,
+          title: selectedTask.title,
+          ...(selectedTask.subtaskId && { subtaskId: selectedTask.subtaskId }),
+        });
+      } else {
+        const durationMinutes = getTaskDurationMinutes(selectedTask, goals);
+        const startHour = Math.floor(Number(timeSlot));
+        const conflict = checkPlacementConflict(planObj, startHour, durationMinutes);
+        if (conflict.conflict) {
+          setConflictResult(conflict);
+          setSaving(false);
+          return;
+        }
+        next[toCanonicalSlotKey(timeSlot)] = {
+          goalId: selectedTask.goalId,
+          title: selectedTask.title,
+          duration: durationMinutes,
+          ...(selectedTask.subtaskId && { subtaskId: selectedTask.subtaskId }),
+        };
+      }
+
       await saveDayPlanForDate(dateStr, next);
       if (addAnother) {
         setSelectedTask(null);
         const planAfter = await loadDayPlan(dateStr);
-        const planObj = planAfter && typeof planAfter === 'object' ? planAfter : {};
-        setExistingPlan(planObj);
-        const usedSlots = new Set(Object.keys(planObj).map(Number));
-        const firstFree = TIME_SLOT_OPTIONS.find((s) => !usedSlots.has(s));
-        const slot = firstFree !== undefined ? firstFree : 9;
+        const planObjAfter = planAfter && typeof planAfter === 'object' ? planAfter : {};
+        setExistingPlan(planObjAfter);
+        const nextFree = findNextAvailableStart(planObjAfter, 8, 60);
+        const slot = nextFree !== null ? nextFree : 9;
         setTimeSlot(slot);
         setTimeInput(timeSlotToInput(slot));
       } else {
@@ -391,25 +433,34 @@ export function PlanDayDrawer({ dateStr, open, onClose, backlogTasks, loadDayPla
     } finally {
       setSaving(false);
     }
-  }, [dateStr, timeSlot, selectedTask, loadDayPlan, saveDayPlanForDate, onClose]);
+  }, [dateStr, timeSlot, selectedTask, goals, scheduleAsAnytime, loadDayPlan, saveDayPlanForDate, onClose]);
 
   const handleSaveEvent = useCallback(async (addAnother = false) => {
     const title = (eventTitle || '').trim();
     if (!dateStr || !title || typeof loadDayPlan !== 'function' || typeof saveDayPlanForDate !== 'function') return;
+    const durationMinutes = Math.max(15, Math.min(480, Number(eventDuration) || 60));
+    setConflictResult(null);
     setSaving(true);
     try {
       const plan = await loadDayPlan(dateStr);
-      const next = { ...(plan && typeof plan === 'object' ? plan : {}) };
-      next[String(timeSlot)] = { type: 'event', title };
+      const planObj = plan && typeof plan === 'object' ? plan : {};
+      const startHour = Math.floor(Number(timeSlot));
+      const conflict = checkPlacementConflict(planObj, startHour, durationMinutes);
+      if (conflict.conflict) {
+        setConflictResult(conflict);
+        setSaving(false);
+        return;
+      }
+      const next = { ...planObj };
+      next[toCanonicalSlotKey(timeSlot)] = { type: 'event', title, duration: durationMinutes };
       await saveDayPlanForDate(dateStr, next);
       if (addAnother) {
         setEventTitle('');
         const planAfter = await loadDayPlan(dateStr);
-        const planObj = planAfter && typeof planAfter === 'object' ? planAfter : {};
-        setExistingPlan(planObj);
-        const usedSlots = new Set(Object.keys(planObj).map(Number));
-        const firstFree = TIME_SLOT_OPTIONS.find((s) => !usedSlots.has(s));
-        const slot = firstFree !== undefined ? firstFree : 9;
+        const planObjAfter = planAfter && typeof planAfter === 'object' ? planAfter : {};
+        setExistingPlan(planObjAfter);
+        const nextFree = findNextAvailableStart(planObjAfter, 8, 60);
+        const slot = nextFree !== null ? nextFree : 9;
         setTimeSlot(slot);
         setTimeInput(timeSlotToInput(slot));
       } else {
@@ -420,7 +471,22 @@ export function PlanDayDrawer({ dateStr, open, onClose, backlogTasks, loadDayPla
     } finally {
       setSaving(false);
     }
-  }, [dateStr, timeSlot, eventTitle, loadDayPlan, saveDayPlanForDate, onClose]);
+  }, [dateStr, timeSlot, eventTitle, eventDuration, loadDayPlan, saveDayPlanForDate, onClose]);
+
+  const handleUseNextSlot = useCallback(() => {
+    if (!existingPlan) return;
+    const durationMinutes =
+      planMode === 'task'
+        ? getTaskDurationMinutes(selectedTask, goals)
+        : Math.max(15, Math.min(480, Number(eventDuration) || 60));
+    const startHour = Math.floor(Number(timeSlot));
+    const nextHour = findNextAvailableStart(existingPlan, startHour + 1, durationMinutes);
+    if (nextHour != null) {
+      setTimeSlot(nextHour);
+      setTimeInput(timeSlotToInput(nextHour));
+      setConflictResult(null);
+    }
+  }, [existingPlan, planMode, selectedTask, goals, eventDuration, timeSlot]);
 
   useEffect(() => {
     if (!open) return;
@@ -469,8 +535,8 @@ export function PlanDayDrawer({ dateStr, open, onClose, backlogTasks, loadDayPla
               <p className="font-sans text-xs font-semibold text-stone-600 uppercase tracking-wider mb-1.5">Already scheduled</p>
               <ul className="space-y-0.5 font-sans text-sm text-stone-700">
                 {Object.entries(existingPlan)
-                  .filter(([, a]) => a != null)
-                  .sort(([a], [b]) => Number(a) - Number(b))
+                  .filter(([k, a]) => k !== 'anytime' && a != null)
+                  .sort(([a], [b]) => (a === 'anytime' ? 1 : Number(a)) - (b === 'anytime' ? 1 : Number(b)))
                   .map(([hour, a]) => {
                     let title = 'Task';
                     if (typeof a === 'object' && a.type === 'event') title = a.title ?? 'Event';
@@ -489,6 +555,24 @@ export function PlanDayDrawer({ dateStr, open, onClose, backlogTasks, loadDayPla
                       </li>
                     );
                   })}
+                {Array.isArray(existingPlan.anytime) && existingPlan.anytime.length > 0 && (
+                  <>
+                    <li className="font-mono text-xs text-stone-500 mt-1.5">Anytime</li>
+                    {existingPlan.anytime.map((a, i) => {
+                      let title = 'Task';
+                      if (a && typeof a === 'object' && a.title) title = a.title;
+                      else if (a && typeof a === 'object' && a.goalId) {
+                        const g = (goals || []).find((x) => x.id === a.goalId);
+                        title = g?.title ?? 'Task';
+                      }
+                      return (
+                        <li key={`anytime-${i}`} className="flex gap-2 pl-4">
+                          <span className="truncate">{title}</span>
+                        </li>
+                      );
+                    })}
+                  </>
+                )}
               </ul>
             </div>
           )}
@@ -509,17 +593,21 @@ export function PlanDayDrawer({ dateStr, open, onClose, backlogTasks, loadDayPla
             </button>
           </div>
           <div className="space-y-3 mb-4">
-            <label className="block font-sans text-sm font-medium text-stone-700">Time</label>
-            <input
-              type="time"
-              value={timeInput}
-              onChange={(e) => {
-                const v = e.target.value;
-                setTimeInput(v);
-                setTimeSlot(inputToTimeSlot(v));
-              }}
-              className="w-full px-3 py-2 rounded-lg border border-stone-300 font-sans text-sm"
-            />
+            {!scheduleAsAnytime && (
+              <>
+                <label className="block font-sans text-sm font-medium text-stone-700">Time</label>
+                <input
+                  type="time"
+                  value={timeInput}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setTimeInput(v);
+                    setTimeSlot(inputToTimeSlot(v));
+                  }}
+                  className="w-full px-3 py-2 rounded-lg border border-stone-300 font-sans text-sm"
+                />
+              </>
+            )}
             {planMode === 'task' && (
               <>
                 <label className="block font-sans text-sm font-medium text-stone-700">Task</label>
@@ -529,6 +617,15 @@ export function PlanDayDrawer({ dateStr, open, onClose, backlogTasks, loadDayPla
                   onSelectTask={setSelectedTask}
                   compact
                 />
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={scheduleAsAnytime}
+                    onChange={(e) => setScheduleAsAnytime(e.target.checked)}
+                    className="rounded border-stone-300 text-moss-600 focus:ring-moss-500"
+                  />
+                  <span className="font-sans text-sm text-stone-700">Loosely planned for this day (no fixed time)</span>
+                </label>
               </>
             )}
             {planMode === 'event' && (
@@ -541,9 +638,42 @@ export function PlanDayDrawer({ dateStr, open, onClose, backlogTasks, loadDayPla
                   placeholder="e.g. Meeting, Lunch, Focus block"
                   className="w-full px-3 py-2 rounded-lg border border-stone-300 font-sans text-sm"
                 />
+                <label className="block font-sans text-sm font-medium text-stone-700">Duration (minutes)</label>
+                <input
+                  type="number"
+                  min={15}
+                  max={480}
+                  step={15}
+                  value={eventDuration}
+                  onChange={(e) => setEventDuration(Number(e.target.value) || 60)}
+                  className="w-full px-3 py-2 rounded-lg border border-stone-300 font-sans text-sm"
+                />
               </>
             )}
           </div>
+          {conflictResult?.conflict && (
+            <div className="mb-4 p-3 rounded-xl bg-amber-50 border border-amber-200" role="alert">
+              <p className="font-sans text-sm text-amber-900">
+                This time overlaps with &quot;{conflictResult.conflictingItem?.title ?? 'another item'}&quot;. Choose an option below.
+              </p>
+              <div className="flex gap-2 mt-2">
+                <button
+                  type="button"
+                  onClick={() => setConflictResult(null)}
+                  className="px-3 py-1.5 rounded-lg font-sans text-sm font-medium bg-stone-200 text-stone-800 hover:bg-stone-300"
+                >
+                  Don&apos;t add
+                </button>
+                <button
+                  type="button"
+                  onClick={handleUseNextSlot}
+                  className="px-3 py-1.5 rounded-lg font-sans text-sm font-medium bg-moss-600 text-white hover:bg-moss-700"
+                >
+                  Find next slot
+                </button>
+              </div>
+            </div>
+          )}
           <div className="flex flex-wrap gap-2 shrink-0">
             <button type="button" onClick={onClose} className="flex-1 min-w-[80px] py-2.5 rounded-xl font-sans text-sm text-stone-500 hover:bg-stone-100">
               Done
@@ -986,6 +1116,8 @@ export default function StagingArea({
   setStagingTaskStatus: setStagingTaskStatusProp,
   initialScheduleSelection,
   onConsumeScheduleSelection,
+  /** When true, show unscheduled/backlog first (left on desktop, top on mobile) so it feels first-class. */
+  backlogFirst = false,
 }) {
   const [scheduledTasks, setScheduledTasks] = useState(() => ({})); // { [dateStr]: task[] }
   const [activeDragId, setActiveDragId] = useState(null);
@@ -1319,15 +1451,13 @@ export default function StagingArea({
   const [showPauseConfirm, setShowPauseConfirm] = useState(false);
   const [pauseClearing, setPauseClearing] = useState(false);
 
-  const timelineAndBacklog = (
-    <div className="flex flex-col lg:flex-row gap-4 w-full">
-        {/* Left: Timeline (70%) — calendar days with fixed events + droppable columns */}
-        <div className="lg:w-[70%] min-w-0 flex flex-col rounded-xl border-2 border-stone-200 bg-white shadow-sm overflow-hidden">
+  const weekPanel = (
+    <div className={`${backlogFirst ? 'lg:w-[65%]' : 'lg:w-[70%]'} min-w-0 flex flex-col rounded-xl border-2 border-stone-200 dark:border-slate-600 bg-white dark:bg-slate-800/80 shadow-sm overflow-hidden`}>
           <div className="px-4 py-4 border-b-2 border-stone-200 bg-stone-100/80 flex flex-wrap items-center justify-between gap-2">
             <div>
-              <h2 className="font-serif text-stone-800 text-lg">This week</h2>
+              <h2 className="font-serif text-stone-800 dark:text-stone-200 text-lg">This week</h2>
               {weekViewDays.length >= 2 && (
-                <p className="font-sans text-xs text-stone-500 mt-0.5">
+                <p className="font-sans text-xs text-stone-500 dark:text-stone-400 mt-0.5">
                   {(() => {
                     try {
                       const start = new Date(weekViewDays[0].dateStr + 'T12:00:00');
@@ -1339,7 +1469,7 @@ export default function StagingArea({
                   })()}
                 </p>
               )}
-              <p className="font-sans text-sm text-stone-500 mt-0.5">{isMobile ? 'Tap a task in the backlog to schedule it for a day.' : 'Drag tasks from the backlog onto a day to schedule them.'}</p>
+              <p className="font-sans text-sm text-stone-500 dark:text-stone-400 mt-0.5">{isMobile ? 'Tap a task in Unscheduled to schedule it for a day.' : 'Drag from Unscheduled onto a day, or click a day to open it.'}</p>
             </div>
             {clearDaySchedule && todayStr && (
               <button
@@ -1404,15 +1534,16 @@ export default function StagingArea({
             })}
           </div>
         </div>
+  );
 
-        {/* Right: Backlog (30%) — unscheduled tasks, draggable */}
+  const backlogPanel = (
         <div
           ref={backlogDroppable.setNodeRef}
-          className={`lg:w-[30%] min-w-0 flex flex-col rounded-xl border-2 border-dashed border-stone-200 bg-stone-50/50 overflow-hidden ${backlogDroppable.isOver ? 'border-moss-400 bg-moss-50/50' : ''}`}
+          className={`${backlogFirst ? 'lg:w-[35%]' : 'lg:w-[30%]'} min-w-0 flex flex-col rounded-xl border-2 border-dashed border-stone-200 dark:border-slate-600 bg-stone-50/50 dark:bg-slate-800/50 overflow-hidden ${backlogDroppable.isOver ? 'border-moss-400 bg-moss-50/50 dark:border-moss-500 dark:bg-moss-900/20' : ''}`}
         >
-          <div className="px-4 py-3 border-b border-stone-200 bg-white shrink-0">
-            <h2 className="font-serif text-stone-800 text-lg">Unscheduled tasks</h2>
-            <p className="font-sans text-sm text-stone-500">From milestones & flexible subtasks. Drop here to un-schedule.</p>
+          <div className="px-4 py-3 border-b border-stone-200 dark:border-slate-600 bg-white dark:bg-slate-800 shrink-0">
+            <h2 className="font-serif text-stone-800 dark:text-stone-200 text-lg">Unscheduled</h2>
+            <p className="font-sans text-sm text-stone-500 dark:text-stone-400">Keep tasks here until you&apos;re ready. Drag to a day to schedule, or drop back here to un-schedule.</p>
           </div>
           <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-4">
             {needsRescheduling.length > 0 && (
@@ -1524,7 +1655,22 @@ export default function StagingArea({
             </div>
           </div>
         </div>
-      </div>
+  );
+
+  const timelineAndBacklog = (
+    <div className="flex flex-col lg:flex-row gap-4 w-full">
+      {backlogFirst ? (
+        <>
+          {backlogPanel}
+          {weekPanel}
+        </>
+      ) : (
+        <>
+          {weekPanel}
+          {backlogPanel}
+        </>
+      )}
+    </div>
   );
 
   return (

@@ -2,75 +2,37 @@ import { useState, useEffect } from 'react';
 import { useGarden } from '../../context/GardenContext';
 import MochiSpiritWithDialogue from '../Dashboard/MochiSpirit';
 
-const TOUR_STEPS = [
-  {
-    targetId: 'plant-seed-btn',
-    message: () => 'Here is where we begin. Plant your first seed to start your journey.',
-  },
-  {
-    targetId: 'mochi-chat-btn',
-    message: () => 'Click me anytime. I am here to brainstorm, listen, or just keep you company while you work.',
-  },
-  {
-    targetId: 'tour-compass',
-    message: (name) => `Welcome, ${name}. This is your Compass. It shows you the one thing that matters right now.`,
-  },
-  {
-    targetId: 'tour-goal-types',
-    message: () => 'Here’s how things grow: 🌱 Seeds are new goals you build step-by-step. 🪨 Rocks are recurring habits you want to maintain.',
-  },
-  {
-    targetId: 'tour-goal-types',
-    message: () => "🌻 Projects are massive undertakings. Use the Project Planner, and I will slice them into phases and deadlines for you.",
-  },
-  {
-    targetId: 'tour-goal-types',
-    message: () => "💧 Vitality goals are single numbers you track (like sleep, weight, or water). They pool into your Vitality Ponds below.",
-  },
-  {
-    targetId: 'tour-timeline',
-    message: () => 'This is your Day. We plan it together based on your energy, not just your to-do list. Switch to Week or Month view for the bigger picture.',
-  },
-  {
-    targetId: 'tour-battery',
-    message: () => 'These are your Spoons. This is your fuel. Never plan more than you have.',
-  },
-  {
-    targetId: 'tour-ponds',
-    message: () => 'These are your Vitality Ponds. Any Vitality goal you create (e.g. sleep, weight) appears here. Log numbers and watch your progress.',
-  },
-  {
-    targetId: 'tour-compost',
-    message: () => 'The Compost Heap. If you have a distraction, throw it here. Don\'t let it rot in your head.',
-  },
-  {
-    targetId: 'tour-garden-tab',
-    message: () => 'This is your Garden. Every goal you nurture — Seeds, Rocks, Projects — grows here. Projects look different (amber) and grow by completing milestones, not just time spent.',
-  },
-  {
-    targetId: 'tour-journal-tab',
-    message: () => 'Your Journal. After each session, you\'ll reflect here. Small notes become big insights over time.',
-  },
-  {
-    targetId: 'mochi-chat-btn',
-    message: () => 'And I am always here. Click me if you need advice, a plan, or just want to chat. When creating goals, try "Suggest based on Title" — Mochi can plan for you. Change the title and suggest again for a fresh plan!',
-  },
-  {
-    targetId: 'tour-timeline',
-    message: () => "Want to build habits faster? Use 'Habit Stacks' to link a new goal to an existing routine, like brushing your teeth!",
-  },
-  {
-    targetId: 'tour-horizons',
-    message: () => "When you create a big project, the AI calculates a 'Proficiency Arc'. Watch your rank level up from Beginner to Master as you log hours!",
-  },
-  {
-    targetId: 'tour-insights',
-    message: () => "At the end of the week, open Insights. Mochi will write a personalized, guilt-free story about your progress.",
-  },
+/** Short tour (first-run): 4 steps with stable targets. */
+export const SHORT_TOUR_STEPS = [
+  { targetId: 'tour-compass', message: (name) => `Welcome, ${name}. This is your Compass — the one thing that matters right now.` },
+  { targetId: 'tour-timeline', message: () => "This is your Day. Plan it here based on your energy. Tap a task to start a focus session." },
+  { targetId: 'plant-seed-btn', message: () => 'Plant a seed to add a new goal. Small steps grow here.' },
+  { targetId: 'mochi-chat-btn', message: () => "I'm Mochi — tap me anytime to brainstorm, plan, or just chat." },
 ];
 
-export default function SpiritGuideTour({ open = true, onComplete }) {
+/** Full tour (Replay from Settings): reduced to 8 steps with stable targets. */
+const FULL_TOUR_STEPS = [
+  { targetId: 'tour-compass', message: (name) => `Welcome, ${name}. This is your Compass. It shows the one thing that matters right now.` },
+  { targetId: 'tour-timeline', message: () => 'This is your Day. We plan it together based on your energy. Switch to Week or Month for the bigger picture.' },
+  { targetId: 'plant-seed-btn', message: () => 'Plant your first seed here to start your journey.' },
+  { targetId: 'tour-goal-types', message: () => "Here's how things grow: Seeds, Rocks (habits), Projects, and Vitality goals." },
+  { targetId: 'tour-battery', message: () => "These are your Spoons — your fuel. Don't plan more than you have." },
+  { targetId: 'tour-compost', message: () => "The Compost Heap. Throw distractions here so they don't rot in your head." },
+  { targetId: 'tour-garden-tab', message: () => 'Your Garden. Every goal you nurture grows here.' },
+  { targetId: 'mochi-chat-btn', message: () => "I'm always here. Click me for advice, a plan, or to chat. Try \"Suggest based on Title\" when creating goals!" },
+];
+
+function findNextVisibleStepIndex(steps, startIndex) {
+  for (let i = startIndex; i < steps.length; i++) {
+    const el = typeof document !== 'undefined' ? document.getElementById(steps[i].targetId) : null;
+    if (el) return i;
+  }
+  return -1;
+}
+
+export default function SpiritGuideTour({ open = true, onComplete, steps: stepsProp }) {
   const { userSettings, plantTutorialSeed } = useGarden();
+  const steps = Array.isArray(stepsProp) && stepsProp.length > 0 ? stepsProp : FULL_TOUR_STEPS;
   const [index, setIndex] = useState(0);
   const [rect, setRect] = useState(null);
   const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' ? window.innerWidth < 640 : false);
@@ -90,22 +52,21 @@ export default function SpiritGuideTour({ open = true, onComplete }) {
   useEffect(() => {
     if (!open) return;
 
-    const step = TOUR_STEPS[index];
+    const step = steps[index];
     if (!step) {
       onComplete?.();
       return;
     }
 
-    const el = document.getElementById(step.targetId);
+    const el = typeof document !== 'undefined' ? document.getElementById(step.targetId) : null;
     if (!el) {
-      // Target hidden or in another view: show tooltip at fallback position so user can still read and click Next
-      const fallback = {
-        top: typeof window !== 'undefined' ? window.innerHeight / 2 - 80 : 200,
-        left: typeof window !== 'undefined' ? window.innerWidth / 2 - 150 : 100,
-        width: 300,
-        height: 160,
-      };
-      setRect(fallback);
+      const nextIndex = findNextVisibleStepIndex(steps, index + 1);
+      if (nextIndex >= 0) {
+        setIndex(nextIndex);
+        setRect(null);
+      } else {
+        onComplete?.();
+      }
       return;
     }
     el.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -114,15 +75,15 @@ export default function SpiritGuideTour({ open = true, onComplete }) {
       setRect(r);
     }, 500);
     return () => clearTimeout(timer);
-  }, [index, open, onComplete]);
+  }, [index, open, onComplete, steps]);
 
   if (!open) return null;
 
-  const step = TOUR_STEPS[index];
+  const step = steps[index];
   if (!step || !rect) return null;
 
   const msg = typeof step.message === 'function' ? step.message(userSettings?.displayName || userSettings?.userName || 'Friend') : step.message;
-  const isLast = index >= TOUR_STEPS.length - 1;
+  const isLast = index >= steps.length - 1;
 
   const radius = Math.max(rect.width, rect.height) / 1.5;
   const mask = `radial-gradient(circle at ${rect.left + rect.width / 2}px ${rect.top + rect.height / 2}px, transparent ${radius}px, rgba(0,0,0,0.85) ${radius + 20}px)`;
@@ -132,8 +93,13 @@ export default function SpiritGuideTour({ open = true, onComplete }) {
       plantTutorialSeed?.();
       onComplete?.();
     } else {
-      setIndex((i) => i + 1);
-      setRect(null);
+      const nextIndex = findNextVisibleStepIndex(steps, index + 1);
+      if (nextIndex >= 0) {
+        setIndex(nextIndex);
+        setRect(null);
+      } else {
+        onComplete?.();
+      }
     }
   };
 
@@ -145,7 +111,6 @@ export default function SpiritGuideTour({ open = true, onComplete }) {
       aria-modal="true"
       aria-label="Spirit guide tour"
     >
-      {/* The Highlighter Box (Visual Only) */}
       <div
         className="absolute border-2 border-amber-400/50 rounded-xl shadow-[0_0_30px_rgba(251,191,36,0.4)] transition-all duration-500 pointer-events-none"
         style={{
@@ -155,8 +120,6 @@ export default function SpiritGuideTour({ open = true, onComplete }) {
           height: rect.height + 20,
         }}
       />
-
-      {/* The Spirit & Text */}
       <div
         className={`absolute flex flex-col items-center p-4 transition-all duration-500 ${
           isMobile ? 'bottom-0 left-0 right-0 pb-10 safe-area-pb' : 'max-w-xs'
@@ -173,21 +136,21 @@ export default function SpiritGuideTour({ open = true, onComplete }) {
         <div className="mb-[-20px] z-10 relative">
           <MochiSpiritWithDialogue message={null} showBubble={false} />
         </div>
-        <div className="relative bg-white p-6 pt-8 rounded-2xl shadow-2xl border-2 border-stone-100 z-0 w-full">
+        <div className="relative bg-white dark:bg-stone-800 p-6 pt-8 rounded-2xl shadow-2xl border-2 border-stone-100 dark:border-stone-600 z-0 w-full">
           <button
             type="button"
             onClick={() => onComplete?.()}
             aria-label="Close"
-            className="absolute top-3 right-3 w-8 h-8 flex items-center justify-center rounded-lg text-stone-400 hover:text-stone-600 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
+            className="absolute top-3 right-3 w-8 h-8 flex items-center justify-center rounded-lg text-stone-400 hover:text-stone-600 hover:bg-stone-100 dark:hover:bg-stone-700 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
           >
             ×
           </button>
           <p className="font-sans text-[10px] uppercase tracking-[0.2em] text-stone-400 mb-2 text-center">
             Garden tour
           </p>
-          <p className="font-serif text-lg text-moss-800 mb-1 text-center">{msg}</p>
+          <p className="font-serif text-lg text-moss-800 dark:text-moss-200 mb-1 text-center">{msg}</p>
           <p className="font-sans text-xs text-stone-400 mb-6 text-center">
-            You can replay this tour anytime from Settings → \"Replay tour\".
+            You can replay this tour anytime from Settings → &quot;Replay tour&quot;.
           </p>
           <div className="flex justify-between items-center">
             <button
@@ -202,7 +165,7 @@ export default function SpiritGuideTour({ open = true, onComplete }) {
               onClick={handleNext}
               className="px-6 py-2 bg-moss-600 text-white rounded-full font-bold shadow-md hover:bg-moss-700 focus:outline-none focus:ring-2 focus:ring-moss-500/50"
             >
-              {isLast ? 'Start Growing' : 'Next'}
+              {isLast ? 'Done' : 'Next'}
             </button>
           </div>
         </div>

@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useEnergy } from '../../context/EnergyContext';
+import { useReward } from '../../context/RewardContext';
 import GardenIntro from './GardenIntro';
 
 const WEATHER_CYCLE = ['storm', 'cloud', 'sun'];
@@ -47,26 +48,13 @@ function EventRow({ event, weather, onWeatherClick }) {
   );
 }
 
-function Toast({ message, visible }) {
-  if (!visible) return null;
-  return (
-    <div
-      className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-3 rounded-lg bg-stone-800 text-stone-50 font-sans text-sm shadow-lg transition-opacity duration-300"
-      role="status"
-      aria-live="polite"
-    >
-      {message}
-    </div>
-  );
-}
-
 const DEFAULT_WEEKLY_WEATHER = ['cloud', 'storm', 'sun', 'cloud', 'storm', 'sun', 'cloud'];
 
 function SundayRitual({ events = [], onCompleteRitual }) {
   const [showGardenIntro, setShowGardenIntro] = useState(true);
   const [overrides, setOverrides] = useState({});
-  const [toast, setToast] = useState(null);
   const { dailyEnergy } = useEnergy();
+  const { pushReward } = useReward();
 
   const weeklyWeather = events.length >= 7
     ? events.slice(0, 7).map((e) => e.defaultWeather ?? e.type ?? 'cloud')
@@ -99,15 +87,16 @@ function SundayRitual({ events = [], onCompleteRitual }) {
       onCompleteRitual(overrides);
     } else {
       const required = Math.max(0, totalSpoonCost);
-      setToast(`This week requires ${required} Spoons. You have ${weeklyAvailable} available.`);
+      if (typeof pushReward === 'function') {
+        pushReward({
+          message: `This week requires ${required} Spoons. You have ${weeklyAvailable} available.`,
+          tone: 'slate',
+          icon: '⚖️',
+          durationMs: 3500,
+        });
+      }
     }
   };
-
-  useEffect(() => {
-    if (toast == null) return;
-    const t = setTimeout(() => setToast(null), 3500);
-    return () => clearTimeout(t);
-  }, [toast]);
 
   return (
     <div className="min-h-screen bg-stone-100 py-8 px-4 flex items-start justify-center">
@@ -142,8 +131,6 @@ function SundayRitual({ events = [], onCompleteRitual }) {
           </button>
         </footer>
       </div>
-
-      <Toast message={toast} visible={!!toast} />
     </div>
   );
 }

@@ -5,9 +5,11 @@ import confetti from 'canvas-confetti';
 import { createGoogleEvent } from '../../services/googleCalendarService';
 import { downloadICS } from '../../services/calendarSyncService';
 import { suggestLoadLightening, generateDailyPlan, timeToMinutes, getSpoonCost, getGentlePriorities } from '../../services/schedulerService';
+import { toCanonicalSlotKey } from '../../services/schedulingConflictService';
 import { recommendDailyPriority } from '../../services/geminiService';
 import { useGarden } from '../../context/GardenContext';
 import { useReward } from '../../context/RewardContext';
+import { buildReward } from '../../services/dopamineEngine';
 import { localISODate } from '../../services/dateUtils';
 import { getSettings } from '../../services/userSettings';
 import { shouldReduceMotion } from '../../services/motion';
@@ -325,7 +327,7 @@ function TimeSlot({
         tabIndex={isEmpty && onEmptySlotClick ? 0 : undefined}
         onClick={isEmpty && onEmptySlotClick ? () => onEmptySlotClick(hour) : undefined}
         onKeyDown={isEmpty && onEmptySlotClick ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onEmptySlotClick(hour); } } : undefined}
-        className={`flex-1 min-h-[52px] rounded-lg flex flex-col ${isEmpty ? 'justify-center' : 'justify-start'} px-3 py-2 transition-colors relative overflow-hidden ${isEmpty ? slotBg : slotBgWhenFilled} ${
+        className={`flex-1 min-h-[52px] rounded-xl flex flex-col ${isEmpty ? 'justify-center' : 'justify-start'} px-3 py-2 transition-all relative overflow-hidden ${isEmpty ? slotBg : slotBgWhenFilled} ${!isEmpty ? 'hover:shadow-md' : ''} ${
           isOver && isEmpty ? 'ring-2 ring-moss-500/50 ring-offset-1' : ''
         } ${!isEmpty && isFullyHarvestedFirst && !routineFirst ? 'border-moss-600/60' : ''} ${isEmpty && onEmptySlotClick ? 'cursor-pointer hover:bg-stone-200/80 active:bg-stone-300/80' : ''} ${
           isFixedAndPriorityFirst ? 'ring-2 ring-amber-400/70 bg-amber-50/90 border-amber-300/80' : ''
@@ -334,7 +336,7 @@ function TimeSlot({
         {/* Blocked overlay: striped + stone texture when over capacity or empty at capacity */}
         {thisSlotOverLimit && (
             <div
-            className="absolute inset-0 rounded-lg pointer-events-none overflow-hidden"
+            className="absolute inset-0 rounded-xl pointer-events-none overflow-hidden"
             style={{
               backgroundColor: 'rgba(120, 113, 108, 0.75)',
               backgroundImage: 'repeating-linear-gradient(-45deg, transparent, transparent 6px, rgba(87, 83, 78, 0.4) 6px, rgba(87, 83, 78, 0.4) 12px)',
@@ -367,6 +369,7 @@ function TimeSlot({
             const slotHeightPx = Math.max(SLOT_BASE_HEIGHT_PX, Math.round((totalDuration / 60) * SLOT_BASE_HEIGHT_PX));
             return (
           <div className="flex flex-col gap-1 p-1 overflow-auto" style={{ minHeight: SLOT_BASE_HEIGHT_PX, height: slotHeightPx }}>
+            <AnimatePresence initial={false} mode="popLayout">
             {list.map((assignment, index) => {
               const goalId = getGoalIdFromAssignment(assignment);
               const slotRitualTitle = getRitualTitleFromAssignment(assignment);
@@ -393,9 +396,19 @@ function TimeSlot({
               const slotBgForChip = isRecovery ? 'bg-stone-100 border-stone-300 text-stone-600' : routineSession || isRoutineTemplate ? 'bg-slate-200 border-slate-300 text-stone-800' : isCriticalMass ? 'bg-orange-200 border-orange-300' : 'bg-moss-200 border-moss-500/50 text-stone-800';
               const firstUncompleted = goal?.milestones?.find((m) => !m.completed);
               const milestoneTitle = firstUncompleted?.title ?? firstUncompleted?.text;
+              const taskKey = assignment.id ?? `${hour}-${index}-${assignment.title ?? goal?.title ?? 'task'}`;
               return (
-                <div key={assignment.id ?? `${hour}-${index}`} className="flex items-start gap-2 min-w-0 flex-shrink-0" style={{ height: heightPx, minHeight: 12 }}>
-                  <div className={`flex-1 min-w-0 h-full rounded-lg overflow-hidden px-2 border ${slotBgForChip} ${isSlotCompleted ? 'opacity-90 border-stone-300' : ''} ${isMicroTask ? 'flex flex-row items-center py-1' : 'flex flex-col justify-center py-1.5'}`}>
+                <motion.div
+                  key={taskKey}
+                  layout
+                  initial={{ opacity: 0, scale: 0.8 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.8 }}
+                  transition={{ type: 'spring', stiffness: 300, damping: 25 }}
+                  className="flex items-start gap-2 min-w-0 flex-shrink-0"
+                  style={{ height: heightPx, minHeight: 12 }}
+                >
+                  <div className={`flex-1 min-w-0 h-full rounded-xl overflow-hidden px-2 border transition-shadow hover:shadow-md ${slotBgForChip} ${isSlotCompleted ? 'opacity-90 border-stone-300' : ''} ${isMicroTask ? 'flex flex-row items-center py-1' : 'flex flex-col justify-center py-1.5'}`}>
                     {routineSession ? (
                       isMicroTask ? (
                         <div className="flex items-center gap-1.5 min-w-0 w-full">
@@ -495,9 +508,10 @@ function TimeSlot({
                   {typeof onRemoveSlotItem === 'function' && (
                     <button type="button" onClick={() => onRemoveSlotItem(hour, index)} className="shrink-0 p-1.5 rounded text-stone-400 hover:text-stone-600 hover:bg-stone-200 focus:outline-none focus:ring-2 focus:ring-moss-500/50" aria-label={`Remove from ${hour}`}>×</button>
                   )}
-                </div>
+                </motion.div>
               );
             })}
+            </AnimatePresence>
           </div>
             );
           })() ) : (
@@ -1322,7 +1336,7 @@ function WeekView({ weekAssignments, goals, onDayClick, onPlanWeek, planningWeek
   );
 }
 
-function MonthPlanView({ weekAssignments, goals, onDayClick, monthlyRoadmap, onPlanMonth, planningMonth, calendarEvents = [] }) {
+function MonthPlanView({ weekAssignments, goals, onDayClick, monthlyRoadmap, onPlanMonth, planningMonth, calendarEvents = [], planMonthLabel = '✨ Plan My Month', planMonthBusyLabel = '✨ Mochi is looking at your calendar...' }) {
   const today = useMemo(() => new Date(), []);
   const year = today.getFullYear();
   const month = today.getMonth();
@@ -1369,7 +1383,7 @@ function MonthPlanView({ weekAssignments, goals, onDayClick, monthlyRoadmap, onP
             disabled={planningMonth}
             className="px-3 py-1.5 rounded-lg border border-moss-300 bg-moss-50 font-sans text-sm text-moss-800 hover:bg-moss-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40 disabled:opacity-60 transition-colors"
           >
-            {planningMonth ? '✨ Mochi is looking at your calendar...' : '✨ Plan My Month'}
+            {planningMonth ? planMonthBusyLabel : planMonthLabel}
           </button>
         )}
       </div>
@@ -1735,7 +1749,9 @@ function TimeSlicer({
     if (time === 'anytime') {
       next.anytime = [...(next.anytime || []), value];
     } else {
-      next[time] = [...getAssignmentsForHour(next, time), value];
+      const slotKey = toCanonicalSlotKey(time) ?? time;
+      next[slotKey] = [...getAssignmentsForHour(next, time), value];
+      if (slotKey !== time) delete next[time];
     }
     if (isControlled) safeOnAssignmentsChange(next);
     else setInternalAssignments(next);
@@ -1745,9 +1761,11 @@ function TimeSlicer({
     const list = getAssignmentsForHour(assignments, hour);
     if (index < 0 || index >= list.length) return;
     const next = { ...assignments };
+    const slotKey = toCanonicalSlotKey(hour) ?? hour;
     const newList = list.filter((_, i) => i !== index);
-    next[hour] = newList.length > 0 ? newList : [];
-    if (newList.length === 0) delete next[hour];
+    next[slotKey] = newList.length > 0 ? newList : [];
+    if (newList.length === 0) delete next[slotKey];
+    if (slotKey !== hour) delete next[hour];
     if (isControlled) safeOnAssignmentsChange(next);
     else setInternalAssignments(next);
   };
@@ -1759,7 +1777,7 @@ function TimeSlicer({
     else setInternalAssignments(next);
   }, [assignments, isControlled, safeOnAssignmentsChange]);
 
-  /** Complete an Anytime item: remove from list and show post-task vibe toast (Energized/Drained). */
+  /** Complete an Anytime item: remove from list, grant +1 Water, show post-task vibe toast (Energized/Drained). */
   const handleCompleteAnytimeWithVibe = useCallback((index) => {
     if (tourStep === 3 && typeof setTourStep === 'function') setTourStep(4);
     const list = assignments?.anytime ?? [];
@@ -1772,10 +1790,10 @@ function TimeSlicer({
     const goal = safeGoals?.find((g) => g.id === goalId);
     const taskTitle = goal?.title ?? (assignment && typeof assignment === 'object' && assignment.title) ?? 'Task';
     removeFromAnytime(index);
+    if (typeof garden?.addWater === 'function') garden.addWater(1);
+    const taskReward = buildReward({ type: 'TASK_COMPLETE', payload: { goalTitle: taskTitle } });
     pushReward({
-      message: 'Task completed ✨',
-      tone: 'moss',
-      icon: '✓',
+      ...(taskReward || { message: 'Task completed.', tone: 'moss', icon: '✓', durationMs: 4000, variableBonus: { waterDrops: 1 } }),
       durationMs: 4000,
       vibePayload: { goalId, taskTitle },
       onVibe: (vibe) => {
@@ -1783,7 +1801,7 @@ function TimeSlicer({
         addLog?.({ taskId: goalId, taskTitle, minutes: 0, date: new Date(), vibe, energyCost });
       },
     });
-  }, [assignments, safeGoals, removeFromAnytime, pushReward, addLog, tourStep, setTourStep]);
+  }, [assignments, safeGoals, removeFromAnytime, pushReward, addLog, tourStep, setTourStep, garden]);
 
   useEffect(() => {
     if (recentlyExportedSlot == null) return;
@@ -2864,19 +2882,27 @@ function TimeSlicer({
                     <div key={s.id}>
                       <h3 className={`font-sans text-xs font-medium ${s.badge} mb-2`}>{s.label}</h3>
                       <div className="flex flex-col gap-2">
-                        {s.items.map((goal) => (
-                          <button
-                            key={goal.id}
-                            type="button"
-                            onClick={() => handleSelectSeedForSlot(seedPickerTargetHour, goal)}
-                            className={`w-full py-3 px-4 rounded-xl border ${s.border} ${s.bg} font-sans text-sm text-stone-800 hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-moss-500/40 text-left transition-colors`}
-                          >
-                            <span className={`text-[10px] font-bold uppercase tracking-wider ${s.badge} block mb-0.5`}>
-                              {goal._projectGoal ? goal._projectName || 'Project' : goal.domain || goal.type || 'Kaizen'}
-                            </span>
-                            <span className="font-medium">{goal.title}</span>
-                          </button>
-                        ))}
+                        {s.items.map((goal) => {
+                          const parentGoal = goal.linkedToGoalId ? goals?.find((g) => g.id === goal.linkedToGoalId) : null;
+                          return (
+                            <button
+                              key={goal.id}
+                              type="button"
+                              onClick={() => handleSelectSeedForSlot(seedPickerTargetHour, goal)}
+                              className={`w-full py-3 px-4 rounded-xl border ${s.border} ${s.bg} font-sans text-sm text-stone-800 hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-moss-500/40 text-left transition-colors`}
+                            >
+                              <span className={`text-[10px] font-bold uppercase tracking-wider ${s.badge} block mb-0.5`}>
+                                {goal._projectGoal ? goal._projectName || 'Project' : goal.domain || goal.type || 'Kaizen'}
+                              </span>
+                              <span className="font-medium block">{goal.title}</span>
+                              {parentGoal && (
+                                <span className="text-xs text-stone-500 mt-0.5 block" title={`Supports: ${parentGoal.title}`}>
+                                  Supports {parentGoal.title}
+                                </span>
+                              )}
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
                   ));
@@ -3019,3 +3045,4 @@ export function triggerAutoPlan(goals, energyModifier, onAssignmentsChange, cale
 }
 
 export { HOURS, MAX_SLOTS_BY_WEATHER };
+export { MonthPlanView };

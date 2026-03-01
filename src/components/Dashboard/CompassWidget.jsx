@@ -6,7 +6,7 @@ import { getAssignmentsForHour } from './TimeSlicer';
 const HOUR_START = 6;
 const HOUR_END = 23;
 
-function getCurrentSlotKey(now) {
+export function getCurrentSlotKey(now) {
   if (!now || !(now instanceof Date)) return null;
   const h = now.getHours();
   if (h < HOUR_START || h > HOUR_END) return null;

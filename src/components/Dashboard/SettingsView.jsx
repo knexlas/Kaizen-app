@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useGarden } from '../../context/GardenContext';
 import { localISODate } from '../../services/dateUtils';
+import SpiritProgression from './SpiritProgression';
 import { testMochiConnection } from '../../services/geminiService';
 import { setTourSeen } from '../../services/onboardingStateService';
 
@@ -330,7 +331,10 @@ export default function SettingsView({ onReplayTour }) {
 
       <div className="rounded-xl border border-stone-200 bg-white p-6">
         <h3 className="font-sans text-sm font-medium text-stone-700 mb-2">Export Data</h3>
-        <p className="font-sans text-sm text-stone-500 mb-4">Download your garden data as a JSON file (backup or transfer).</p>
+        <p className="font-sans text-sm text-stone-500 mb-2">Download your garden data as a JSON file (backup or transfer).</p>
+        <div className="mb-4">
+          <SpiritProgression compact />
+        </div>
         <button
           type="button"
           onClick={handleExport}
