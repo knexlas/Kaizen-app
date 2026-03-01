@@ -962,6 +962,25 @@ function GardenDashboard({ initialTab, onConsumeInitialTab } = {}) {
     [goals, plannerPlanDayDateStr]
   );
 
+  /** Month-level backlog for Plan tab Month view: all tasks for current month, split by status. */
+  const currentMonthStr = useMemo(() => (today || '').slice(0, 7), [today]);
+  const plannerMonthBacklogTasks = useMemo(
+    () => buildBacklogTasks(goals ?? [], currentMonthStr),
+    [goals, currentMonthStr]
+  );
+  const effectiveStagingStatus = useCallback(
+    (task) => (stagingTaskStatus ?? {})[task.id] ?? task.defaultStatus ?? 'someday',
+    [stagingTaskStatus]
+  );
+  const unscheduledMonthTasks = useMemo(
+    () => plannerMonthBacklogTasks.filter((t) => effectiveStagingStatus(t) === 'unscheduled_month'),
+    [plannerMonthBacklogTasks, effectiveStagingStatus]
+  );
+  const vaultTasks = useMemo(
+    () => plannerMonthBacklogTasks.filter((t) => effectiveStagingStatus(t) === 'someday'),
+    [plannerMonthBacklogTasks, effectiveStagingStatus]
+  );
+
   /** Events in shape WeeklyMap expects (date field for normalizeEvents). */
   const planWeeklyPlanForMap = useMemo(
     () =>
@@ -2531,21 +2550,130 @@ function GardenDashboard({ initialTab, onConsumeInitialTab } = {}) {
               </div>
             )}
 
-            {/* Month lens: strategic month view + AI assist */}
+            {/* Month lens: Unscheduled This Month, Vault, Goal Progress, then calendar + AI assist */}
             {plannerViewMode === 'month' && (
-              <section className="mb-6 px-1" aria-label="Month at a glance">
-                <MonthPlanView
-                  weekAssignments={weekAssignments ?? {}}
-                  goals={goals ?? []}
-                  onDayClick={setPlannerPlanDayDateStr}
-                  monthlyRoadmap={monthlyRoadmap}
-                  onPlanMonth={handlePlanMonth}
-                  planningMonth={isGeneratingMonthPlan}
-                  calendarEvents={[]}
-                  planMonthLabel="Shape with Mochi"
-                  planMonthBusyLabel="… Shaping month"
-                />
-              </section>
+              <div className="space-y-6 px-1">
+                {/* Unscheduled This Month */}
+                <section className="rounded-xl border border-stone-200 dark:border-stone-600 bg-white dark:bg-slate-800/80 overflow-hidden" aria-label="Unscheduled this month">
+                  <div className="px-4 py-3 border-b border-stone-200 dark:border-stone-600">
+                    <h3 className="font-serif text-stone-800 dark:text-stone-200 text-base">Unscheduled this month</h3>
+                    <p className="font-sans text-xs text-stone-500 dark:text-stone-400 mt-0.5">Tasks you intend to do this month but haven&apos;t placed yet. Switch to Week to schedule a day.</p>
+                  </div>
+                  <div className="p-3 min-h-[60px]">
+                    {unscheduledMonthTasks.length === 0 ? (
+                      <p className="font-sans text-sm text-stone-400 dark:text-stone-500 py-2">Nothing here yet. Promote from Vault or add goals.</p>
+                    ) : (
+                      <ul className="space-y-2">
+                        {unscheduledMonthTasks.map((task) => (
+                          <li key={task.id} className="flex items-center justify-between gap-2 rounded-lg border border-stone-100 dark:border-stone-700 bg-stone-50/50 dark:bg-stone-800/50 px-3 py-2">
+                            <span className="font-sans text-sm text-stone-800 dark:text-stone-200 truncate">{task.title}</span>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => setStagingTaskStatus((prev) => ({ ...prev, [task.id]: 'someday' }))}
+                                className="px-2 py-1 rounded font-sans text-xs text-stone-500 hover:text-stone-700 dark:hover:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-700"
+                              >
+                                Back to Vault
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setPlannerViewMode('week')}
+                                className="px-3 py-1.5 rounded-lg font-sans text-xs font-medium bg-moss-600 text-white hover:bg-moss-700 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
+                              >
+                                Schedule
+                              </button>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </section>
+
+                {/* Someday / Vault */}
+                <section className="rounded-xl border border-stone-200 dark:border-stone-600 bg-stone-50/50 dark:bg-stone-800/50 overflow-hidden" aria-label="Someday vault">
+                  <div className="px-4 py-3 border-b border-stone-200 dark:border-stone-600">
+                    <h3 className="font-serif text-stone-800 dark:text-stone-200 text-base">Someday / Vault</h3>
+                    <p className="font-sans text-xs text-stone-500 dark:text-stone-400 mt-0.5">Ideas and tasks not yet committed to this month.</p>
+                  </div>
+                  <div className="p-3 min-h-[60px]">
+                    {vaultTasks.length === 0 ? (
+                      <p className="font-sans text-sm text-stone-400 dark:text-stone-500 py-2">Vault is empty. New subtasks and narrative tasks land here by default.</p>
+                    ) : (
+                      <ul className="space-y-2">
+                        {vaultTasks.map((task) => (
+                          <li key={task.id} className="flex items-center justify-between gap-2 rounded-lg border border-stone-100 dark:border-stone-700 bg-white dark:bg-stone-800/50 px-3 py-2">
+                            <span className="font-sans text-sm text-stone-800 dark:text-stone-200 truncate">{task.title}</span>
+                            <button
+                              type="button"
+                              onClick={() => setStagingTaskStatus((prev) => ({ ...prev, [task.id]: 'unscheduled_month' }))}
+                              className="px-3 py-1.5 rounded-lg font-sans text-xs font-medium border border-moss-400 dark:border-moss-500 text-moss-700 dark:text-moss-300 hover:bg-moss-50 dark:hover:bg-moss-900/30 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
+                            >
+                              Add to this month
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </section>
+
+                {/* Monthly Goal Progress — countdown (target) or countup (growth) */}
+                <section className="rounded-xl border border-stone-200 dark:border-stone-600 bg-white dark:bg-slate-800/80 overflow-hidden" aria-label="Monthly goal progress">
+                  <div className="px-4 py-3 border-b border-stone-200 dark:border-stone-600">
+                    <h3 className="font-serif text-stone-800 dark:text-stone-200 text-base">Goal progress this month</h3>
+                    <p className="font-sans text-xs text-stone-500 dark:text-stone-400 mt-0.5">Completed time from focus sessions and logged work.</p>
+                  </div>
+                  <div className="p-3">
+                    {(() => {
+                      const activeGoals = (goals ?? []).filter((g) => g.type !== 'routine' && !g.recurrence);
+                      if (activeGoals.length === 0) {
+                        return <p className="font-sans text-sm text-stone-400 dark:text-stone-500 py-2">No active goals yet. Add a goal to see progress here.</p>;
+                      }
+                      return (
+                        <ul className="space-y-3">
+                          {activeGoals.map((goal) => {
+                            const minutesLogged = getMinutesThisMonthForGoal(logs ?? [], goal.id);
+                            const hoursLogged = Math.round((minutesLogged / 60) * 10) / 10;
+                            const monthlyTarget = goal.monthlyTargetHours ?? (typeof goal.targetHours === 'number' ? goal.targetHours * 4 : null);
+                            const isCountdown = typeof monthlyTarget === 'number' && monthlyTarget > 0;
+                            return (
+                              <li key={goal.id} className="flex items-center justify-between gap-3 rounded-lg border border-stone-100 dark:border-stone-700 bg-stone-50/30 dark:bg-stone-800/30 px-3 py-2">
+                                <span className="font-sans text-sm font-medium text-stone-800 dark:text-stone-200 truncate">{goal.title}</span>
+                                {isCountdown ? (
+                                  <div className="shrink-0 text-right font-sans text-sm">
+                                    <span className="text-stone-700 dark:text-stone-300">{hoursLogged} / {monthlyTarget}h</span>
+                                    <span className="text-stone-500 dark:text-stone-400 ml-1.5">
+                                      {Math.max(0, Math.round((monthlyTarget - hoursLogged) * 10) / 10)}h remaining
+                                    </span>
+                                  </div>
+                                ) : (
+                                  <span className="shrink-0 font-sans text-sm text-stone-700 dark:text-stone-300">{hoursLogged}h this month</span>
+                                )}
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      );
+                    })()}
+                  </div>
+                </section>
+
+                {/* Calendar + Shape with Mochi */}
+                <section aria-label="Month at a glance">
+                  <MonthPlanView
+                    weekAssignments={weekAssignments ?? {}}
+                    goals={goals ?? []}
+                    onDayClick={setPlannerPlanDayDateStr}
+                    monthlyRoadmap={monthlyRoadmap}
+                    onPlanMonth={handlePlanMonth}
+                    planningMonth={isGeneratingMonthPlan}
+                    calendarEvents={[]}
+                    planMonthLabel="Shape with Mochi"
+                    planMonthBusyLabel="… Shaping month"
+                  />
+                </section>
+              </div>
             )}
 
             {/* Week lens: Today strip + Unscheduled + This week */}
