@@ -40,7 +40,9 @@ import MorningCheckIn from './MorningCheckIn';
 import EveningWindDown from './EveningWindDown';
 import FocusSession from '../Focus/FocusSession';
 import TeaCeremony from '../Focus/TeaCeremony';
-import GardenWalk from '../Garden/GardenWalk';
+import { lazy, Suspense } from 'react';
+import { AiThinkingCard } from './AiThinkingIndicator';
+const GardenWalk = lazy(() => import('../Garden/GardenWalk'));
 import JournalView from './JournalView';
 import AnalyticsView from './AnalyticsView';
 import SettingsView from './SettingsView';
@@ -2242,7 +2244,9 @@ function GardenDashboard({ initialTab, onConsumeInitialTab } = {}) {
               Mochi: {gardenCommentMessage}
             </div>
           )}
-          <GardenWalk goals={goals} onCompost={handleCompostGoal} onGoalClick={handleGardenGoalClick} onOpenGoalCreator={() => setIsPlanting(true)} onEditGoal={editGoal} />
+          <Suspense fallback={<AiThinkingCard message="Growing your garden…" />}>
+            <GardenWalk goals={goals} onCompost={handleCompostGoal} onGoalClick={handleGardenGoalClick} onOpenGoalCreator={() => setIsPlanting(true)} onEditGoal={editGoal} />
+          </Suspense>
         </div>
       ) : activeTab === 'settings' ? (
         <main className="flex-1 w-full min-w-0 px-3 sm:px-4 py-6 sm:py-8 max-w-2xl mx-auto relative pb-28 sm:pb-24 pt-14 safe-area-pb">

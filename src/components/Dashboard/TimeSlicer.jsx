@@ -14,6 +14,7 @@ import { localISODate } from '../../services/dateUtils';
 import { getSettings } from '../../services/userSettings';
 import { shouldReduceMotion } from '../../services/motion';
 import { DefaultSpiritSvg } from './MochiSpirit';
+import { AiButtonThinking, AiThinkingOverlay } from './AiThinkingIndicator';
 import WoodenSpoon from '../WoodenSpoon';
 import PrioritizeModal from './PrioritizeModal';
 
@@ -1249,7 +1250,7 @@ function WeekView({ weekAssignments, goals, onDayClick, onPlanWeek, planningWeek
               disabled={planningWeek}
               className="px-3 py-1.5 rounded-lg border border-moss-300 bg-moss-50 font-sans text-sm text-moss-800 hover:bg-moss-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40 disabled:opacity-60 transition-colors"
             >
-              {planningWeek ? 'Planning...' : '✨ Plan My Week'}
+              {planningWeek ? <AiButtonThinking label="Planning" /> : '✨ Plan My Week'}
             </button>
           )}
         </div>
@@ -1383,7 +1384,7 @@ function MonthPlanView({ weekAssignments, goals, onDayClick, monthlyRoadmap, onP
             disabled={planningMonth}
             className="px-3 py-1.5 rounded-lg border border-moss-300 bg-moss-50 font-sans text-sm text-moss-800 hover:bg-moss-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40 disabled:opacity-60 transition-colors"
           >
-            {planningMonth ? planMonthBusyLabel : planMonthLabel}
+            {planningMonth ? <AiButtonThinking label="Mochi is planning" /> : planMonthLabel}
           </button>
         )}
       </div>

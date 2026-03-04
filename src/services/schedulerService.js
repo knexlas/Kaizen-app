@@ -163,7 +163,7 @@ export function getDefaultWeekStart() {
 export function getStormImpactForDay(events, dayIndex, options = {}) {
   const weekStart = options.weekStartDate ?? getDefaultWeekStart();
   const stormBufferMinutes = Math.max(0, Number(options.stormBufferMinutes) || 0);
-  const costPerEvent = Math.max(0, Number(options.stormCapacityCostPerEvent) ?? 1);
+  const costPerEvent = Math.max(0, Number(options.stormCapacityCostPerEvent) || 1);
 
   let stormCount = 0;
   let totalStormMinutes = 0;

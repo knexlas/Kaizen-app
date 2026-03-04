@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useGarden } from '../../context/GardenContext';
 import { useReward } from '../../context/RewardContext';
 import { suggestGoalStructure } from '../../services/geminiService';
+import { AiButtonThinking } from '../Dashboard/AiThinkingIndicator';
 import InfoTooltip from '../InfoTooltip';
 
 /** Seed catalog for display in GoalCreator — must match SpiritShop SEED_ITEMS (id, model, name, icon). */
@@ -651,7 +652,7 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
                   disabled={isSuggesting}
                   className="px-4 py-2 rounded-xl font-sans text-sm font-medium bg-moss-100 text-moss-800 hover:bg-moss-200 border border-moss-300 focus:outline-none focus:ring-2 focus:ring-moss-500/40 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
-                  {isSuggesting ? '…' : '✨ Suggest based on Title'}
+                  {isSuggesting ? <AiButtonThinking label="Mochi is thinking" /> : '✨ Suggest based on Title'}
                 </button>
                 <span className="font-sans text-xs text-stone-400">Session length, steps, and more from Mochi.</span>
               </div>

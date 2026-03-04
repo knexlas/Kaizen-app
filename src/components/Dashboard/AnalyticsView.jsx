@@ -3,6 +3,7 @@ import { useGarden } from '../../context/GardenContext';
 import { localISODate, getWeekId } from '../../services/dateUtils';
 import { getUserInsight, saveUserInsight } from '../../firebase/services';
 import { generateSpiritInsight } from '../../services/geminiService';
+import { AiButtonThinking } from './AiThinkingIndicator';
 import { buildReflectionInsights } from '../../services/insightsReflectionService';
 
 const CARD_CLASS = 'rounded-2xl border border-stone-200/90 bg-white/90 dark:bg-stone-800/90 dark:border-stone-600/50 p-4 shadow-sm';
@@ -158,7 +159,7 @@ export default function AnalyticsView() {
               disabled={generating}
               className="mt-3 text-xs font-sans text-stone-500 hover:text-stone-700 dark:text-stone-400 dark:hover:text-stone-200 focus:outline-none focus:ring-2 focus:ring-moss-500/40 rounded px-2 py-1"
             >
-              {generating ? '…' : 'Regenerate'}
+              {generating ? <AiButtonThinking label="Thinking" /> : 'Regenerate'}
             </button>
           </>
         ) : (
@@ -178,7 +179,7 @@ export default function AnalyticsView() {
               disabled={generating}
               className="mt-3 px-3 py-1.5 rounded-lg font-sans text-sm font-medium bg-moss-100 dark:bg-moss-900/40 text-moss-800 dark:text-moss-200 hover:bg-moss-200 dark:hover:bg-moss-800/50 focus:outline-none focus:ring-2 focus:ring-moss-500/50 disabled:opacity-50"
             >
-              {generating ? '…' : 'Generate a snapshot with Mochi'}
+              {generating ? <AiButtonThinking label="Mochi is writing" /> : 'Generate a snapshot with Mochi'}
             </button>
           </>
         )}
