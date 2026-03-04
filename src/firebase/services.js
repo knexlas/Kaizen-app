@@ -1,5 +1,5 @@
 // Firebase Firestore services
-import { collection, addDoc, deleteDoc, doc, getDoc, onSnapshot, setDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, addDoc, deleteDoc, doc, getDoc, onSnapshot, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from './firebaseConfig';
 
 const GARDEN_DOC = 'data';
@@ -71,6 +71,18 @@ export async function deleteCompostItem(uid, id) {
   if (!uid || !id) return;
   const docRef = doc(db, 'users', uid, 'garden', GARDEN_DOC, COMPOST_COLLECTION, id);
   await deleteDoc(docRef);
+}
+
+/**
+ * Update a compost item (e.g. to link it to a goal).
+ * @param {string} uid - Firebase user id
+ * @param {string} id - Compost document id
+ * @param {Object} fields - Fields to update (e.g. { linkedGoalId, tags })
+ */
+export async function updateCompostItem(uid, id, fields) {
+  if (!uid || !id) return;
+  const docRef = doc(db, 'users', uid, 'garden', GARDEN_DOC, COMPOST_COLLECTION, id);
+  await updateDoc(docRef, fields);
 }
 
 /**

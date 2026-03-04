@@ -36,6 +36,7 @@ import { createIntervention, getCurrentIntervention, removeFromQueue, HELPER_INT
 import NextStepPrompt from './NextStepPrompt';
 import HabitStackHandoffPrompt from './HabitStackHandoffPrompt';
 import SpiritProgression from './SpiritProgression';
+import HabitInsight from './HabitInsight';
 import MorningCheckIn from './MorningCheckIn';
 import EveningWindDown from './EveningWindDown';
 import FocusSession from '../Focus/FocusSession';
@@ -363,6 +364,8 @@ function GardenDashboard({ initialTab, onConsumeInitialTab } = {}) {
   const [showAccessibilityModal, setShowAccessibilityModal] = useState(false);
   const [showMorningCheckInModal, setShowMorningCheckInModal] = useState(false);
   const [morningBriefing, setMorningBriefing] = useState([]);
+  const [statsExpanded, setStatsExpanded] = useState(false);
+  const [briefingExpanded, setBriefingExpanded] = useState(false);
   const [goalCreatorInitialTitle, setGoalCreatorInitialTitle] = useState('');
   const [goalCreatorInitialSubtasks, setGoalCreatorInitialSubtasks] = useState([]);
   const [goalCreatorInitialIsFixed, setGoalCreatorInitialIsFixed] = useState(undefined);
@@ -2244,6 +2247,9 @@ function GardenDashboard({ initialTab, onConsumeInitialTab } = {}) {
               Mochi: {gardenCommentMessage}
             </div>
           )}
+          <div className="absolute top-12 left-4 z-40">
+            <SpiritProgression className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm rounded-xl shadow-md px-3 py-2" />
+          </div>
           <Suspense fallback={<AiThinkingCard message="Growing your garden…" />}>
             <GardenWalk goals={goals} onCompost={handleCompostGoal} onGoalClick={handleGardenGoalClick} onOpenGoalCreator={() => setIsPlanting(true)} onEditGoal={editGoal} />
           </Suspense>
@@ -2267,13 +2273,13 @@ function GardenDashboard({ initialTab, onConsumeInitialTab } = {}) {
                 </TourHighlight>
               </div>
             ) : (
-              <div className="flex flex-col gap-6 h-full">
+              <div className="flex flex-col gap-4 h-full">
                 {/* Now tab: one primary recommendation surface (hero only). No NextTinyStep/CompassWidget at top; their logic feeds the hero. StartNowModal is invoked by the hero CTA, not a competing CTA. Timeline and briefing are supporting/secondary below. */}
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 flex-1 min-h-0">
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 flex-1 min-h-0">
                 {/* Primary: single "what should I do now?" — state line, one CTA, one fallback */}
-                <div className="lg:col-span-5 flex flex-col gap-6">
+                <div className="lg:col-span-5 flex flex-col gap-4">
                   {nowRecommendation && (
-                    <section aria-labelledby="now-primary-heading" className="w-full rounded-2xl border border-stone-200/80 bg-white/90 dark:bg-slate-800/90 dark:border-slate-600/50 shadow-lg p-5 flex flex-col gap-4">
+                    <section aria-labelledby="now-primary-heading" className="w-full rounded-2xl border border-stone-200/80 bg-white/90 dark:bg-slate-800/90 dark:border-slate-600/50 shadow-lg p-4 flex flex-col gap-3">
                       <h2 id="now-primary-heading" className="font-sans text-xs font-semibold uppercase tracking-wider text-stone-400 dark:text-stone-500">
                         What to do now
                       </h2>
@@ -2283,7 +2289,7 @@ function GardenDashboard({ initialTab, onConsumeInitialTab } = {}) {
                       <button
                         type="button"
                         onClick={nowRecommendation.recommendedPrimary?.onClick}
-                        className="w-full py-4 bg-gradient-to-r from-indigo-500 to-purple-500 hover:from-indigo-600 hover:to-purple-600 text-white text-lg font-bold rounded-2xl shadow-lg hover:shadow-xl transition-all flex justify-center items-center gap-2 focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:ring-offset-2 disabled:opacity-70"
+                        className="w-full py-3 bg-gradient-to-r from-indigo-500 to-purple-500 hover:from-indigo-600 hover:to-purple-600 text-white text-base font-bold rounded-2xl shadow-lg hover:shadow-xl transition-all flex justify-center items-center gap-2 focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:ring-offset-2 disabled:opacity-70"
                         aria-label={nowRecommendation.recommendedPrimary?.label}
                       >
                         <span aria-hidden>✨</span>
@@ -2300,7 +2306,7 @@ function GardenDashboard({ initialTab, onConsumeInitialTab } = {}) {
                       )}
                     </section>
                   )}
-                  {/* Spirit's Briefing — secondary, below primary recommendation */}
+                  {/* Spirit's Briefing — shows first item, expandable for rest */}
                   {morningBriefing.length > 0 && (
                     <div className={`rounded-xl border p-3 ${isDark ? 'border-slate-600/50 bg-slate-800/50' : 'border-stone-200 bg-stone-50/80'}`}>
                       <div className="flex items-center justify-between gap-2 mb-2">
@@ -2315,7 +2321,7 @@ function GardenDashboard({ initialTab, onConsumeInitialTab } = {}) {
                         </button>
                       </div>
                       <ul className="space-y-1.5">
-                        {morningBriefing.map((item, i) => (
+                        {(briefingExpanded ? morningBriefing : morningBriefing.slice(0, 1)).map((item, i) => (
                           <li key={i} className={`flex flex-wrap items-center gap-2 rounded-md px-2 py-1.5 ${isDark ? 'bg-slate-700/40' : 'bg-white/60'}`}>
                             <span className="font-sans text-sm text-stone-700 dark:text-stone-300 flex-1 min-w-0">{item.title}</span>
                             {item.category && (
@@ -2332,44 +2338,63 @@ function GardenDashboard({ initialTab, onConsumeInitialTab } = {}) {
                           </li>
                         ))}
                       </ul>
+                      {morningBriefing.length > 1 && !briefingExpanded && (
+                        <button
+                          type="button"
+                          onClick={() => setBriefingExpanded(true)}
+                          className="mt-2 font-sans text-xs text-indigo-600 dark:text-indigo-400 hover:underline focus:outline-none focus:ring-2 focus:ring-indigo-300 rounded"
+                        >
+                          Show {morningBriefing.length - 1} more
+                        </button>
+                      )}
                     </div>
                   )}
+                  <HabitInsight />
                 </div>
                 {/* Right: Supporting — full-day timeline (planning detail, not the primary recommendation) */}
                 <div className="lg:col-span-7 flex flex-col gap-2 min-h-0">
-                  <h2 className="font-sans text-sm font-medium text-stone-500 dark:text-stone-400 px-1">Your day</h2>
-                  <div className={`rounded-xl border px-2 py-2 text-sm ${isDark ? 'border-slate-600/50 bg-slate-800/30' : 'border-stone-200 bg-stone-50/80'}`}>
-                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                  <div className={`rounded-xl border px-3 py-2 text-sm ${isDark ? 'border-slate-600/50 bg-slate-800/30' : 'border-stone-200 bg-stone-50/80'}`}>
+                    <button
+                      type="button"
+                      onClick={() => setStatsExpanded(v => !v)}
+                      className="w-full flex items-center justify-between gap-2 focus:outline-none focus:ring-2 focus:ring-moss-500/40 rounded"
+                      aria-expanded={statsExpanded}
+                    >
                       <span className="font-sans text-stone-600 dark:text-stone-400">
-                        Today: {continuitySummary.todaySessions === 0 ? 'no focus yet' : `${continuitySummary.todaySessions} session${continuitySummary.todaySessions !== 1 ? 's' : ''}, ${continuitySummary.todayMinutes} min`}
+                        {continuitySummary.todaySessions === 0 ? 'No focus yet today' : `${continuitySummary.todaySessions} session${continuitySummary.todaySessions !== 1 ? 's' : ''} · ${continuitySummary.todayMinutes} min`}
                       </span>
-                      <span className="font-sans text-stone-500 dark:text-stone-500" aria-hidden>·</span>
-                      <span className="font-sans text-stone-600 dark:text-stone-400">
-                        This week: {continuitySummary.weekSessions === 0 ? 'no focus yet' : `${continuitySummary.weekSessions} session${continuitySummary.weekSessions !== 1 ? 's' : ''}, ${continuitySummary.weekMinutes} min`}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setShowInsightsModal(true)}
-                        className="font-sans text-moss-600 dark:text-moss-400 hover:underline focus:outline-none focus:ring-2 focus:ring-moss-500/40 rounded ml-auto"
-                      >
-                        See more
-                      </button>
-                    </div>
-                    <p className="font-sans text-xs text-stone-500 dark:text-stone-400 mt-1.5 px-0.5" aria-live="polite">
-                      {continuitySummary.weekTendingDays === 0
-                        ? 'Your rhythm builds when you show up — even for a few minutes.'
-                        : continuitySummary.weekTendingDays === 1
-                          ? 'You showed up one day this week. Small starts matter.'
-                          : `You've tended the garden ${continuitySummary.weekTendingDays} days this week.`}
-                    </p>
-                    {lastGardenImpact?.text && (
-                      <p className="font-sans text-xs text-moss-600 dark:text-moss-400 mt-1.5 px-0.5 flex items-center justify-between gap-2" aria-live="polite">
-                        <span>Garden: {lastGardenImpact.text}</span>
-                        <button type="button" onClick={clearLastGardenImpact} className="shrink-0 text-stone-400 hover:text-stone-600 dark:hover:text-stone-300 focus:outline-none focus:ring-2 focus:ring-moss-500/40 rounded px-1" aria-label="Dismiss">×</button>
-                      </p>
+                      <span className={`text-stone-400 text-xs transition-transform ${statsExpanded ? 'rotate-180' : ''}`} aria-hidden>▾</span>
+                    </button>
+                    {statsExpanded && (
+                      <div className="mt-2 pt-2 border-t border-stone-200/60 dark:border-slate-600/40 space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <span className="font-sans text-xs text-stone-500 dark:text-stone-400">
+                            This week: {continuitySummary.weekSessions === 0 ? 'no focus yet' : `${continuitySummary.weekSessions} session${continuitySummary.weekSessions !== 1 ? 's' : ''}, ${continuitySummary.weekMinutes} min`}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setShowInsightsModal(true)}
+                            className="font-sans text-xs text-moss-600 dark:text-moss-400 hover:underline focus:outline-none focus:ring-2 focus:ring-moss-500/40 rounded"
+                          >
+                            See more
+                          </button>
+                        </div>
+                        <p className="font-sans text-xs text-stone-500 dark:text-stone-400" aria-live="polite">
+                          {continuitySummary.weekTendingDays === 0
+                            ? 'Your rhythm builds when you show up — even for a few minutes.'
+                            : continuitySummary.weekTendingDays === 1
+                              ? 'You showed up one day this week. Small starts matter.'
+                              : `You've tended the garden ${continuitySummary.weekTendingDays} days this week.`}
+                        </p>
+                        {lastGardenImpact?.text && (
+                          <p className="font-sans text-xs text-moss-600 dark:text-moss-400 flex items-center justify-between gap-2" aria-live="polite">
+                            <span>Garden: {lastGardenImpact.text}</span>
+                            <button type="button" onClick={clearLastGardenImpact} className="shrink-0 text-stone-400 hover:text-stone-600 dark:hover:text-stone-300 focus:outline-none focus:ring-2 focus:ring-moss-500/40 rounded px-1" aria-label="Dismiss">×</button>
+                          </p>
+                        )}
+                      </div>
                     )}
                   </div>
-                  <SpiritProgression className="shrink-0" />
                   <TourHighlight step={3} tooltip="Click the checkbox to complete it and earn your first Ember.">
                     <div
                       id="tour-timeline"

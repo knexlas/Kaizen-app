@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../firebase/firebaseConfig';
-import { subscribeToCompost, addCompostItem, deleteCompostItem, subscribeToDailyPlan, saveDailyPlan, getDailyPlan, saveCheckInForDate, getCheckInsForLastDays } from '../firebase/services';
+import { subscribeToCompost, addCompostItem, deleteCompostItem, updateCompostItem, subscribeToDailyPlan, saveDailyPlan, getDailyPlan, saveCheckInForDate, getCheckInsForLastDays } from '../firebase/services';
 import { recordVibe } from '../services/energyDictionaryService';
 import { loginWithGoogle, logoutUser } from '../services/authService';
 import { loginWithMicrosoft, logoutMicrosoft, fetchOutlookEvents, getAccessTokenSilently } from '../services/microsoftCalendarService';
@@ -48,6 +48,11 @@ const defaultData = {
   decorations: [{ id: 'dec-default-campfire', name: 'Log Campfire', type: 'decoration', model: 'campfire_logs.glb', position3D: [-2, 0, -2] }],
   ownedSeeds: [], // seed ids from shop (e.g. 'seed_oak', 'seed_pine')
   terrainMap: {}, // grid coords as keys, e.g. { "2,-3": "water" }
+  streakDays: 0, // consecutive tending days
+  longestStreak: 0,
+  lastStreakDate: null, // ISO date string of last streak extension
+  trophyPlants: [], // completed goals memorialized: { goalId, title, harvestedAt, totalMinutes }
+  creatureBonds: {}, // { creatureId: { bondLevel: 0-5, fedCount: 0 } }
   unlockedAnimals: [], // e.g. ['rabbit', 'fish'] — animals bought from shop
   metrics: [], // { id, name } — available metrics for vitality tracking
   fertilizerCount: 0, // +1 when adding to compost or deleting from compost (visual recycling)
@@ -149,6 +154,11 @@ export function GardenProvider({ children }) {
   const [eveningMode, setEveningMode] = useState('none'); // 'none' | 'sleep' | 'night-owl'
   const [spiritPoints, setSpiritPoints] = useState(defaultData.spiritPoints);
   const [embers, setEmbers] = useState(defaultData.embers ?? 100);
+  const [streakDays, setStreakDays] = useState(defaultData.streakDays);
+  const [longestStreak, setLongestStreak] = useState(defaultData.longestStreak);
+  const [lastStreakDate, setLastStreakDate] = useState(defaultData.lastStreakDate);
+  const [trophyPlants, setTrophyPlants] = useState(defaultData.trophyPlants);
+  const [creatureBonds, setCreatureBonds] = useState(defaultData.creatureBonds);
   const [decorations, setDecorations] = useState(defaultData.decorations);
   const [ownedSeeds, setOwnedSeeds] = useState(defaultData.ownedSeeds ?? []);
   const [terrainMap, setTerrainMap] = useState(defaultData.terrainMap);
@@ -246,6 +256,11 @@ export function GardenProvider({ children }) {
         if (Array.isArray(data.compost)) setCompost(data.compost);
         if (typeof data.spiritPoints === 'number') setSpiritPoints(data.spiritPoints);
         if (typeof data.embers === 'number') setEmbers(data.embers);
+        if (typeof data.streakDays === 'number') setStreakDays(data.streakDays);
+        if (typeof data.longestStreak === 'number') setLongestStreak(data.longestStreak);
+        if (data.lastStreakDate) setLastStreakDate(data.lastStreakDate);
+        if (Array.isArray(data.trophyPlants)) setTrophyPlants(data.trophyPlants);
+        if (data.creatureBonds && typeof data.creatureBonds === 'object') setCreatureBonds(data.creatureBonds);
         if (Array.isArray(data.decorations)) setDecorations(data.decorations);
         if (Array.isArray(data.ownedSeeds)) setOwnedSeeds(data.ownedSeeds);
         if (data.terrainMap && typeof data.terrainMap === 'object') setTerrainMap(data.terrainMap);
@@ -287,6 +302,11 @@ export function GardenProvider({ children }) {
           if (typeof data.soilNutrients === 'number') setSoilNutrients(Math.min(20, Math.max(0, data.soilNutrients)));
           if (typeof data.spiritPoints === 'number') setSpiritPoints(data.spiritPoints);
           if (typeof data.embers === 'number') setEmbers(data.embers);
+          if (typeof data.streakDays === 'number') setStreakDays(data.streakDays);
+          if (typeof data.longestStreak === 'number') setLongestStreak(data.longestStreak);
+          if (data.lastStreakDate) setLastStreakDate(data.lastStreakDate);
+          if (Array.isArray(data.trophyPlants)) setTrophyPlants(data.trophyPlants);
+          if (data.creatureBonds && typeof data.creatureBonds === 'object') setCreatureBonds(data.creatureBonds);
           if (Array.isArray(data.decorations)) setDecorations(data.decorations);
           if (Array.isArray(data.ownedSeeds)) setOwnedSeeds(data.ownedSeeds);
           if (data.terrainMap && typeof data.terrainMap === 'object') setTerrainMap(data.terrainMap);
@@ -518,7 +538,7 @@ export function GardenProvider({ children }) {
   }, []);
 
   const addToCompost = useCallback(
-    async (text) => {
+    async (text, { linkedGoalId = null, tags = [] } = {}) => {
       const trimmed = (text || '').trim();
       if (!trimmed) return;
       const uid = googleUser?.uid;
@@ -538,6 +558,8 @@ export function GardenProvider({ children }) {
             id: crypto.randomUUID?.() ?? `compost-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
             text: trimmed,
             createdAt: new Date().toISOString(),
+            ...(linkedGoalId ? { linkedGoalId } : {}),
+            ...(tags.length > 0 ? { tags } : {}),
           };
           setCompost((prev) => [item, ...prev]);
           incrementNutrients();
@@ -548,6 +570,8 @@ export function GardenProvider({ children }) {
           id: crypto.randomUUID?.() ?? `compost-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
           text: trimmed,
           createdAt: new Date().toISOString(),
+          ...(linkedGoalId ? { linkedGoalId } : {}),
+          ...(tags.length > 0 ? { tags } : {}),
         };
         setCompost((prev) => [item, ...prev]);
         incrementNutrients();
@@ -574,6 +598,25 @@ export function GardenProvider({ children }) {
     [googleUser?.uid]
   );
 
+  const linkCompostToGoal = useCallback(
+    async (compostId, goalId) => {
+      const uid = googleUser?.uid;
+      if (uid) {
+        try {
+          await updateCompostItem(uid, compostId, { linkedGoalId: goalId || null });
+        } catch (e) {
+          console.warn('linkCompostToGoal firebase failed, updating local', e);
+        }
+      }
+      setCompost((prev) =>
+        prev.map((item) =>
+          item.id === compostId ? { ...item, linkedGoalId: goalId || null } : item
+        )
+      );
+    },
+    [googleUser?.uid]
+  );
+
   const addSmallJoy = useCallback((joy) => {
     const trimmed = typeof joy === 'string' ? joy.trim() : '';
     if (!trimmed) return;
@@ -592,12 +635,12 @@ export function GardenProvider({ children }) {
   useEffect(() => {
     if (!hydrated) return;
     try {
-      const data = { goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, weeklyNorthStarId, logs, spiritConfig, compost, soilNutrients, spiritPoints, embers, decorations, ownedSeeds, terrainMap, unlockedAnimals, metrics, fertilizerCount, waterDrops, monthlyQuotas, pausedDays, needsRescheduling, routines };
+      const data = { goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, weeklyNorthStarId, logs, spiritConfig, compost, soilNutrients, spiritPoints, embers, streakDays, longestStreak, lastStreakDate, trophyPlants, creatureBonds, decorations, ownedSeeds, terrainMap, unlockedAnimals, metrics, fertilizerCount, waterDrops, monthlyQuotas, pausedDays, needsRescheduling, routines };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     } catch (e) {
       console.warn('GardenContext: failed to save gardenData', e);
     }
-  }, [hydrated, goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, weeklyNorthStarId, logs, spiritConfig, compost, soilNutrients, spiritPoints, embers, decorations, ownedSeeds, terrainMap, unlockedAnimals, metrics, fertilizerCount, waterDrops, monthlyQuotas, pausedDays, needsRescheduling, routines]);
+  }, [hydrated, goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, weeklyNorthStarId, logs, spiritConfig, compost, soilNutrients, spiritPoints, embers, streakDays, longestStreak, lastStreakDate, trophyPlants, creatureBonds, decorations, ownedSeeds, terrainMap, unlockedAnimals, metrics, fertilizerCount, waterDrops, monthlyQuotas, pausedDays, needsRescheduling, routines]);
 
   // Debounced save to Firestore when goals, logs, weeklyEvents change (and user is logged in)
   useEffect(() => {
@@ -627,6 +670,11 @@ export function GardenProvider({ children }) {
           soilNutrients: soilNutrients ?? 0,
           spiritPoints: spiritPoints ?? 0,
           embers: embers ?? 100,
+          streakDays: streakDays ?? 0,
+          longestStreak: longestStreak ?? 0,
+          lastStreakDate: lastStreakDate ?? null,
+          trophyPlants: Array.isArray(trophyPlants) ? trophyPlants : [],
+          creatureBonds: creatureBonds && typeof creatureBonds === 'object' ? creatureBonds : {},
           decorations: decorations ?? [],
           ownedSeeds: Array.isArray(ownedSeeds) ? ownedSeeds : [],
           terrainMap: terrainMap && typeof terrainMap === 'object' ? terrainMap : {},
@@ -659,7 +707,7 @@ export function GardenProvider({ children }) {
         savedIdleTimeoutRef.current = null;
       }
     };
-  }, [hydrated, googleUser?.uid, goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, weeklyNorthStarId, logs, spiritConfig, compost, soilNutrients, spiritPoints, embers, decorations, ownedSeeds, terrainMap, unlockedAnimals, metrics, fertilizerCount, waterDrops, monthlyQuotas, pausedDays, needsRescheduling, routines]);
+  }, [hydrated, googleUser?.uid, goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, weeklyNorthStarId, logs, spiritConfig, compost, soilNutrients, spiritPoints, embers, streakDays, longestStreak, lastStreakDate, trophyPlants, creatureBonds, decorations, ownedSeeds, terrainMap, unlockedAnimals, metrics, fertilizerCount, waterDrops, monthlyQuotas, pausedDays, needsRescheduling, routines]);
 
   const addLog = useCallback((log) => {
     const mins = Number(log?.minutes) || 0;
@@ -724,6 +772,55 @@ export function GardenProvider({ children }) {
   const earnEmbers = useCallback((amount) => {
     const n = Number(amount) || 0;
     if (n > 0) setEmbers((p) => p + n);
+  }, []);
+
+  /** Update streak when user completes a meaningful action today. */
+  const extendStreak = useCallback(() => {
+    const todayStr = localISODate();
+    setLastStreakDate((prevDate) => {
+      if (prevDate === todayStr) return prevDate; // already extended today
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      const yesterdayStr = localISODate(yesterday);
+      if (prevDate === yesterdayStr) {
+        // consecutive day
+        setStreakDays((prev) => {
+          const next = prev + 1;
+          setLongestStreak((longest) => Math.max(longest, next));
+          return next;
+        });
+      } else {
+        // streak broken or first day, restart
+        setStreakDays(1);
+        setLongestStreak((longest) => Math.max(longest, 1));
+      }
+      return todayStr;
+    });
+  }, []);
+
+  /** Add a trophy plant when a goal is harvested. */
+  const addTrophyPlant = useCallback((goal) => {
+    if (!goal?.id) return;
+    setTrophyPlants((prev) => {
+      if (prev.some((t) => t.goalId === goal.id)) return prev;
+      return [...prev, {
+        goalId: goal.id,
+        title: goal.title || 'Completed Goal',
+        harvestedAt: new Date().toISOString(),
+        totalMinutes: goal.totalMinutes || 0,
+      }];
+    });
+  }, []);
+
+  /** Feed a creature to increase bond level. Every 3 feedings = +1 bond, max 5. */
+  const feedCreature = useCallback((creatureId) => {
+    if (!creatureId) return;
+    setCreatureBonds((prev) => {
+      const current = prev[creatureId] || { bondLevel: 0, fedCount: 0 };
+      const fedCount = current.fedCount + 1;
+      const bondLevel = Math.min(5, Math.floor(fedCount / 3));
+      return { ...prev, [creatureId]: { bondLevel, fedCount } };
+    });
   }, []);
 
   /** Unlock an animal (e.g. after buying from shop). */
@@ -1645,6 +1742,7 @@ export function GardenProvider({ children }) {
     compost,
     addToCompost,
     removeFromCompost,
+    linkCompostToGoal,
     smallJoys,
     addSmallJoy,
     soilNutrients,
@@ -1703,6 +1801,14 @@ export function GardenProvider({ children }) {
     addUnlockedAnimal,
     spendEmbers,
     earnEmbers,
+    streakDays,
+    longestStreak,
+    lastStreakDate,
+    extendStreak,
+    trophyPlants,
+    addTrophyPlant,
+    creatureBonds,
+    feedCreature,
     buyItem,
     decorationCosts: { lantern: 15, bench: 25, pond: 40, path: 10, bush: 20 },
     metrics,

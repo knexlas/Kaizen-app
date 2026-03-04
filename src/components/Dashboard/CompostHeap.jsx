@@ -36,9 +36,11 @@ import { breakDownTask, processIncomingCompost, planProjectFromDocument } from '
 const MOBILE_BREAKPOINT = 640;
 
 export default function CompostHeap({ open, onClose, onPlant, onPrism }) {
-  const { compost = [], addToCompost, removeFromCompost, goals = [], addSubtask, addGoal } = useGarden();
+  const { compost = [], addToCompost, removeFromCompost, linkCompostToGoal, goals = [], addSubtask, addGoal } = useGarden();
   const { pushReward } = useReward();
   const [quickCapture, setQuickCapture] = useState('');
+  const [quickLinkGoalId, setQuickLinkGoalId] = useState(null);
+  const [linkingItemId, setLinkingItemId] = useState(null);
   const [prismLoadingId, setPrismLoadingId] = useState(null);
   const [scanning, setScanning] = useState(false);
   const [documentLoading, setDocumentLoading] = useState(false);
@@ -67,11 +69,12 @@ export default function CompostHeap({ open, onClose, onPlant, onPrism }) {
     e.preventDefault();
     const text = quickCapture.trim();
     if (!text || !addToCompost) return;
-    addToCompost(text).then(() => {
+    addToCompost(text, quickLinkGoalId ? { linkedGoalId: quickLinkGoalId } : undefined).then(() => {
       const reward = buildReward({ type: 'COMPOST_ADDED', payload: { textLength: text.length } });
       if (reward) pushReward(reward);
     });
     setQuickCapture('');
+    setQuickLinkGoalId(null);
   };
 
   const readFileAsBase64 = (file) => {
@@ -448,6 +451,23 @@ export default function CompostHeap({ open, onClose, onPlant, onPrism }) {
             </p>
           </form>
 
+          {/* Quick-link: optional goal selector for new items */}
+          {goals.length > 0 && quickCapture.trim() && (
+            <div className="flex flex-wrap gap-1.5 px-4 py-2">
+              <span className="font-sans text-xs text-stone-400 self-center">Link to:</span>
+              {goals.slice(0, 6).map((g) => (
+                <button
+                  key={g.id}
+                  type="button"
+                  onClick={() => setQuickLinkGoalId(prev => prev === g.id ? null : g.id)}
+                  className={`px-2 py-0.5 rounded-full font-sans text-xs border transition-colors ${quickLinkGoalId === g.id ? 'bg-moss-100 border-moss-400 text-moss-800 dark:bg-moss-900/40 dark:border-moss-500 dark:text-moss-300' : 'border-stone-200 text-stone-500 hover:border-stone-400 dark:border-slate-600 dark:text-stone-400'}`}
+                >
+                  {g.title?.slice(0, 20)}{g.title?.length > 20 ? '\u2026' : ''}
+                </button>
+              ))}
+            </div>
+          )}
+
           {/* List: organic pile (paper scraps / leaves) */}
           <div className="flex-1 overflow-y-auto p-4">
             {compost.length === 0 ? (
@@ -465,7 +485,13 @@ export default function CompostHeap({ open, onClose, onPlant, onPrism }) {
                   </p>
                 </div>
                 <ul className="space-y-3">
-                  {compost.map((item, index) => (
+                  {/* Sort: linked items grouped by goal first, then unlinked */}
+                  {[...compost].sort((a, b) => {
+                    if (a.linkedGoalId && !b.linkedGoalId) return -1;
+                    if (!a.linkedGoalId && b.linkedGoalId) return 1;
+                    if (a.linkedGoalId && b.linkedGoalId) return (a.linkedGoalId || '').localeCompare(b.linkedGoalId || '');
+                    return 0;
+                  }).map((item, index) => (
                     <motion.li
                       key={item.id}
                       initial={{ opacity: 0, y: 8 }}
@@ -479,7 +505,12 @@ export default function CompostHeap({ open, onClose, onPlant, onPrism }) {
                           transform: `rotate(${(index % 3 - 1) * 0.5}deg)`,
                         }}
                       >
-                        <p className="font-sans text-sm text-stone-800 pr-20 break-words">{item.text}</p>
+                        <p className="font-sans text-sm text-stone-800 dark:text-stone-200 pr-20 break-words">{item.text}</p>
+                        {item.linkedGoalId && (
+                          <span className="inline-flex items-center gap-1 mt-1 px-2 py-0.5 rounded-full bg-moss-50 dark:bg-moss-900/30 border border-moss-200 dark:border-moss-700 font-sans text-xs text-moss-700 dark:text-moss-400">
+                            {goals.find(g => g.id === item.linkedGoalId)?.title?.slice(0, 25) || 'Linked goal'}
+                          </span>
+                        )}
                         <div className="flex items-center gap-2 mt-2 flex-wrap">
                           {onPrism && (
                             <button
@@ -506,6 +537,42 @@ export default function CompostHeap({ open, onClose, onPlant, onPrism }) {
                             >
                               Plant
                             </button>
+                          )}
+                          {linkCompostToGoal && (
+                            <div className="relative">
+                              <button
+                                type="button"
+                                onClick={() => setLinkingItemId(prev => prev === item.id ? null : item.id)}
+                                className={`px-2.5 py-1 rounded-md font-sans text-xs font-medium ${item.linkedGoalId ? 'bg-moss-100 text-moss-800 hover:bg-moss-200' : 'bg-stone-100 text-stone-600 hover:bg-stone-200'} focus:outline-none focus:ring-2 focus:ring-moss-500/40 flex items-center gap-1`}
+                                title={item.linkedGoalId ? 'Change linked goal' : 'Link to a goal'}
+                              >
+                                <span aria-hidden>{'\uD83D\uDD17'}</span>
+                                {item.linkedGoalId ? goals.find(g => g.id === item.linkedGoalId)?.title?.slice(0, 12) || 'Linked' : 'Link'}
+                              </button>
+                              {linkingItemId === item.id && (
+                                <div className="absolute top-full left-0 mt-1 z-20 bg-white dark:bg-slate-800 border border-stone-200 dark:border-slate-600 rounded-lg shadow-lg p-2 min-w-[180px]">
+                                  {item.linkedGoalId && (
+                                    <button
+                                      type="button"
+                                      onClick={() => { linkCompostToGoal(item.id, null); setLinkingItemId(null); }}
+                                      className="w-full text-left px-2 py-1.5 rounded font-sans text-xs text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20"
+                                    >
+                                      {'\u2715'} Remove link
+                                    </button>
+                                  )}
+                                  {goals.map((g) => (
+                                    <button
+                                      key={g.id}
+                                      type="button"
+                                      onClick={() => { linkCompostToGoal(item.id, g.id); setLinkingItemId(null); }}
+                                      className={`w-full text-left px-2 py-1.5 rounded font-sans text-xs hover:bg-stone-100 dark:hover:bg-slate-700 ${item.linkedGoalId === g.id ? 'text-moss-700 font-medium' : 'text-stone-700 dark:text-stone-300'}`}
+                                    >
+                                      {g.title?.slice(0, 30)}
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
                           )}
                           <button
                             type="button"

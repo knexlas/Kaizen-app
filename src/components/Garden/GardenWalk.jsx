@@ -6,6 +6,8 @@ import { getGoalSupportDomain, SUPPORT_DOMAINS } from '../../services/domainSupp
 import SpiritShop from './SpiritShop';
 import Garden3D from './Garden3D';
 import VirtualJoystick from './VirtualJoystick';
+import QuestBoard from './QuestBoard';
+import CreatureBond from './CreatureBond';
 import JournalView from '../Dashboard/JournalView';
 import AnalyticsView from '../Dashboard/AnalyticsView';
 
@@ -120,6 +122,13 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
     isArchitectMode,
     setIsArchitectMode,
     setSelectedObjectId,
+    streakDays = 0,
+    earnEmbers,
+    creatureBonds = {},
+    feedCreature,
+    lastCheckInDate,
+    compost = [],
+    today: planDate,
   } = useGarden();
   const { dailyEnergy } = useEnergy();
   const spoons = typeof dailySpoonCount === 'number' ? dailySpoonCount : dailyEnergy;
@@ -148,6 +157,29 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
   const [showPlantingModal, setShowPlantingModal] = useState(false);
   const [isTransplanting, setIsTransplanting] = useState(false);
   const [toolboxFaded, setToolboxFaded] = useState(false);
+  const [viewingCreature, setViewingCreature] = useState(null);
+
+  /** Garden state snapshot for QuestBoard quest completion checks. */
+  const gardenState = useMemo(() => {
+    const todayStr = planDate || new Date().toISOString().slice(0, 10);
+    const todayLogs = logs.filter((l) => l.date && l.date.startsWith(todayStr));
+    return {
+      wateredToday: allGoals.some((g) => g.lastWatered && g.lastWatered.startsWith(todayStr)),
+      focusedToday: todayLogs.some((l) => (Number(l.minutes) || 0) > 0),
+      compostedToday: compost.some((c) => c.createdAt && c.createdAt.startsWith(todayStr)),
+      energyChecked: !!lastCheckInDate && lastCheckInDate === todayStr,
+      subtaskCompleted: todayLogs.length > 0,
+      streakActive: streakDays >= 1,
+      plannedTomorrow: false, // simplified — could check weekAssignments
+    };
+  }, [allGoals, logs, compost, lastCheckInDate, planDate, streakDays]);
+
+  const handleClaimQuestReward = useCallback((embers, label) => {
+    earnEmbers?.(embers);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('kaizen:toast', { detail: { message: `${label}: +${embers} 🔥` } }));
+    }
+  }, [earnEmbers]);
 
   const onToolUsed = useCallback(() => setToolboxFaded(true), []);
 
@@ -326,6 +358,26 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
               <span aria-hidden>📖</span>
               Almanac
             </button>
+            {/* Streak badge */}
+            {streakDays > 0 && (
+              <div
+                className={`absolute top-4 left-32 z-50 px-3 py-2 rounded-xl bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm shadow-md border border-stone-200/60 dark:border-slate-600/40 pointer-events-auto flex items-center gap-1.5 ${
+                  [3, 7, 14, 30].includes(streakDays) ? 'animate-pulse' : ''
+                }`}
+                title={`${streakDays}-day streak (best: ${Math.max(streakDays)})`}
+              >
+                <span className="text-sm" aria-hidden>🔥</span>
+                <span className="font-sans text-xs font-bold text-amber-700 dark:text-amber-400">{streakDays}</span>
+              </div>
+            )}
+            {/* Quest Board — bottom left */}
+            <div className="absolute bottom-4 left-4 z-50">
+              <QuestBoard
+                dateStr={planDate || new Date().toISOString().slice(0, 10)}
+                gardenState={gardenState}
+                onClaimReward={handleClaimQuestReward}
+              />
+            </div>
             <button
               type="button"
               onClick={() => {
@@ -349,6 +401,24 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
                 Tap an object to select, then tap the ground to move it.
               </div>
             )}
+            {/* Creature bond card — when user taps a creature */}
+            <AnimatePresence>
+              {viewingCreature && (
+                <div className="fixed bottom-24 right-4 z-50">
+                  <CreatureBond
+                    creatureId={viewingCreature}
+                    bond={creatureBonds[viewingCreature] || {}}
+                    onFeed={(id) => {
+                      feedCreature?.(id);
+                      if (typeof window !== 'undefined') {
+                        window.dispatchEvent(new CustomEvent('kaizen:toast', { detail: { message: `Fed the ${viewingCreature}! 🌾` } }));
+                      }
+                    }}
+                    onClose={() => setViewingCreature(null)}
+                  />
+                </div>
+              )}
+            </AnimatePresence>
             {/* Goal viewer panel — when user clicks a 3D plant */}
             <AnimatePresence>
               {viewingGoal && (

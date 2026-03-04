@@ -1737,3 +1737,45 @@ export async function testMochiConnection() {
     return { ok: false, message: `Mochi couldn't connect: ${err?.message || 'Unknown error'}. Check API key or try again later.` };
   }
 }
+
+/**
+ * Suggest which goal a compost item might relate to.
+ * @param {string} text - The compost item text
+ * @param {Array<{id: string, title: string}>} goals - Current goals
+ * @returns {Promise<{goalId: string, confidence: number} | null>}
+ */
+export async function suggestCompostLink(text, goals) {
+  if (!text || !goals?.length) return null;
+  const apiKey = getApiKey();
+  if (!apiKey) return null;
+
+  try {
+    const { GoogleGenerativeAI } = await import('@google/generative-ai');
+    const genAI = new GoogleGenerativeAI(apiKey);
+
+    const goalList = goals.map((g) => `- "${g.title}" (id: ${g.id})`).join('\n');
+    const prompt = `Given this idea/thought: "${text.replace(/"/g, '\\"')}"
+
+Which of these goals is it most related to?
+${goalList}
+
+Respond with ONLY a JSON object: {"goalId": "the_id", "confidence": 0.0-1.0}
+If none are relevant (confidence below 0.3), respond with: null`;
+
+    const result = await tryGenerate(genAI, prompt);
+    const responseText = result?.response?.text?.();
+    if (typeof responseText !== 'string') return null;
+
+    const trimmed = sanitizeJsonResponse(responseText);
+    if (trimmed === 'null' || !trimmed) return null;
+
+    const parsed = JSON.parse(trimmed);
+    if (parsed?.goalId && typeof parsed.confidence === 'number' && parsed.confidence >= 0.3) {
+      return parsed;
+    }
+    return null;
+  } catch (e) {
+    console.warn('suggestCompostLink failed:', e);
+    return null;
+  }
+}
