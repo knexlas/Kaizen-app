@@ -3,7 +3,7 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls, Sky, Environment, RoundedBox, useGLTF, Sparkles, Billboard, Text, PerformanceMonitor } from '@react-three/drei';
 import * as THREE from 'three';
 import { useGarden } from '../../context/GardenContext';
-import { getGoalProgressPercent } from './GardenWalk';
+import { getGoalProgressPercent } from './gardenProgress';
 import WanderingCreature from './WanderingCreature';
 import ProceduralFlora from './ProceduralFlora';
 import AnimatedModel from './AnimatedModel';
@@ -14,12 +14,42 @@ import Frog3D from './Frog3D';
 import Butterfly3D from './Butterfly3D';
 import EnvironmentManager from './EnvironmentManager';
 import ShopStand from './ShopStand';
+import Greenhouse3D from './Greenhouse3D';
 import Garden3DErrorBoundary from './Garden3DErrorBoundary';
 import SceneErrorBoundary from './SceneErrorBoundary';
 import { joystickState } from './VirtualJoystick';
 
 /** When true, shadows and heavy Sparkles are disabled to save battery (e.g. on mobile). */
 export const LowPerfContext = createContext(false);
+export const MotionPausedContext = createContext(false);
+
+function detectInitialPerfProfile() {
+  if (typeof window === 'undefined' || typeof navigator === 'undefined') {
+    return { lowPerf: false, dpr: [1, 1.5], allowAutoRotate: true };
+  }
+
+  const prefersReducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ?? false;
+  const coarsePointer = window.matchMedia?.('(pointer: coarse)')?.matches ?? false;
+  const lowCoreCount = typeof navigator.hardwareConcurrency === 'number' && navigator.hardwareConcurrency > 0 && navigator.hardwareConcurrency <= 6;
+  const lowMemory = typeof navigator.deviceMemory === 'number' && navigator.deviceMemory > 0 && navigator.deviceMemory <= 4;
+  const lowPerf = prefersReducedMotion || coarsePointer || lowCoreCount || lowMemory;
+
+  return {
+    lowPerf,
+    dpr: lowPerf ? [1, 1.2] : [1, 1.5],
+    allowAutoRotate: !prefersReducedMotion && !coarsePointer,
+  };
+}
+
+function getGraphicsProfile(mode = 'auto') {
+  if (mode === 'smooth') {
+    return { lowPerf: false, dpr: [1.25, 1.75], allowAutoRotate: true };
+  }
+  if (mode === 'saver') {
+    return { lowPerf: true, dpr: [1, 1.1], allowAutoRotate: false };
+  }
+  return detectInitialPerfProfile();
+}
 
 const TERRAIN_COLORS = {
   water: '#4facfe',
@@ -49,6 +79,7 @@ function FocusCamera({ focusGoal }) {
 
 function KeyboardController() {
   const { camera } = useThree();
+  const motionPaused = useContext(MotionPausedContext);
   const keys = useRef({ w: false, a: false, s: false, d: false });
   useEffect(() => {
     const handleKey = (e, isDown) => {
@@ -69,6 +100,7 @@ function KeyboardController() {
     };
   }, []);
   useFrame(() => {
+    if (motionPaused) return;
     const speed = 0.15;
     if (keys.current.w) camera.position.z -= speed;
     if (keys.current.s) camera.position.z += speed;
@@ -80,7 +112,25 @@ function KeyboardController() {
   return null;
 }
 
-function OrbitControlsWithFollowTarget({ enabled = true }) {
+/** With frameloop="demand", trigger a render when user rotates/pans (OrbitControls) or when invalidateRef is called from outside (e.g. joystick). */
+function DemandLoopInvalidate({ invalidateRef }) {
+  const { invalidate, controls } = useThree();
+  useEffect(() => {
+    if (invalidateRef) invalidateRef.current = invalidate;
+    return () => {
+      if (invalidateRef) invalidateRef.current = null;
+    };
+  }, [invalidate, invalidateRef]);
+  useEffect(() => {
+    if (!controls) return;
+    const fn = () => invalidate();
+    controls.addEventListener('change', fn);
+    return () => controls.removeEventListener('change', fn);
+  }, [controls, invalidate]);
+  return null;
+}
+
+function OrbitControlsWithFollowTarget({ enabled = true, autoRotateEnabled = true }) {
   const { camera } = useThree();
   const targetRef = useRef(new THREE.Vector3(0, 0, 0));
   useFrame(() => {
@@ -94,7 +144,7 @@ function OrbitControlsWithFollowTarget({ enabled = true }) {
       minDistance={2}
       maxDistance={45}
       target={targetRef.current}
-      autoRotate
+      autoRotate={autoRotateEnabled}
       autoRotateSpeed={0.5}
       enableDamping
       dampingFactor={0.05}
@@ -107,7 +157,8 @@ function WaterTile({ x, z }) {
   const ref = useRef();
   const lowPerf = useContext(LowPerfContext);
   useFrame((state) => {
-    if (ref.current) ref.current.position.y = 0.02 + Math.sin(state.clock.elapsedTime * 2 + x + z) * 0.03;
+    if (!ref.current || lowPerf) return;
+    ref.current.position.y = 0.02 + Math.sin(state.clock.elapsedTime * 2 + x + z) * 0.03;
   });
   return (
     <mesh ref={ref} position={[x, 0.02, z]} receiveShadow={!lowPerf} castShadow={!lowPerf}>
@@ -189,6 +240,7 @@ function StaticFloraNode({ path, position, scale = 0.4 }) {
 
 /** Ambient scatter: a few static flowers/mushrooms around the garden for visual richness. */
 function AmbientScatter() {
+  const lowPerf = useContext(LowPerfContext);
   const scatter = useMemo(
     () => [
       { path: '/models/flower_yellowA.glb', position: [-6, 0, 5], scale: 0.35 },
@@ -199,6 +251,7 @@ function AmbientScatter() {
     ],
     []
   );
+  if (lowPerf) return null;
   return (
     <group>
       {scatter.map(({ path, position, scale }, i) => (
@@ -214,7 +267,7 @@ function GoalNode({ goal, onGoalClick, onToolUsed, activeTool, waterGoal, fireTo
   const lowPerf = useContext(LowPerfContext);
   const groupRef = useRef(null);
   const targetRef = useRef(new THREE.Vector3());
-  const estimatedMinutes = goal.estimatedMinutes ?? (Number(goal.targetHours) || 0) * 60 || 1;
+  const estimatedMinutes = (goal.estimatedMinutes ?? ((Number(goal.targetHours) || 0) * 60)) || 1;
   const totalMinutes = Number(goal.totalMinutes) || 0;
   const progressRatio = Math.min(1, totalMinutes / estimatedMinutes);
   const baseScale = 0.5 + progressRatio * 1.0;
@@ -366,7 +419,7 @@ function DecorationNode({ decoration, activeTool, setActiveTool, positionOverrid
   );
 }
 
-function Scene({ placedGoals, onPlant, onGoalClick, onToolUsed, timePhase, activeTool, waterGoal, fireToast, setActiveTool, decorations, canvasInteractionDisabled, campfirePositions = [], isArchitectMode, selectedObjectId, setSelectedObjectId, updateObjectPosition }) {
+function Scene({ placedGoals, onPlant, onGoalClick, onToolUsed, timePhase, activeTool, waterGoal, fireToast, setActiveTool, decorations, canvasInteractionDisabled, campfirePositions = [], isArchitectMode, selectedObjectId, setSelectedObjectId, updateObjectPosition, onOpenNursery, spiritForm, lowPerf }) {
   const { terrainMap } = useGarden();
   const isItemBeingMoved = (id, kind) =>
     activeTool?.type === 'place' && activeTool?.isRelocating && activeTool?.originalType === kind && (activeTool?.item?.id === id || activeTool?.decorationId === id || activeTool?.decoration?.id === id);
@@ -460,6 +513,7 @@ function Scene({ placedGoals, onPlant, onGoalClick, onToolUsed, timePhase, activ
         />
       ))}
       <Ecosystem placedGoals={placedGoals} timePhase={timePhase} campfirePositions={campfirePositions} />
+      <Greenhouse3D form={spiritForm} position={[-8, 0, -8]} onClick={onOpenNursery} lowPerf={lowPerf ?? false} />
     </>
   );
 }
@@ -469,7 +523,7 @@ function Ecosystem({ placedGoals, timePhase = 'day', campfirePositions = [] }) {
   const lowPerf = useContext(LowPerfContext);
   const rawForm = userSettings?.spirit?.form ?? spiritConfig?.type ?? 'mochi';
   const effectiveForm = rawForm === 'ember' ? 'flame' : rawForm === 'nimbus' ? 'cloud' : rawForm === 'custom' ? 'guide' : (rawForm || 'mochi');
-  const showBackgroundMochi = effectiveForm !== 'mochi';
+  const showBackgroundMochi = effectiveForm !== 'mochi' && !lowPerf;
   // Spirit forms with origin at center (mochi sphere, flame, cloud, wisp) need base offset so they sit on terrain
   const spiritBaseOffset = ['mochi', 'flame', 'cloud', 'wisp'].includes(effectiveForm) ? 0.5 : 0;
   const goalPositions = placedGoals
@@ -507,7 +561,7 @@ function Ecosystem({ placedGoals, timePhase = 'day', campfirePositions = [] }) {
         />
       )}
       <WanderingCreature allowedTerrain="water" speed={0.5} zOffset={0} customComponent={<Frog3D />} timePhase={phase} displayName="frog" campfirePositions={campfirePositions} />
-      {phase !== 'night' && (
+      {!lowPerf && phase !== 'night' && (
         <WanderingCreature allowedTerrain="grass" speed={1.5} zOffset={1.5} customComponent={<Butterfly3D />} timePhase={phase} displayName="butterfly" campfirePositions={campfirePositions} />
       )}
       {phase === 'night' && (
@@ -620,12 +674,16 @@ function spiritTypeToForm(spiritConfig, userSettings) {
   return t || 'mochi';
 }
 
-export default function Garden3D({ onGoalClick, onOpenShop, focusGoal, onOpenJournal, onOpenInsights, onToolUsed, uiBlocksCanvas = false }) {
+export default function Garden3D({ onGoalClick, onOpenShop, onOpenNursery, focusGoal, onOpenJournal, onOpenInsights, onToolUsed, uiBlocksCanvas = false, ecoMode = false, invalidateRef }) {
   const [timePhase, setTimePhase] = useState('day');
-  const [dpr, setDpr] = useState([1, 2]);
-  const [lowPerf, setLowPerf] = useState(false);
+  const [pageHidden, setPageHidden] = useState(() => (typeof document !== 'undefined' ? document.visibilityState === 'hidden' : false));
   const { goals, editGoal, activeTool, setActiveTool, paintTerrain, updateDecoration, waterGoal, decorations = [], spiritConfig, userSettings, isArchitectMode, selectedObjectId, setSelectedObjectId, updateObjectPosition } = useGarden();
+  const graphicsMode = userSettings?.gardenGraphicsMode ?? 'auto';
+  const initialPerfProfile = useMemo(() => getGraphicsProfile(graphicsMode), [graphicsMode]);
+  const [dpr, setDpr] = useState(initialPerfProfile.dpr);
+  const [lowPerf, setLowPerf] = useState(initialPerfProfile.lowPerf);
   const chosenForm = spiritTypeToForm(spiritConfig, userSettings);
+  const motionPaused = uiBlocksCanvas || pageHidden;
   const allGoals = goals ?? [];
   const shopStandPosition3D = Array.isArray(userSettings?.gardenLayout?.shopStandPosition3D) && userSettings.gardenLayout.shopStandPosition3D.length >= 3
     ? userSettings.gardenLayout.shopStandPosition3D
@@ -634,8 +692,10 @@ export default function Garden3D({ onGoalClick, onOpenShop, focusGoal, onOpenJou
   const placedGoalsForScene = useMemo(() => {
     const nonRoutine = allGoals.filter((g) => g.type !== 'routine' && Array.isArray(g.position3D) && g.position3D.length >= 3);
     const routineGoals = allGoals.filter((g) => g.type === 'routine');
+    const graduatedRoutines = routineGoals.filter((g) => g.isGraduated && Array.isArray(g.position3D) && g.position3D.length >= 3);
+    const routineGoalsNonGraduated = routineGoals.filter((g) => !g.isGraduated);
     const byCategory = {};
-    routineGoals.forEach((g) => {
+    routineGoalsNonGraduated.forEach((g) => {
       const cat = ROUTINE_CATEGORIES.includes(g.category) ? g.category : '📋 Other';
       if (!byCategory[cat]) byCategory[cat] = [];
       byCategory[cat].push(g);
@@ -657,7 +717,7 @@ export default function Garden3D({ onGoalClick, onOpenShop, focusGoal, onOpenJou
         position3D: first.position3D,
       });
     });
-    return [...nonRoutine, ...proxyGoals];
+    return [...nonRoutine, ...graduatedRoutines, ...proxyGoals];
   }, [allGoals]);
 
   const placedGoals = placedGoalsForScene;
@@ -679,9 +739,21 @@ export default function Garden3D({ onGoalClick, onOpenShop, focusGoal, onOpenJou
     () =>
       (decorations ?? [])
         .filter((d) => d.model && String(d.model).toLowerCase().includes('campfire') && Array.isArray(d.position3D) && d.position3D.length >= 3)
-        .map((d) => ({ x: Number(d.position3D[0]) || 0, y: Number(d.position3D[1]) ?? 0, z: Number(d.position3D[2]) || 0 })),
+        .map((d) => ({ x: Number(d.position3D[0]) || 0, y: Number(d.position3D[1]) || 0, z: Number(d.position3D[2]) || 0 })),
     [decorations]
   );
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return undefined;
+    const handleVisibilityChange = () => setPageHidden(document.visibilityState === 'hidden');
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, []);
+
+  useEffect(() => {
+    setDpr(initialPerfProfile.dpr);
+    setLowPerf(initialPerfProfile.lowPerf);
+  }, [initialPerfProfile]);
 
   const handlePlant = (e) => {
     e.stopPropagation();
@@ -736,37 +808,66 @@ export default function Garden3D({ onGoalClick, onOpenShop, focusGoal, onOpenJou
     fireToast('No unplaced seeds left in your bag! 🎒');
   };
 
+  if (ecoMode) {
+    return (
+      <Garden3DErrorBoundary>
+        <div className="relative w-full h-full min-h-[400px] rounded-2xl overflow-hidden bg-stone-200" aria-hidden="true" />
+      </Garden3DErrorBoundary>
+    );
+  }
+
   return (
     <Garden3DErrorBoundary>
       <div className="relative w-full h-full min-h-[400px] rounded-2xl overflow-hidden bg-stone-200">
         <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 pointer-events-none px-3 py-2 rounded-xl bg-stone-800/90 text-white text-sm font-medium shadow-lg">
           Tap the grass to plant a goal! 🌱
         </div>
-        <Canvas shadows camera={{ position: [8, 6, 8], fov: 50 }} dpr={dpr}>
+        <Canvas
+          shadows={!lowPerf}
+          camera={{ position: [8, 6, 8], fov: 50 }}
+          dpr={dpr}
+          frameloop="demand"
+          gl={{ antialias: !lowPerf, powerPreference: 'high-performance' }}
+        >
           <SceneErrorBoundary>
+            <DemandLoopInvalidate invalidateRef={invalidateRef} />
             <PerformanceMonitor
               onDecline={() => {
+                if (graphicsMode === 'smooth') {
+                  setDpr([1, 1.25]);
+                  setLowPerf(false);
+                  return;
+                }
+                if (graphicsMode === 'saver') {
+                  setDpr([1, 1.1]);
+                  setLowPerf(true);
+                  return;
+                }
                 setDpr([1, 1]);
                 setLowPerf(true);
               }}
               onIncline={() => {
-                setDpr([1, 2]);
-                setLowPerf(false);
+                setDpr(initialPerfProfile.dpr);
+                setLowPerf(initialPerfProfile.lowPerf);
               }}
             >
               <LowPerfContext.Provider value={lowPerf}>
-                <fog attach="fog" args={['#e7e5e4', 15, 35]} />
-                <EnvironmentManager setTimePhase={setTimePhase} />
+                <MotionPausedContext.Provider value={motionPaused}>
+                  <fog attach="fog" args={['#e7e5e4', 15, 35]} />
+                  <EnvironmentManager setTimePhase={setTimePhase} />
             <Sky sunPosition={[10, 20, 10]} turbidity={2.2} rayleigh={0.85} />
-            <Environment preset="forest" />
+            {!lowPerf && <Environment preset="forest" />}
             <KeyboardController />
-            <OrbitControlsWithFollowTarget enabled={!uiBlocksCanvas} />
+            <OrbitControlsWithFollowTarget enabled={!uiBlocksCanvas} autoRotateEnabled={initialPerfProfile.allowAutoRotate && !lowPerf && !focusGoal && !motionPaused} />
             <FocusCamera focusGoal={focusGoal} />
             <Scene
               placedGoals={placedGoals}
               onPlant={handlePlant}
               onGoalClick={onGoalClick}
               onToolUsed={onToolUsed}
+              onOpenNursery={onOpenNursery}
+              spiritForm={chosenForm}
+              lowPerf={lowPerf}
               isArchitectMode={isArchitectMode}
               selectedObjectId={selectedObjectId}
               setSelectedObjectId={setSelectedObjectId}
@@ -806,6 +907,7 @@ export default function Garden3D({ onGoalClick, onOpenShop, focusGoal, onOpenJou
               {onOpenJournal && <JournalMonument onClick={onOpenJournal} />}
               {onOpenInsights && <InsightMonolith onClick={onOpenInsights} />}
             </Suspense>
+                </MotionPausedContext.Provider>
               </LowPerfContext.Provider>
             </PerformanceMonitor>
           </SceneErrorBoundary>

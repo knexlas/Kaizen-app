@@ -4,7 +4,7 @@ export const joystickState = { x: 0, y: 0 };
 
 const RADIUS = 48; // half of w-24 (6rem) in px, for clamp
 
-function VirtualJoystickInner() {
+function VirtualJoystickInner({ onMove }) {
   const containerRef = useRef(null);
   const [thumbOffset, setThumbOffset] = useState({ x: 0, y: 0 });
   const touchIdRef = useRef(null);
@@ -42,6 +42,7 @@ function VirtualJoystickInner() {
     joystickState.x = normX;
     joystickState.y = normY;
     setThumbOffset({ x: cx, y: cy });
+    onMove?.();
   };
 
   const handleTouchEnd = (e) => {
@@ -51,6 +52,7 @@ function VirtualJoystickInner() {
       joystickState.x = 0;
       joystickState.y = 0;
       setThumbOffset({ x: 0, y: 0 });
+      onMove?.();
     }
   };
 
@@ -75,7 +77,7 @@ function VirtualJoystickInner() {
   );
 }
 
-export default function VirtualJoystick() {
+export default function VirtualJoystick({ onMove }) {
   if (typeof window !== 'undefined' && !('ontouchstart' in window)) return null;
-  return <VirtualJoystickInner />;
+  return <VirtualJoystickInner onMove={onMove} />;
 }

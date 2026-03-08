@@ -1,62 +1,16 @@
-import { useState, useMemo, useEffect, useCallback } from 'react';
+import { useState, useMemo, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useGarden } from '../../context/GardenContext';
 import { useEnergy } from '../../context/EnergyContext';
 import { getGoalSupportDomain, SUPPORT_DOMAINS } from '../../services/domainSupportService';
-import SpiritShop from './SpiritShop';
-import Garden3D from './Garden3D';
+import { startFocusCommand } from '../../services/coreCommands';
+import { getGoalProgressPercent, getPlantStage, STAGE_EMOJI, PROJECT_STAGE_EMOJI, FLORA, PONDS, ROCKS, getHash } from './gardenProgress';
 import VirtualJoystick from './VirtualJoystick';
-import JournalView from '../Dashboard/JournalView';
-import AnalyticsView from '../Dashboard/AnalyticsView';
 
-function clamp(n, min, max) {
-  return Math.min(max, Math.max(min, n));
-}
-
-export function getGoalProgressPercent(goal) {
-  if (goal?._projectGoal) return getProjectProgressPercent(goal);
-  const total = Number(goal?.totalMinutes) || 0;
-  const target = (Number(goal?.targetHours) || 0) * 60 || (Number(goal?.estimatedMinutes) || 60);
-  return clamp((total / target) * 100, 0, 100);
-}
-
-function getProjectProgressPercent(goal) {
-  const ms = Array.isArray(goal?.milestones) ? goal.milestones : [];
-  if (ms.length === 0) return 0;
-  const done = ms.filter((m) => m.completed).length;
-  return clamp((done / ms.length) * 100, 0, 100);
-}
-
-export function getPlantStage(pct) {
-  if (pct < 10) return 'seed';
-  if (pct < 50) return 'sprout';
-  if (pct < 100) return 'bloom';
-  return 'harvest';
-}
-
-export const STAGE_EMOJI = { seed: '🌱', sprout: '🌿', bloom: '🌸', harvest: '🌲' };
-export const PROJECT_STAGE_EMOJI = { seed: '🫘', sprout: '🪴', bloom: '🌻', harvest: '🏆' };
-
-/** 50+ flora emojis for Kaizen goals — deterministic per goal.id */
-export const FLORA = [
-  '🌻', '🌺', '🌹', '🌸', '🪷', '🍄', '🌾', '🌿', '🍀', '🪴', '🎋', '🌵', '🌴', '🌳', '🌲', '🍁', '🍂', '🍇', '🫐', '🍓',
-  '🍒', '🍑', '🥝', '🍋', '🍊', '🌶️', '🥕', '🥬', '🥦', '🌽', '🫑', '🍅', '🥑', '🫒', '🌰', '🥜', '🪻', '🌼', '🏵️', '💐',
-  '🪹', '🌱', '🪺', '🌴', '🪸', '🍀', '🌷', '🪷', '🌺', '🥀', '🪻',
-];
-
-/** Water/pond emojis for Vitality goals */
-export const PONDS = ['🌊', '💧', '🧊', '🐟', '🐸', '🦆', '🪼', '🐚', '🦀', '🐢'];
-
-/** Rock/zen emojis for Routine goals */
-export const ROCKS = ['🪨', '🗿', '⛰️', '🗻', '🏯', '⛩️', '🪵', '🪷', '🪸', '🏔️'];
-
-export function getHash(str) {
-  const s = String(str ?? '');
-  if (!s) return 0;
-  let hash = 0;
-  for (let i = 0; i < s.length; i++) hash = s.charCodeAt(i) + ((hash << 5) - hash);
-  return Math.abs(hash);
-}
+const SpiritShop = lazy(() => import('./SpiritShop'));
+const Garden3D = lazy(() => import('./Garden3D'));
+const JournalView = lazy(() => import('../Dashboard/JournalView'));
+const AnalyticsView = lazy(() => import('../Dashboard/AnalyticsView'));
 
 /** Seed catalog for Transplant UI — must match SpiritShop SEED_ITEMS (id, model, name, icon). */
 const SEED_CATALOG = [
@@ -101,7 +55,7 @@ const GARDEN_GRADIENTS = {
   },
 };
 
-export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCreator, onEditGoal }) {
+export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCreator, onEditGoal, onOpenNursery, ecoMode: ecoModeProp = false }) {
   const {
     goals: contextGoals,
     logs = [],
@@ -117,6 +71,8 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
     ownedSeeds = [],
     editGoal,
     tourStep,
+    userSettings = {},
+    updateUserSettings,
     isArchitectMode,
     setIsArchitectMode,
     setSelectedObjectId,
@@ -145,9 +101,13 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
   const [viewingGoal, setViewingGoal] = useState(null);
   const [isShopOpen, setIsShopOpen] = useState(false);
   const [activeAlmanac, setActiveAlmanac] = useState(null); // 'journal' | 'insights' | null
+  const canvasInvalidateRef = useRef(null);
+  const ecoMode = ecoModeProp || isShopOpen;
   const [showPlantingModal, setShowPlantingModal] = useState(false);
   const [isTransplanting, setIsTransplanting] = useState(false);
   const [toolboxFaded, setToolboxFaded] = useState(false);
+  const [showGraphicsMenu, setShowGraphicsMenu] = useState(false);
+  const graphicsMode = userSettings?.gardenGraphicsMode ?? 'auto';
 
   const onToolUsed = useCallback(() => setToolboxFaded(true), []);
 
@@ -155,11 +115,18 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
     if (!viewingGoal) setIsTransplanting(false);
   }, [viewingGoal]);
 
+  useEffect(() => {
+    if (!isShopOpen) return;
+    setShowGraphicsMenu(false);
+  }, [isShopOpen]);
+
   /** Start focus from garden: use main app flow (FocusSession + Tea Ceremony) so progress and rewards stay in sync. */
   const handleStartFocusFromGarden = useCallback((goal, minutes = 25) => {
     if (!goal?.id) return;
+    const { session } = startFocusCommand({ goal, minutes, subtaskId: null });
+    if (!session) return;
     if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('kaizen:startFocus', { detail: { goal, minutes } }));
+      window.dispatchEvent(new CustomEvent('kaizen:startFocus', { detail: { goal: session, minutes: session.sessionDurationMinutes } }));
     }
     setViewingGoal(null);
   }, []);
@@ -282,25 +249,30 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
             />
           </div>
         )}
-        <div className="m-1 sm:m-2 h-[88vh] min-h-[400px] w-full rounded-3xl overflow-hidden relative">
-          <Garden3D
-            focusGoal={null}
-            onOpenShop={() => setIsShopOpen(true)}
-            onOpenJournal={() => setActiveAlmanac('journal')}
-            onOpenInsights={() => setActiveAlmanac('insights')}
-            onToolUsed={onToolUsed}
-            onGoalClick={(goal) => {
-              if (activeTool?.type === 'water') {
-                waterGoal(goal.id);
-                setActiveTool(null);
-                onToolUsed();
-              } else {
-                setViewingGoal(goal);
-              }
-            }}
-            uiBlocksCanvas={!!(viewingGoal || activeAlmanac)}
-          />
-          <VirtualJoystick />
+        <div id="guide-garden-canvas" className="m-1 sm:m-2 h-[88vh] min-h-[400px] w-full rounded-3xl overflow-hidden relative">
+          <Suspense fallback={<div className="absolute inset-0 bg-stone-200/70 animate-pulse" aria-hidden="true" />}>
+            <Garden3D
+              focusGoal={null}
+              onOpenShop={() => setIsShopOpen(true)}
+              onOpenJournal={() => setActiveAlmanac('journal')}
+              onOpenInsights={() => setActiveAlmanac('insights')}
+              onOpenNursery={onOpenNursery}
+              onToolUsed={onToolUsed}
+              onGoalClick={(goal) => {
+                if (activeTool?.type === 'water') {
+                  waterGoal(goal.id);
+                  setActiveTool(null);
+                  onToolUsed();
+                } else {
+                  setViewingGoal(goal);
+                }
+              }}
+              uiBlocksCanvas={!!(viewingGoal || activeAlmanac)}
+              ecoMode={ecoMode}
+              invalidateRef={canvasInvalidateRef}
+            />
+          </Suspense>
+          <VirtualJoystick onMove={() => canvasInvalidateRef.current?.()} />
           {/* Tour step 4: point to Spirit */}
           {tourStep === 4 && (
             <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-xl bg-stone-800 text-white text-sm font-sans shadow-lg max-w-[280px] text-center pointer-events-none">
@@ -318,6 +290,7 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
               }
             >
             <button
+              id="guide-garden-almanac"
               type="button"
               onClick={() => setActiveAlmanac('journal')}
               className="absolute top-4 left-4 z-50 p-3 bg-white/80 backdrop-blur rounded-2xl shadow-lg hover:bg-white transition-all text-stone-700 font-bold flex items-center gap-2 focus:outline-none focus:ring-2 focus:ring-moss-500/50 focus:ring-offset-2 pointer-events-auto"
@@ -326,6 +299,53 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
               <span aria-hidden>📖</span>
               Almanac
             </button>
+            <div className="absolute top-16 left-4 z-50 pointer-events-auto">
+              <button
+                type="button"
+                onClick={() => setShowGraphicsMenu((prev) => !prev)}
+                className="px-3 py-2 bg-white/80 backdrop-blur rounded-2xl shadow-lg hover:bg-white transition-all text-stone-700 font-bold flex items-center gap-2 focus:outline-none focus:ring-2 focus:ring-moss-500/50 focus:ring-offset-2"
+                aria-expanded={showGraphicsMenu}
+                aria-label="Open graphics menu"
+              >
+                <span aria-hidden>Graphics</span>
+                <span className="text-xs font-medium uppercase tracking-wide text-stone-500">{graphicsMode}</span>
+              </button>
+              <AnimatePresence>
+                {showGraphicsMenu && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -8 }}
+                    transition={{ duration: 0.16 }}
+                    className="mt-2 w-56 rounded-2xl border border-stone-200 bg-white/95 backdrop-blur-md shadow-xl p-2"
+                  >
+                    {[
+                      ['auto', 'Auto', 'Adapts to your device and motion settings.'],
+                      ['smooth', 'Smooth', 'Prefer richer visuals and motion when possible.'],
+                      ['saver', 'Saver', 'Prefer battery life and lower animation cost.'],
+                    ].map(([value, label, description]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => {
+                          updateUserSettings?.({ gardenGraphicsMode: value });
+                          setShowGraphicsMenu(false);
+                        }}
+                        className={`w-full text-left rounded-xl px-3 py-2 transition-colors focus:outline-none focus:ring-2 focus:ring-moss-500/40 ${
+                          graphicsMode === value ? 'bg-moss-50 text-moss-900' : 'hover:bg-stone-100 text-stone-700'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="font-sans text-sm font-semibold">{label}</span>
+                          {graphicsMode === value && <span className="text-[11px] font-semibold uppercase tracking-wide text-moss-700">Active</span>}
+                        </div>
+                        <div className="mt-1 text-xs text-stone-500">{description}</div>
+                      </button>
+                    ))}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
             <button
               type="button"
               onClick={() => {
@@ -513,7 +533,9 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
                   >
                     ×
                   </button>
-                  <SpiritShop onClose={() => setIsShopOpen(false)} embedded />
+                  <Suspense fallback={<div className="rounded-2xl bg-white p-6 text-sm text-stone-500">Loading shop...</div>}>
+                    <SpiritShop onClose={() => setIsShopOpen(false)} embedded />
+                  </Suspense>
                 </div>
               </motion.div>
             )}
@@ -545,7 +567,9 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
                   </button>
                 </div>
                 <div className="flex-1 overflow-y-auto p-4">
-                  {activeAlmanac === 'journal' ? <JournalView /> : <AnalyticsView />}
+                  <Suspense fallback={<div className="p-6 text-sm text-stone-500">Loading almanac...</div>}>
+                    {activeAlmanac === 'journal' ? <JournalView /> : <AnalyticsView />}
+                  </Suspense>
                 </div>
               </motion.div>
             )}
@@ -554,6 +578,7 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
 
         {/* Toolbelt — fades when shop open; fades after use, restores on hover (game-like) */}
         <div
+          id="guide-garden-tools"
           className={
             isShopOpen
               ? 'opacity-0 pointer-events-none transition-opacity duration-300'

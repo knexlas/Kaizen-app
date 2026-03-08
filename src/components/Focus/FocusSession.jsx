@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { vibrateCelebration } from '../../utils/vibration';
 
 const DURATION_SECONDS = 25 * 60; // 25 minutes
 const BREAK_DURATION_SECONDS = 5 * 60; // 5 minutes
@@ -316,6 +317,7 @@ export default function FocusSession({
 
   const handleHarvestEarly = () => {
     setShowBrokenPath(false);
+    vibrateCelebration();
     const timeSpentMinutes = Math.max(1, Math.floor(elapsedSeconds / 60));
     onComplete?.({ timeSpentMinutes });
   };
@@ -441,13 +443,14 @@ export default function FocusSession({
             &ldquo;For the next <strong className="text-moss-700">{durationMinutes} minutes</strong>, nothing else exists except: <br /><br />
             <span className="text-lg font-medium text-stone-800 bg-stone-100 px-4 py-2 rounded-lg inline-block mt-2">{taskTitle}</span>&rdquo;
           </p>
-          <button
+          <motion.button
             type="button"
             onClick={handleCommitClick}
             className="px-8 py-3 bg-moss-600 hover:bg-moss-700 text-white rounded-full font-medium transition-transform hover:scale-105 shadow-md shadow-moss-900/20"
+            whileTap={{ scale: 0.95 }}
           >
             I commit to this single step
-          </button>
+          </motion.button>
           <button
             type="button"
             onClick={onExit}
@@ -564,33 +567,36 @@ export default function FocusSession({
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.98 }}
               transition={{ duration: 0.2 }}
-              className="bg-stone-100/95 backdrop-blur rounded-2xl border border-stone-200 shadow-xl max-w-sm w-full p-6"
+              className="rounded-3xl bg-white/85 backdrop-blur-md border border-white/50 shadow-2xl max-w-sm w-full p-6"
             >
               <h2 id="broken-path-title" className="font-serif text-stone-800 text-xl text-center mb-6">
                 The path is broken. Why?
               </h2>
               <div className="flex flex-col gap-3">
-                <button
+                <motion.button
                   type="button"
                   onClick={handleHarvestEarly}
                   className="w-full py-3 font-sans text-sm text-stone-800 bg-moss-100 border border-moss-500/40 rounded-xl hover:bg-moss-200/80 focus:outline-none focus:ring-2 focus:ring-moss-500/50 transition-colors"
+                  whileTap={{ scale: 0.95 }}
                 >
                   Harvest Early
-                </button>
-                <button
+                </motion.button>
+                <motion.button
                   type="button"
                   onClick={handleDistraction}
                   className="w-full py-3 font-sans text-sm text-stone-700 bg-stone-200/80 border border-stone-300 rounded-xl hover:bg-stone-300/80 focus:outline-none focus:ring-2 focus:ring-moss-500/50 transition-colors"
+                  whileTap={{ scale: 0.95 }}
                 >
                   Distraction / Weed
-                </button>
-                <button
+                </motion.button>
+                <motion.button
                   type="button"
                   onClick={handleResumePath}
                   className="w-full py-3 font-sans text-sm text-stone-600 border border-stone-300 rounded-xl hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/50 transition-colors"
+                  whileTap={{ scale: 0.95 }}
                 >
                   Resume Path
-                </button>
+                </motion.button>
               </div>
             </motion.div>
           </motion.div>
@@ -605,7 +611,7 @@ export default function FocusSession({
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.3 }}
-            className="w-full max-w-sm rounded-2xl border border-white/20 bg-stone-100/95 backdrop-blur-md shadow-xl p-6"
+            className="w-full max-w-sm rounded-3xl bg-white/85 backdrop-blur-md border border-white/50 shadow-2xl p-6"
           >
             {nextKaizenStep && (
               <div className="mb-6 p-4 bg-indigo-500/20 border border-indigo-400/30 rounded-2xl animate-fade-in">
@@ -633,11 +639,13 @@ export default function FocusSession({
                 { emoji: '🌿', label: 'Steady', rating: 'steady' },
                 { emoji: '🌪️', label: 'Distracted', rating: 'distracted' },
               ].map(({ emoji, label, rating }) => (
-                <button
+                <motion.button
                   key={rating}
                   type="button"
+                  whileTap={{ scale: 0.95 }}
                   onClick={() => {
                     setSessionComplete(false);
+                    vibrateCelebration();
                     onComplete?.({
                       timeSpentMinutes: completedTimeSpentMinutes ?? Math.max(1, Math.floor(durationSeconds / 60)),
                       rating,
@@ -648,7 +656,7 @@ export default function FocusSession({
                 >
                   <span className="text-4xl" aria-hidden>{emoji}</span>
                   <span className="font-sans text-sm font-medium text-stone-700">{label}</span>
-                </button>
+                </motion.button>
               ))}
             </div>
           </motion.div>
@@ -669,7 +677,7 @@ export default function FocusSession({
               exit={{ opacity: 0 }}
               className="mt-8 flex flex-wrap justify-center gap-3"
             >
-              <button
+              <motion.button
                 type="button"
                 onClick={() => {
                   hasPlayedBreakGongRef.current = false;
@@ -678,16 +686,21 @@ export default function FocusSession({
                   setIsComplete(false);
                 }}
                 className="px-4 py-2.5 font-sans text-sm bg-moss-500 text-stone-50 rounded-lg hover:bg-moss-600 focus:outline-none focus:ring-2 focus:ring-moss-500/50"
+                whileTap={{ scale: 0.95 }}
               >
                 Resume Focus
-              </button>
-              <button
+              </motion.button>
+              <motion.button
                 type="button"
-                onClick={() => onComplete?.({ timeSpentMinutes: completedTimeSpentMinutes })}
+                onClick={() => {
+                  vibrateCelebration();
+                  onComplete?.({ timeSpentMinutes: completedTimeSpentMinutes });
+                }}
                 className="px-4 py-2.5 font-sans text-sm border border-stone-300 text-stone-700 rounded-lg hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/50"
+                whileTap={{ scale: 0.95 }}
               >
                 Log &amp; Exit
-              </button>
+              </motion.button>
             </motion.div>
           ) : !isComplete ? (
             <motion.p
@@ -707,7 +720,7 @@ export default function FocusSession({
               exit={{ opacity: 0 }}
               className="mt-8 flex flex-wrap justify-center gap-3"
             >
-              <button
+              <motion.button
                 type="button"
                 onClick={() => {
                   hasPlayedBreakGongRef.current = false;
@@ -716,23 +729,32 @@ export default function FocusSession({
                   setIsComplete(false);
                 }}
                 className="px-4 py-2.5 font-sans text-sm bg-moss-500 text-stone-50 rounded-lg hover:bg-moss-600 focus:outline-none focus:ring-2 focus:ring-moss-500/50"
+                whileTap={{ scale: 0.95 }}
               >
                 Take 5m Break
-              </button>
-              <button
+              </motion.button>
+              <motion.button
                 type="button"
-                onClick={() => onComplete?.({ timeSpentMinutes: completedTimeSpentMinutes, action: 'plant' })}
+                onClick={() => {
+                  vibrateCelebration();
+                  onComplete?.({ timeSpentMinutes: completedTimeSpentMinutes, action: 'plant' });
+                }}
                 className="px-4 py-2.5 font-sans text-sm bg-stone-200 text-stone-800 rounded-lg hover:bg-stone-300 focus:outline-none focus:ring-2 focus:ring-moss-500/50"
+                whileTap={{ scale: 0.95 }}
               >
                 Plant Another Seed
-              </button>
-              <button
+              </motion.button>
+              <motion.button
                 type="button"
-                onClick={() => onComplete?.({ timeSpentMinutes: completedTimeSpentMinutes })}
+                onClick={() => {
+                  vibrateCelebration();
+                  onComplete?.({ timeSpentMinutes: completedTimeSpentMinutes });
+                }}
                 className="px-4 py-2.5 font-sans text-sm border border-stone-300 text-stone-700 rounded-lg hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/50"
+                whileTap={{ scale: 0.95 }}
               >
                 Log &amp; Exit
-              </button>
+              </motion.button>
             </motion.div>
           )}
         </AnimatePresence>

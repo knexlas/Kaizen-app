@@ -3,11 +3,12 @@ import { useFrame } from '@react-three/fiber';
 import { useGLTF, useAnimations } from '@react-three/drei';
 import * as THREE from 'three';
 import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
-import { LowPerfContext } from './Garden3D';
+import { LowPerfContext, MotionPausedContext } from './Garden3D';
 
 export default function AnimatedModel({ path, scale = 1, rotation = [0, 0, 0], isWalking = false }) {
   const groupRef = useRef();
   const lowPerf = useContext(LowPerfContext);
+  const motionPaused = useContext(MotionPausedContext);
   const { scene, animations } = useGLTF(path);
 
   // Safely clone skinned meshes and compute Y-offset so the bottom of the model sits at y = 0
@@ -45,7 +46,7 @@ export default function AnimatedModel({ path, scale = 1, rotation = [0, 0, 0], i
 
   // Procedural breathing when no baked animations (static model): gentle sine on scale.x / scale.y
   useFrame((state) => {
-    if (names.length > 0 || !groupRef.current) return;
+    if (motionPaused || names.length > 0 || !groupRef.current) return;
     const t = state.clock.elapsedTime;
     const s = 1 + Math.sin(t * 0.6) * 0.015;
     groupRef.current.scale.x = s;

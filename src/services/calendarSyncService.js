@@ -1,14 +1,5 @@
 import { fetchGoogleEvents, createGoogleEvent } from './googleCalendarService';
-
-const STORM_KEYWORDS = ['Meeting', 'Deadline', 'Review'];
-const SUN_KEYWORDS = ['Lunch', 'Coffee', 'Gym'];
-
-function inferWeatherAndCost(title) {
-  const t = title || '';
-  if (STORM_KEYWORDS.some((k) => t.includes(k))) return { weather: 'storm', energy_cost: 3 };
-  if (SUN_KEYWORDS.some((k) => t.includes(k))) return { weather: 'sun', energy_cost: -1 };
-  return { weather: 'cloud', energy_cost: 1 };
-}
+import { classifyCalendarEvent } from './calendarEventClassifier';
 
 const DUMMY_WEEKLY_EVENTS = [
   { id: '1', title: 'Sprint Review', start: '2025-02-17T10:00:00', end: '2025-02-17T11:00:00' },
@@ -32,7 +23,7 @@ export async function fetchWeeklyEvents(accessToken) {
       const end = new Date(Date.now() + 7 * 86400000);
       const raw = await fetchGoogleEvents(accessToken, start, end);
       return raw.map((ev) => {
-        const { weather, energy_cost } = inferWeatherAndCost(ev.title);
+        const { weather, energy_cost } = classifyCalendarEvent(ev.title);
         return { ...ev, weather, energy_cost };
       });
     } catch (_) {
@@ -41,7 +32,7 @@ export async function fetchWeeklyEvents(accessToken) {
   }
   await new Promise((r) => setTimeout(r, 400));
   return DUMMY_WEEKLY_EVENTS.map((ev) => {
-    const { weather, energy_cost } = inferWeatherAndCost(ev.title);
+    const { weather, energy_cost } = classifyCalendarEvent(ev.title);
     return { ...ev, weather, energy_cost };
   });
 }
@@ -75,8 +66,11 @@ export function generateICS(events) {
   ];
   
   events.forEach((ev) => {
+    const uid = ev.id || (typeof crypto !== 'undefined' && crypto.randomUUID
+      ? crypto.randomUUID()
+      : `ics-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`);
     lines.push('BEGIN:VEVENT');
-    lines.push('UID:' + (ev.id || crypto.randomUUID()) + '@kaizengarden');
+    lines.push('UID:' + uid + '@kaizengarden');
     lines.push('DTSTART:' + toICS(ev.startTime || ev.start));
     lines.push('DTEND:' + toICS(ev.endTime || ev.end));
     lines.push('SUMMARY:' + esc(ev.title || 'Kaizen Task'));
@@ -124,13 +118,7 @@ export function parseICS(icsString) {
     const end = parseDate(get('DTEND'));
     
     if (title && start) {
-      // Categorize based on title keywords
-      let type = 'leaf';
-      if (title.match(/deadline|urgent|review|meeting/i)) {
-        type = 'storm';
-      } else if (title.match(/lunch|gym|break|coffee/i)) {
-        type = 'sun';
-      }
+      const { type } = classifyCalendarEvent(title);
       
       events.push({
         id: get('UID') || 'ics-' + Date.now() + '-' + i,

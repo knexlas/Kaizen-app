@@ -22,6 +22,7 @@ export default function GuidedEmptyState({
       { key: 'care', label: `Care: ${careTasks[Math.floor(Math.random() * careTasks.length)]}` },
     ];
   });
+  const [showHow, setShowHow] = useState(false);
 
   if (variant === 'needEnergy') {
     return (
@@ -94,7 +95,6 @@ export default function GuidedEmptyState({
   }
 
   if (variant === 'noCompost') {
-    const [showHow, setShowHow] = useState(false);
     return (
       <div
         className={

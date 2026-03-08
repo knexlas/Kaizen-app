@@ -1,11 +1,14 @@
-import { useRef } from 'react';
+import { useRef, useContext } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { Box, Cylinder } from '@react-three/drei';
+import { MotionPausedContext } from './Garden3D';
 
 export default function Butterfly3D() {
   const wings = useRef();
   const group = useRef();
+  const motionPaused = useContext(MotionPausedContext);
   useFrame((state) => {
+    if (motionPaused) return;
     if (group.current) group.current.position.y = Math.sin(state.clock.elapsedTime * 2) * 0.2;
     if (wings.current) wings.current.rotation.z = Math.sin(state.clock.elapsedTime * 25) * 0.6;
   });

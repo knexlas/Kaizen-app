@@ -1,4 +1,4 @@
-import { motion, AnimatePresence } from 'framer-motion';
+﻿import { motion, AnimatePresence } from 'framer-motion';
 
 export default function PrioritizeModal({
   open,
@@ -60,7 +60,6 @@ export default function PrioritizeModal({
           </div>
 
           <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
-            {/* AI recommendation: loading, then success with reason (priority already applied) */}
             {showAiBlock && (
               <div className={`${cardClass} ring-2 ring-amber-300/60 bg-amber-50/80`}>
                 <p className="text-base" aria-hidden>
@@ -109,7 +108,6 @@ export default function PrioritizeModal({
               </div>
             )}
 
-            {/* The Main Quest */}
             <div className={cardClass}>
               <p className="text-base" aria-hidden>
                 🌟 The Main Quest
@@ -135,7 +133,6 @@ export default function PrioritizeModal({
               )}
             </div>
 
-            {/* A Quick Win */}
             <div className={cardClass}>
               <p className="text-base" aria-hidden>
                 🍃 A Quick Win
@@ -161,7 +158,6 @@ export default function PrioritizeModal({
               )}
             </div>
 
-            {/* Nourishment */}
             <div className={cardClass}>
               <p className="text-base" aria-hidden>
                 🍵 Nourishment

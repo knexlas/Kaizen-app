@@ -1,13 +1,12 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { EnergyProvider } from './context/EnergyContext';
 import { useGarden, todayString } from './context/GardenContext';
 import { localISODate, getThisWeekSundayLocal } from './services/dateUtils';
 import { getSettings } from './services/userSettings';
 import { useReward } from './context/RewardContext';
-import { generateDailyPlan, hourFromTimeStr } from './services/schedulerService';
 import { buildReward } from './services/dopamineEngine';
+import { completeCheckInCommand } from './services/coreCommands';
 import { useTheme } from './context/ThemeContext';
-import { getOnboardingCompleted } from './services/onboardingStateService';
 import SundayRitualController from './components/Rituals/SundayRitualController';
 import GardenDashboard from './components/Dashboard/GardenDashboard';
 import MissedDayModal from './components/Onboarding/MissedDayModal';
@@ -22,7 +21,6 @@ function yesterdayString() {
 
 function App() {
   const [view, setView] = useState('loading');
-  const [onboardingComplete, setOnboardingComplete] = useState(true);
   const {
     hydrated,
     lastCheckInDate,
@@ -89,26 +87,6 @@ function App() {
     }
   }, [hydrated, lastCheckInDate, lastSundayRitualDate]);
 
-  const [initialTabFromHash, setInitialTabFromHash] = useState(null); // 'planner' when navigated via #/plan
-  useEffect(() => {
-    if (!hydrated) return;
-    const syncFromHash = () => {
-      if (window.location.hash === '#/plan') {
-        setView('dashboard');
-        setInitialTabFromHash('planner');
-        window.history.replaceState(null, '', window.location.pathname + window.location.search);
-      }
-    };
-    syncFromHash();
-    window.addEventListener('hashchange', syncFromHash);
-    return () => window.removeEventListener('hashchange', syncFromHash);
-  }, [hydrated]);
-
-  useEffect(() => {
-    if (!hydrated) return;
-    setOnboardingComplete(getOnboardingCompleted());
-  }, [hydrated]);
-
   const handleRitualComplete = (plan) => {
     updateWeeklyEvents(Array.isArray(plan) ? plan : plan?.events ?? []);
     markSundayRitualComplete();
@@ -119,15 +97,17 @@ function App() {
     if (choice == null) return;
     archivePlanToCompost?.();
     completeMorningCheckIn(choice);
-    const eventsForPlan = Array.isArray(weeklyEvents) ? weeklyEvents : [];
-    const startHour = hourFromTimeStr(userSettings?.dayStart, 8);
-    const endHour = hourFromTimeStr(userSettings?.dayEnd, 22);
-    const plan = choice === 0 ? {} : generateDailyPlan(goals, choice, eventsForPlan, { stormBufferMinutes: 30, startHour, endHour });
+    const { plan } = completeCheckInCommand({ choice, goals, weeklyEvents, userSettings });
     setAssignments(plan);
     const reward = buildReward({ type: 'MORNING_CHECKIN_DONE', payload: { spoonCount: choice } });
     if (reward) pushReward(reward);
     setView('dashboard');
   };
+
+  const feedbackEmail =
+    (typeof import.meta !== 'undefined' && import.meta.env?.VITE_FEEDBACK_EMAIL
+      ? String(import.meta.env.VITE_FEEDBACK_EMAIL).trim()
+      : '');
 
   return (
     <EnergyProvider>
@@ -140,7 +120,7 @@ function App() {
             </div>
           )}
           {hydrated && !hasOnboarded && (
-            <FirstRunFlow onComplete={() => setOnboardingComplete(true)} />
+            <FirstRunFlow onComplete={() => {}} />
           )}
           {hasOnboarded && view === 'sunday_ritual' && (
             <SundayRitualController onComplete={handleRitualComplete} />
@@ -149,21 +129,20 @@ function App() {
             <MissedDayModal open={true} onChoose={handleMissedDayChoose} />
           )}
           {hasOnboarded && view === 'dashboard' && (
-            <GardenDashboard
-              initialTab={initialTabFromHash}
-              onConsumeInitialTab={() => setInitialTabFromHash(null)}
-            />
+            <GardenDashboard />
           )}
         </div>
 
-        {/* Beta feedback — always visible */}
-        <a
-          href="mailto:youremail@example.com?subject=Kaizen%20Beta%20Feedback"
-          className="fixed bottom-20 sm:bottom-6 right-3 sm:right-6 z-40 bg-stone-800 text-white px-3 py-2 rounded-full shadow-lg text-xs sm:text-sm font-medium flex items-center gap-2 hover:bg-stone-700 transition-transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-moss-500/50 focus:ring-offset-2 safe-area-pb"
-          aria-label="Send beta feedback by email"
-        >
-          🐞 Beta Feedback
-        </a>
+        {/* Feedback button appears only when configured. */}
+        {feedbackEmail && (
+          <a
+            href={`mailto:${feedbackEmail}?subject=Kaizen%20Beta%20Feedback`}
+            className="fixed bottom-20 sm:bottom-6 right-3 sm:right-6 z-40 bg-stone-800 text-white px-3 py-2 rounded-full shadow-lg text-xs sm:text-sm font-medium flex items-center gap-2 hover:bg-stone-700 transition-transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-moss-500/50 focus:ring-offset-2 safe-area-pb"
+            aria-label="Send beta feedback by email"
+          >
+            🐞 Beta Feedback
+          </a>
+        )}
       </div>
     </EnergyProvider>
   );

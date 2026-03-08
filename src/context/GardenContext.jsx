@@ -7,8 +7,10 @@ import { loginWithGoogle, logoutUser } from '../services/authService';
 import { loginWithMicrosoft, logoutMicrosoft, fetchOutlookEvents, getAccessTokenSilently } from '../services/microsoftCalendarService';
 import { localISODate, getThisWeekSundayLocal, getLogicalToday, getDayStartsAtHour } from '../services/dateUtils';
 import { normalizePlanKeys, toCanonicalSlotKey } from '../services/schedulingConflictService';
+import { vibrateShort, vibrateCelebration } from '../utils/vibration';
 
 const STORAGE_KEY = 'gardenData';
+const DAY_PLANS_STORAGE_KEY = 'gardenDayPlans';
 const LAST_OPEN_DATE_KEY = 'gardenLastOpenDate';
 const CLOUD_DEBOUNCE_MS = 2000;
 
@@ -23,6 +25,15 @@ export function todayString() {
   return localISODate();
 }
 
+function normalizeStoredDayPlans(dayPlans) {
+  if (!dayPlans || typeof dayPlans !== 'object') return {};
+  return Object.entries(dayPlans).reduce((acc, [dateStr, assignments]) => {
+    if (typeof dateStr !== 'string' || !dateStr) return acc;
+    acc[dateStr] = normalizePlanKeys(assignments ?? {});
+    return acc;
+  }, {});
+}
+
 const defaultData = {
   goals: [],
   weeklyEvents: [],
@@ -32,6 +43,7 @@ const defaultData = {
     dayStartsAt: '00:00', // midnight reset: '00:00' | '01:00' ... '05:00' — when the "day" flips (e.g. 3 AM = 1:30 AM Tue is still "Monday")
     isWorkScheduler: true,
     workHours: { start: '09:00', end: '17:00' },
+    gardenGraphicsMode: 'auto',
     appGuideStep: 0, // Day 1 Guide: 0–3 = current step, -1 = dismissed
   }, // scheduling: used by TimeSlicer + schedulerService (startHour/endHour)
   dailyEnergyModifier: 0,
@@ -256,6 +268,13 @@ export function GardenProvider({ children }) {
         if (Array.isArray(data.monthlyQuotas)) setMonthlyQuotas(data.monthlyQuotas);
         if (Array.isArray(data.routines)) setRoutines(data.routines);
       }
+      const rawDayPlans = localStorage.getItem(DAY_PLANS_STORAGE_KEY);
+      if (rawDayPlans) {
+        const parsedDayPlans = normalizeStoredDayPlans(JSON.parse(rawDayPlans));
+        weekAssignmentsRef.current = parsedDayPlans;
+        setWeekAssignments(parsedDayPlans);
+        setAssignments(parsedDayPlans[planDate] ?? {});
+      }
     } catch (e) {
       console.warn('GardenContext: failed to load gardenData', e);
     }
@@ -364,6 +383,12 @@ export function GardenProvider({ children }) {
     setWeekAssignments((prev) => ({ ...prev, [planDate]: assignments }));
   }, [planDate, assignments]);
 
+  // When working locally, restore the selected day's plan from the local cache.
+  useEffect(() => {
+    if (googleUser?.uid) return;
+    setAssignments(normalizePlanKeys(weekAssignmentsRef.current[planDate] ?? {}));
+  }, [googleUser?.uid, planDate]);
+
   /** Daily plan is the single source of truth for scheduled assignments; slot keys are normalized to "HH:00". */
   const loadDayPlan = useCallback(async (dateStr) => {
     if (weekAssignmentsRef.current[dateStr]) return weekAssignmentsRef.current[dateStr];
@@ -400,13 +425,23 @@ export function GardenProvider({ children }) {
 
   const loadWeekPlans = useCallback(async () => {
     const uid = googleUser?.uid;
-    if (!uid) return {};
     const today = new Date();
     const day = today.getDay();
     const diff = day === 0 ? -6 : 1 - day;
     const monday = new Date(today);
     monday.setDate(today.getDate() + diff);
     const results = {};
+    if (!uid) {
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(monday);
+        d.setDate(monday.getDate() + i);
+        const ds = localISODate(d);
+        results[ds] = normalizePlanKeys(weekAssignmentsRef.current[ds] ?? {});
+      }
+      weekAssignmentsRef.current = { ...weekAssignmentsRef.current, ...results };
+      setWeekAssignments((prev) => ({ ...prev, ...results }));
+      return results;
+    }
     const promises = [];
     for (let i = 0; i < 7; i++) {
       const d = new Date(monday);
@@ -598,6 +633,15 @@ export function GardenProvider({ children }) {
       console.warn('GardenContext: failed to save gardenData', e);
     }
   }, [hydrated, goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, weeklyNorthStarId, logs, spiritConfig, compost, soilNutrients, spiritPoints, embers, decorations, ownedSeeds, terrainMap, unlockedAnimals, metrics, fertilizerCount, waterDrops, monthlyQuotas, pausedDays, needsRescheduling, routines]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    try {
+      localStorage.setItem(DAY_PLANS_STORAGE_KEY, JSON.stringify(normalizeStoredDayPlans(weekAssignments)));
+    } catch (e) {
+      console.warn('GardenContext: failed to save day plans', e);
+    }
+  }, [hydrated, weekAssignments]);
 
   // Debounced save to Firestore when goals, logs, weeklyEvents change (and user is logged in)
   useEffect(() => {
@@ -959,6 +1003,57 @@ export function GardenProvider({ children }) {
     return totalArchived;
   }, [googleUser?.uid, goals, addToCompost]);
 
+  /** Wall of Awful cure: auto-compost backlog seeds created 30+ days ago with zero progress. Call quietly during morning check-in. */
+  const compostStaleSeeds = useCallback(() => {
+    const STALE_DAYS = 30;
+    const cutoff = Date.now() - STALE_DAYS * 24 * 60 * 60 * 1000;
+    const getGoalId = (a) => {
+      if (a == null) return null;
+      if (typeof a === 'string') return a;
+      return a?.goalId ?? a?.parentGoalId ?? null;
+    };
+    const stale = [];
+    (goals ?? []).forEach((goal) => {
+      if (goal.type === 'routine') return;
+      const created = goal.createdAt ? new Date(goal.createdAt) : null;
+      if (!created || Number.isNaN(created.getTime())) return;
+      if (created.getTime() > cutoff) return;
+      if ((goal.totalMinutes ?? 0) > 0) return;
+      const subs = goal.subtasks ?? [];
+      const anyProgress = subs.some((s) => (Number(s.completedHours) || 0) > 0);
+      if (anyProgress) return;
+      stale.push({ id: goal.id, title: (goal.title || 'Untitled seed').trim() || 'Untitled seed' });
+    });
+    if (stale.length === 0) return 0;
+    stale.forEach(({ title }) => addToCompost(title));
+    const staleIds = new Set(stale.map((s) => s.id));
+    setGoals((prev) => prev.filter((g) => !staleIds.has(g.id)));
+    setAssignments((prev) => {
+      let changed = false;
+      const result = {};
+      if ('anytime' in prev) {
+        const list = (prev.anytime ?? []).filter((a) => !staleIds.has(getGoalId(a)));
+        if (list.length !== (prev.anytime ?? []).length) changed = true;
+        result.anytime = list;
+      }
+      for (const key of Object.keys(prev).filter((k) => k !== 'anytime')) {
+        const canon = toCanonicalSlotKey(key);
+        if (!canon) continue;
+        const raw = prev[key];
+        const list = Array.isArray(raw) ? raw : raw != null ? [raw] : [];
+        const filtered = list.filter((a) => !staleIds.has(getGoalId(a)));
+        if (filtered.length !== list.length) changed = true;
+        if (result[canon] !== undefined) {
+          result[canon] = [...(Array.isArray(result[canon]) ? result[canon] : [result[canon]]), ...filtered];
+        } else {
+          result[canon] = filtered.length > 0 ? filtered : [];
+        }
+      }
+      return changed ? result : prev;
+    });
+    return stale.length;
+  }, [goals, addToCompost, setGoals, setAssignments]);
+
   /** Critical Mass: soft tasks pushed 3+ days → compost; maintenance (maxDelay 1–2) exceeded → escalate to fixed with warning. */
   const runCriticalMassCheck = useCallback(async () => {
     const uid = googleUser?.uid;
@@ -1141,8 +1236,8 @@ export function GardenProvider({ children }) {
     const sub = {
       id: subtask.id ?? `st-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
       title: subtask.title ?? 'Task',
-      estimatedHours: Number(subtask.estimatedHours) ?? 1,
-      completedHours: Number(subtask.completedHours) ?? 0,
+      estimatedHours: Number.isFinite(Number(subtask.estimatedHours)) ? Number(subtask.estimatedHours) : 1,
+      completedHours: Number.isFinite(Number(subtask.completedHours)) ? Number(subtask.completedHours) : 0,
       deadline: subtask.deadline ?? null,
       color: subtask.color ?? null,
       phaseId: subtask.phaseId ?? null,
@@ -1159,6 +1254,7 @@ export function GardenProvider({ children }) {
   }, []);
 
   const updateSubtask = useCallback((goalId, subtaskId, updates) => {
+    if (typeof updates.completedHours === 'number' && updates.completedHours > 0) vibrateShort();
     setGoals((prev) =>
       prev.map((g) => {
         if (g.id !== goalId || !Array.isArray(g.subtasks)) return g;
@@ -1182,10 +1278,11 @@ export function GardenProvider({ children }) {
     );
   }, []);
 
-  /** Add completed hours to a subtask (e.g. after focus session). */
+  /** Add completed hours to a subtask (e.g. after focus session). completedHours reflects actual logged time; no cap vs estimatedHours. */
   const updateSubtaskProgress = useCallback((goalId, subtaskId, addHours) => {
     const hrs = Number(addHours) || 0;
     if (hrs <= 0) return;
+    vibrateShort();
     setGoals((prev) =>
       prev.map((g) => {
         if (g.id !== goalId || !Array.isArray(g.subtasks)) return g;
@@ -1194,8 +1291,7 @@ export function GardenProvider({ children }) {
           subtasks: g.subtasks.map((s) => {
             if (s.id !== subtaskId) return s;
             const completed = (Number(s.completedHours) || 0) + hrs;
-            const estimated = Number(s.estimatedHours) || 0;
-            return { ...s, completedHours: Math.min(completed, estimated) };
+            return { ...s, completedHours: completed };
           }),
         };
       })
@@ -1212,6 +1308,7 @@ export function GardenProvider({ children }) {
   }, []);
 
   const updateGoalMilestone = useCallback((goalId, milestoneId, completed) => {
+    if (completed) vibrateCelebration();
     setGoals((prev) =>
       prev.map((g) => {
         if (g.id !== goalId) return g;
@@ -1238,6 +1335,7 @@ export function GardenProvider({ children }) {
         const milestones = (g.milestones || []).map((m) => {
           if (m.id !== milestoneId) return m;
           isNowCompleted = !m.completed; // Flip value
+          if (isNowCompleted) vibrateCelebration();
           return { ...m, completed: isNowCompleted };
         });
 
@@ -1352,6 +1450,7 @@ export function GardenProvider({ children }) {
   /** Water a goal: requires 1 water drop, sets lastWatered and rewards +5 Embers. */
   const waterGoal = useCallback((goalId) => {
     if (waterDrops <= 0) throw new Error('No water left');
+    vibrateCelebration();
     setWaterDrops((prev) => Math.max(0, prev - 1));
     editGoal(goalId, { lastWatered: new Date().toISOString() });
     earnEmbers(5);
@@ -1572,8 +1671,11 @@ export function GardenProvider({ children }) {
     setPausedDays(defaultData.pausedDays ?? {});
     setNeedsRescheduling(defaultData.needsRescheduling ?? []);
     setRoutines(defaultData.routines ?? []);
+    weekAssignmentsRef.current = {};
+    setWeekAssignments({});
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(defaultData));
+      localStorage.setItem(DAY_PLANS_STORAGE_KEY, JSON.stringify({}));
     } catch (e) {
       console.warn('GardenContext: failed to clear localStorage', e);
     }
@@ -1587,7 +1689,7 @@ export function GardenProvider({ children }) {
         console.warn('GardenContext: failed to clear cloud data', e);
       }
     }
-  }, [googleUser?.uid]);
+  }, [googleUser?.uid, planDate]);
 
   const value = {
     goals,
@@ -1659,6 +1761,7 @@ export function GardenProvider({ children }) {
     gentleResetToToday,
     archivePlanToCompost,
     archiveStalePlanItems,
+    compostStaleSeeds,
     runCriticalMassCheck,
     weekAssignments,
     setWeekAssignments,
@@ -1732,3 +1835,5 @@ export function useGarden() {
   if (!ctx) throw new Error('useGarden must be used within GardenProvider');
   return ctx;
 }
+
+

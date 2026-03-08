@@ -13,6 +13,12 @@ const SCHEDULING_DEFAULTS = {
   workHours: { start: '09:00', end: '17:00' },
 };
 
+const GARDEN_GRAPHICS_OPTIONS = [
+  { value: 'auto', label: 'Auto', description: 'Adapt visuals based on device capability and motion preference.' },
+  { value: 'smooth', label: 'Smooth', description: 'Prefer richer visuals and animation when possible.' },
+  { value: 'saver', label: 'Saver', description: 'Prefer lower animation cost and better battery life.' },
+];
+
 /** Options for "My Day Starts At" (when the calendar day flips for today/check-in). */
 const DAY_STARTS_AT_OPTIONS = [
   { value: '00:00', label: '12:00 AM (midnight)' },
@@ -49,6 +55,7 @@ export default function SettingsView({ onReplayTour }) {
   const [isWorkScheduler, setIsWorkScheduler] = useState(userSettings.isWorkScheduler ?? SCHEDULING_DEFAULTS.isWorkScheduler);
   const [workHoursStart, setWorkHoursStart] = useState(userSettings.workHours?.start ?? SCHEDULING_DEFAULTS.workHours.start);
   const [workHoursEnd, setWorkHoursEnd] = useState(userSettings.workHours?.end ?? SCHEDULING_DEFAULTS.workHours.end);
+  const [gardenGraphicsMode, setGardenGraphicsMode] = useState(userSettings.gardenGraphicsMode ?? 'auto');
   const [saved, setSaved] = useState(false);
   const [importError, setImportError] = useState(null);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
@@ -75,7 +82,8 @@ export default function SettingsView({ onReplayTour }) {
     setIsWorkScheduler(userSettings.isWorkScheduler ?? SCHEDULING_DEFAULTS.isWorkScheduler);
     setWorkHoursStart(userSettings.workHours?.start ?? SCHEDULING_DEFAULTS.workHours.start);
     setWorkHoursEnd(userSettings.workHours?.end ?? SCHEDULING_DEFAULTS.workHours.end);
-  }, [userSettings.userName, userSettings.defaultWeekStart, userSettings.dayStart, userSettings.dayEnd, userSettings.dayStartsAt, userSettings.isWorkScheduler, userSettings.workHours]);
+    setGardenGraphicsMode(userSettings.gardenGraphicsMode ?? 'auto');
+  }, [userSettings.userName, userSettings.defaultWeekStart, userSettings.dayStart, userSettings.dayEnd, userSettings.dayStartsAt, userSettings.isWorkScheduler, userSettings.workHours, userSettings.gardenGraphicsMode]);
 
   const handleSave = () => {
     setUserSettings?.({
@@ -87,6 +95,7 @@ export default function SettingsView({ onReplayTour }) {
       dayStartsAt,
       isWorkScheduler,
       workHours: { start: workHoursStart, end: workHoursEnd },
+      gardenGraphicsMode,
     });
     setSaved(true);
     const t = setTimeout(() => setSaved(false), 2000);
@@ -315,6 +324,33 @@ export default function SettingsView({ onReplayTour }) {
               </div>
             </div>
           )}
+        </div>
+
+        <div className="border-t border-stone-100 pt-6">
+          <h3 className="font-sans text-sm font-semibold text-stone-800 mb-1">Garden Graphics</h3>
+          <p className="font-sans text-xs text-stone-500 mb-4">Controls visual quality and animation intensity in the 3D garden.</p>
+          <div className="grid gap-3">
+            {GARDEN_GRAPHICS_OPTIONS.map((option) => (
+              <label
+                key={option.value}
+                className={`flex items-start gap-3 rounded-xl border px-4 py-3 cursor-pointer transition-colors ${
+                  gardenGraphicsMode === option.value ? 'border-moss-300 bg-moss-50' : 'border-stone-200 bg-white hover:bg-stone-50'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="gardenGraphicsMode"
+                  checked={gardenGraphicsMode === option.value}
+                  onChange={() => setGardenGraphicsMode(option.value)}
+                  className="mt-1 text-moss-600 focus:ring-moss-500"
+                />
+                <span>
+                  <span className="block font-sans text-sm font-medium text-stone-700">{option.label}</span>
+                  <span className="block font-sans text-xs text-stone-500 mt-0.5">{option.description}</span>
+                </span>
+              </label>
+            ))}
+          </div>
         </div>
 
         <div className="flex gap-3 pt-2">

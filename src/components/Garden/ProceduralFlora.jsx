@@ -1,7 +1,7 @@
 import React, { useMemo, useRef, useContext } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { useGLTF } from '@react-three/drei';
-import { getGoalProgressPercent, getHash } from './GardenWalk';
+import { getGoalProgressPercent, getHash } from './gardenProgress';
 import { LowPerfContext } from './Garden3D';
 
 export function KenneyModel({ path, scale = 1, lowPerf = false }) {
@@ -55,7 +55,7 @@ export default function ProceduralFlora({ goal, isHovered }) {
 
   const plantRef = useRef();
   useFrame((state) => {
-    if (!plantRef.current) return;
+    if (!plantRef.current || lowPerf) return;
     const time = state.clock.elapsedTime;
     plantRef.current.rotation.x = Math.sin(time * 0.5 + hash) * 0.02;
     plantRef.current.rotation.z = Math.cos(time * 0.4 + hash) * 0.02;

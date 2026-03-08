@@ -9,6 +9,15 @@ import { db } from '../firebase/firebaseConfig';
 const GARDEN_DOC = 'data';
 const ENERGY_DICTIONARY_DOC = 'energyDictionary';
 
+function toFiniteNumber(value, fallback) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function normalizeEstimatedCost(value, fallback = 1) {
+  return Math.max(0, Math.min(3, toFiniteNumber(value, fallback)));
+}
+
 /** Normalize task name for dictionary key: lowercase, strip emojis and extra spaces. Forgiving matching. */
 export function normalizeTaskName(title) {
   if (title == null || typeof title !== 'string') return '';
@@ -30,7 +39,7 @@ export function normalizeTaskName(title) {
 function computeLearnedCost(entry) {
   const drain = Number(entry?.timesDraining) || 0;
   const energize = Number(entry?.timesEnergizing) || 0;
-  const estimated = Math.max(0, Math.min(3, Number(entry?.estimatedCost) ?? 1));
+  const estimated = normalizeEstimatedCost(entry?.estimatedCost, 1);
 
   if (energize > drain) return 0;
   if (drain >= 2 * (energize + 1)) return Math.min(3, estimated + 1);
@@ -66,10 +75,10 @@ export async function recordVibe(uid, taskTitle, vibe, estimatedCost) {
   const existing = entries[key] || {
     timesDraining: 0,
     timesEnergizing: 0,
-    estimatedCost: Math.max(0, Math.min(3, Number(estimatedCost) ?? 1)),
+    estimatedCost: normalizeEstimatedCost(estimatedCost, 1),
   };
   if (existing.estimatedCost == null || Number.isNaN(existing.estimatedCost)) {
-    existing.estimatedCost = Math.max(0, Math.min(3, Number(estimatedCost) ?? 1));
+    existing.estimatedCost = normalizeEstimatedCost(estimatedCost, 1);
   }
 
   if (vibe === 'drainer') {

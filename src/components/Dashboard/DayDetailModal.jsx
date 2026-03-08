@@ -1,4 +1,4 @@
-import { motion, AnimatePresence } from 'framer-motion';
+﻿import { motion, AnimatePresence } from 'framer-motion';
 
 const StormIcon = () => (
   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" className="text-slate-600 shrink-0" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -97,11 +97,11 @@ export default function DayDetailModal({ day, open, onClose, dateLabel = '', eve
                 </div>
               ) : (
                 <ul className="space-y-3">
-                  {sortedEvents.map((event) => {
+                  {sortedEvents.map((event, idx) => {
                     const timeStr = formatEventTime(event.start);
                     const durationStr = formatEventDuration(event.start, event.end);
                     return (
-                      <li key={event.id ?? event.title ?? Math.random()}>
+                      <li key={event.id ?? `${event.title ?? 'event'}-${event.start ?? idx}-${idx}`}>
                         <div className="rounded-lg bg-white p-3 shadow-sm border border-stone-100 flex items-center gap-3">
                           <div className="shrink-0 w-12 font-sans text-sm font-medium text-stone-500 tabular-nums">
                             {timeStr}

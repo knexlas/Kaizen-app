@@ -45,6 +45,16 @@ export function buildReward(input) {
         variableBonus,
       };
     }
+    /** User logged more time than estimated (time blindness / perseverance). */
+    case 'FOCUS_PERSEVERANCE': {
+      return {
+        message: 'Wow, this seed had deep roots! You put in more time than we planned—here are some extra Embers for your perseverance.',
+        tone: 'moss',
+        icon: '🌿',
+        durationMs: 3200,
+        variableBonus: { embers: 2 },
+      };
+    }
     case 'MILESTONE_COMPLETE': {
       const { milestoneTitle } = payload;
       return {

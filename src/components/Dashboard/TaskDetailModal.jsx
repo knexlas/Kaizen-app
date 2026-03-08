@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+﻿import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const uid = () => crypto.randomUUID?.() ?? `item-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -51,6 +51,8 @@ export default function TaskDetailModal({
   const [subTasks, setSubTasks] = useState([]); // { id, title, completed }[]
   const [recurringDays, setRecurringDays] = useState([]); // [0..6] for routine subtask per-task recurrence
   const [linkedRoutineId, setLinkedRoutineId] = useState('');
+  const [estimatedHours, setEstimatedHours] = useState('');
+  const [completedHours, setCompletedHours] = useState('');
 
   const taskKey = taskRef ? `${taskRef.type}-${taskRef.goalId ?? ''}-${taskRef.subtaskId ?? ''}-${taskRef.milestoneIndex ?? ''}-${taskRef.taskIndex ?? ''}` : '';
   const DAY_LETTERS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
@@ -66,6 +68,10 @@ export default function TaskDetailModal({
     setSubTasks(Array.isArray(r.task.subTasks) ? r.task.subTasks.map((s) => ({ ...s, id: s.id || uid(), title: s.title ?? '', completed: !!s.completed })) : []);
     setRecurringDays(Array.isArray(r.task.days) ? [...r.task.days] : []);
     setLinkedRoutineId(r.task.linkedRoutineId ?? '');
+    const est = r.task.estimatedHours;
+    const comp = r.task.completedHours;
+    setEstimatedHours(typeof est === 'number' && !Number.isNaN(est) ? String(est) : est != null ? String(est) : '');
+    setCompletedHours(typeof comp === 'number' && !Number.isNaN(comp) ? String(comp) : comp != null ? String(comp) : '');
   }, [open, taskKey, goals]);
 
   const handleSave = useCallback(() => {
@@ -83,10 +89,14 @@ export default function TaskDetailModal({
       if (resolved.goal?.type === 'routine') payload.days = recurringDays.length > 0 ? recurringDays.slice().sort((a, b) => a - b) : undefined;
       if (linkedRoutineId) payload.linkedRoutineId = linkedRoutineId;
       else payload.linkedRoutineId = undefined;
+      const estNum = parseFloat(estimatedHours);
+      const compNum = parseFloat(completedHours);
+      if (!Number.isNaN(estNum) && estNum >= 0) payload.estimatedHours = estNum;
+      if (!Number.isNaN(compNum) && compNum >= 0) payload.completedHours = compNum;
       onUpdateSubtask(resolved.goal.id, resolved.task.id, payload);
     }
     onClose?.();
-  }, [resolved, title, notes, subTasks, recurringDays, linkedRoutineId, onUpdateNarrativeTask, onUpdateSubtask, onClose]);
+  }, [resolved, title, notes, subTasks, recurringDays, linkedRoutineId, estimatedHours, completedHours, onUpdateNarrativeTask, onUpdateSubtask, onClose]);
 
   const addSubTask = useCallback(() => {
     setSubTasks((prev) => [...prev, { id: uid(), title: '', completed: false }]);
@@ -120,15 +130,15 @@ export default function TaskDetailModal({
           exit={{ opacity: 0, scale: 0.96 }}
           transition={{ duration: 0.2 }}
           onClick={(e) => e.stopPropagation()}
-          className="w-full max-w-lg max-h-[90vh] flex flex-col rounded-2xl bg-white border border-stone-200 shadow-xl overflow-hidden"
+          className="w-full max-w-lg max-h-[90vh] flex flex-col rounded-3xl bg-white/85 backdrop-blur-md border border-white/50 shadow-2xl overflow-hidden"
         >
-          <header className="shrink-0 px-5 py-4 border-b border-stone-200 flex items-center justify-between gap-2">
+          <header className="shrink-0 px-5 py-4 border-b border-stone-200/80 flex items-center justify-between gap-2">
             <h2 id="task-detail-title" className="font-serif text-stone-900 text-lg truncate">
               Task details
             </h2>
-            <button type="button" onClick={onClose} className="p-2 rounded-lg text-stone-400 hover:text-stone-600 hover:bg-stone-100" aria-label="Close">
+            <motion.button type="button" onClick={onClose} className="p-2 rounded-lg text-stone-400 hover:text-stone-600 hover:bg-stone-100" aria-label="Close" whileTap={{ scale: 0.95 }}>
               ✕
-            </button>
+            </motion.button>
           </header>
 
           <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4 min-h-0">
@@ -146,6 +156,42 @@ export default function TaskDetailModal({
                     placeholder="Task title"
                   />
                 </div>
+                {resolved.type === 'subtask' && (
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label htmlFor="task-detail-estimated-hours" className="block font-sans text-sm font-medium text-stone-700 mb-1">
+                        Estimated Hours
+                      </label>
+                      <input
+                        id="task-detail-estimated-hours"
+                        type="number"
+                        min={0}
+                        step={0.1}
+                        value={estimatedHours}
+                        onChange={(e) => setEstimatedHours(e.target.value)}
+                        className="w-full px-3 py-2 rounded-lg border border-stone-300 font-sans text-stone-900 focus:ring-2 focus:ring-moss-500/50 focus:border-moss-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                        placeholder="0"
+                        aria-label="Estimated hours for this task"
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="task-detail-completed-hours" className="block font-sans text-sm font-medium text-stone-700 mb-1">
+                        Logged Hours
+                      </label>
+                      <input
+                        id="task-detail-completed-hours"
+                        type="number"
+                        min={0}
+                        step={0.1}
+                        value={completedHours}
+                        onChange={(e) => setCompletedHours(e.target.value)}
+                        className="w-full px-3 py-2 rounded-lg border border-stone-300 font-sans text-stone-900 focus:ring-2 focus:ring-moss-500/50 focus:border-moss-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                        placeholder="0"
+                        aria-label="Logged hours completed for this task"
+                      />
+                    </div>
+                  </div>
+                )}
                 {showHabitStack && (
                   <div>
                     <label className="block font-sans text-sm font-medium text-stone-700 mb-1">🔗 Habit Stack (Optional)</label>
@@ -226,13 +272,13 @@ export default function TaskDetailModal({
             )}
           </div>
 
-          <footer className="shrink-0 px-5 py-4 border-t border-stone-200 flex gap-2 justify-end">
-            <button type="button" onClick={onClose} className="px-4 py-2 rounded-lg font-sans text-sm font-medium text-stone-600 bg-stone-100 hover:bg-stone-200">
+          <footer className="shrink-0 px-5 py-4 border-t border-stone-200/80 flex gap-2 justify-end">
+            <motion.button type="button" onClick={onClose} className="px-4 py-2 rounded-lg font-sans text-sm font-medium text-stone-600 bg-stone-100 hover:bg-stone-200" whileTap={{ scale: 0.95 }}>
               Cancel
-            </button>
-            <button type="button" onClick={handleSave} disabled={!resolved} className="px-4 py-2 rounded-lg font-sans text-sm font-medium text-white bg-moss-600 hover:bg-moss-700 disabled:opacity-50">
+            </motion.button>
+            <motion.button type="button" onClick={handleSave} disabled={!resolved} className="px-4 py-2 rounded-lg font-sans text-sm font-medium text-white bg-moss-600 hover:bg-moss-700 disabled:opacity-50" whileTap={{ scale: 0.95 }}>
               Save
-            </button>
+            </motion.button>
           </footer>
         </motion.div>
       </motion.div>

@@ -92,7 +92,8 @@ export default function ProjectPlanner({ open, onClose, onCreateGoals, prefillTi
         if (!selectedTasks.has(task.title)) return;
         if (linkedGoals[task.title]) return;
 
-        const estimatedHours = Math.max(0, Number(task.estimatedHours) ?? 2);
+        const estimatedRaw = Number(task.estimatedHours);
+        const estimatedHours = Math.max(0, Number.isFinite(estimatedRaw) ? estimatedRaw : 2);
         subtasks.push({
           id: uid(),
           phaseId: phaseId,

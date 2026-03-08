@@ -390,7 +390,7 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
       ? {
           metricName: trackingChoice === 'create_new' ? trimmedTitle : (metricName.trim() || trimmedTitle),
           unit: metricUnit.trim() || undefined,
-          currentValue: Number(metricCurrentValue) ?? 0,
+          currentValue: Number.isFinite(Number(metricCurrentValue)) ? Number(metricCurrentValue) : 0,
           targetValue: metricTargetValue !== '' && !Number.isNaN(Number(metricTargetValue)) ? Number(metricTargetValue) : undefined,
           direction: metricDirection,
         }

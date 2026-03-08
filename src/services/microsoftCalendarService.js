@@ -1,4 +1,5 @@
 const GRAPH_API_BASE = 'https://graph.microsoft.com/v1.0';
+import { classifyCalendarEvent } from './calendarEventClassifier';
 
 let msalInstance = null;
 
@@ -192,10 +193,7 @@ export async function fetchOutlookEvents(accessToken, timeMin, timeMax) {
   // Map Microsoft Graph events to Garden Weather format
   return (data.value || []).map(event => {
     const title = event.subject || 'Busy';
-    // Simple logic to guess weather type based on keywords (same as Google Calendar)
-    let type = 'leaf';
-    if (title.match(/deadline|urgent|review|meeting/i)) type = 'storm';
-    if (title.match(/lunch|gym|break|coffee/i)) type = 'sun';
+    const { type } = classifyCalendarEvent(title);
 
     return {
       id: event.id,

@@ -3,12 +3,13 @@ import { useFrame } from '@react-three/fiber';
 import { Sphere, Cone, Html } from '@react-three/drei';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useGarden } from '../../context/GardenContext';
-import { getGoalProgressPercent } from './GardenWalk';
-import { LowPerfContext } from './Garden3D';
+import { getGoalProgressPercent } from './gardenProgress';
+import { LowPerfContext, MotionPausedContext } from './Garden3D';
 
 export default function Mochi3D({ isWalking }) {
   const { goals } = useGarden();
   const lowPerf = useContext(LowPerfContext);
+  const motionPaused = useContext(MotionPausedContext);
   const shadow = !lowPerf;
   const group = useRef(null);
   const [thought, setThought] = useState(null);
@@ -47,7 +48,7 @@ export default function Mochi3D({ isWalking }) {
   }, [isWalking, goals]);
 
   useFrame((state) => {
-    if (!group.current) return;
+    if (!group.current || motionPaused) return;
     const t = state.clock.elapsedTime;
     const jump = isHappy ? Math.abs(Math.sin(state.clock.elapsedTime * 15)) * 0.3 : 0;
     group.current.position.y = Math.sin(t * 2) * 0.1 + jump;

@@ -1,15 +1,17 @@
 import { useRef, useEffect, useContext } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { Sphere, Cone, Cylinder } from '@react-three/drei';
-import { LowPerfContext } from './Garden3D';
+import { LowPerfContext, MotionPausedContext } from './Garden3D';
 
 export default function Owl3D({ position = [0, 0, 0] }) {
   const group = useRef();
   const lowPerf = useContext(LowPerfContext);
+  const motionPaused = useContext(MotionPausedContext);
   const shadow = !lowPerf;
   const baseY = useRef(position[1]);
   useEffect(() => { baseY.current = position[1]; }, [position]);
   useFrame(({ clock }) => {
+    if (motionPaused) return;
     if (group.current) group.current.position.y = baseY.current + Math.sin(clock.elapsedTime * 2) * 0.02;
   });
 

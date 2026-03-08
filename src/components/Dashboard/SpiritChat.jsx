@@ -5,6 +5,7 @@ import { chatWithSpirit, suggestGoalStructure } from '../../services/geminiServi
 import { useGarden } from '../../context/GardenContext';
 import { extractActionCandidate, splitIntoSteps } from '../../services/aiActionExtractor';
 import { HOURS, getAssignmentsForHour } from './TimeSlicer';
+import { startFocusCommand } from '../../services/coreCommands';
 
 const SPIRIT_EMOJI_BY_TYPE = { mochi: '🐱', cat: '🐱', ember: '🔥', nimbus: '☁️', owl: '🦉' };
 
@@ -102,10 +103,11 @@ export default function SpiritChat({ open, onClose, context = {} }) {
         break;
       }
       case 'START_FOCUS_5': {
-        const goal = makeGoal(title);
-        addGoal(goal);
+        const { goalToCreate, session } = startFocusCommand({ title, minutes: 5 });
+        if (!goalToCreate || !session) break;
+        addGoal(goalToCreate);
         if (typeof window !== 'undefined') {
-          window.dispatchEvent(new CustomEvent('kaizen:startFocus', { detail: { goal, title, minutes: 5 } }));
+          window.dispatchEvent(new CustomEvent('kaizen:startFocus', { detail: { goal: session, title, minutes: 5 } }));
         }
         fireToast('Starting 5 min focus 🌱');
         break;

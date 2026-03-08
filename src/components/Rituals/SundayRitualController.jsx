@@ -3,7 +3,6 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useGarden } from '../../context/GardenContext';
 import { fetchGoogleEvents } from '../../services/googleCalendarService';
 import { getVolumePacing } from '../../services/plannerEngine';
-import { getWeeklyPlanningPromptsForGoals, getSupportSuggestionsForDomain, buildSupportGoal } from '../../services/goalSupportService';
 import WeeklyReview from './WeeklyReview';
 import GardenIntro from './GardenIntro';
 import EventPruner from './EventPruner';
@@ -141,74 +140,6 @@ function PacingStep({ goals, addSpawnedVolumeBlocks, onContinue }) {
   );
 }
 
-/** Domain-aware planning: one optional card per domain (trading, fitness, creative, etc.). */
-function PlanningSupportStep({ goals, addGoal, addSpawnedVolumeBlocks, onContinue }) {
-  const prompts = useMemo(() => getWeeklyPlanningPromptsForGoals(goals), [goals]);
-
-  const handleAddToWeek = useCallback(
-    (prompt) => {
-      const suggestions = getSupportSuggestionsForDomain(prompt.domainId);
-      const first = suggestions[0];
-      if (!first) return;
-      const supportGoal = buildSupportGoal(first, null, '');
-      addGoal(supportGoal);
-      const blockValue = (supportGoal.estimatedMinutes || 30) / 60;
-      addSpawnedVolumeBlocks([
-        {
-          id: `spawned-${supportGoal.id}-${Date.now()}`,
-          goalId: supportGoal.id,
-          goalTitle: supportGoal.title,
-          blockValue: Math.max(0.25, Math.min(2, blockValue)),
-          targetMetric: 'Hours',
-        },
-      ]);
-      window.dispatchEvent(new CustomEvent('kaizen:toast', { detail: { message: 'Added to your week. You can drag it onto a day in the Planner.' } }));
-    },
-    [addGoal, addSpawnedVolumeBlocks]
-  );
-
-  return (
-    <div className="w-full max-w-2xl rounded-xl border-2 border-moss-500 bg-stone-50 shadow-sm overflow-hidden">
-      <header className="p-6 pb-4 border-b border-stone-200">
-        <h1 className="font-serif text-stone-900 text-2xl md:text-3xl">Planning support</h1>
-        <p className="font-sans text-stone-600 text-sm mt-1">
-          Optional: add a small block to support your goals this week.
-        </p>
-      </header>
-      <div className="p-6">
-        {prompts.length === 0 ? (
-          <p className="font-sans text-stone-500 text-sm mb-4">No domain-specific prompts this week. You can add support habits when you create or edit goals.</p>
-        ) : (
-          <ul className="space-y-4 mb-6">
-            {prompts.map((p) => (
-              <li key={p.domainId} className="p-4 rounded-xl border border-stone-200 bg-white">
-                <p className="font-sans font-medium text-stone-800 mb-1">{p.title}</p>
-                <p className="font-sans text-sm text-stone-600 mb-3">{p.description}</p>
-                <button
-                  type="button"
-                  onClick={() => handleAddToWeek(p)}
-                  className="py-2 px-4 rounded-lg font-sans text-sm font-medium bg-moss-500 text-stone-50 hover:bg-moss-600 focus:outline-none focus:ring-2 focus:ring-moss-500/50"
-                >
-                  {p.actionLabel}
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-        <div className="flex justify-end">
-          <button
-            type="button"
-            onClick={onContinue}
-            className="py-3 px-6 font-sans font-medium rounded-lg bg-moss-500 text-stone-50 hover:bg-moss-600 focus:outline-none focus:ring-2 focus:ring-moss-500/50"
-          >
-            Continue
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function NorthStarStep({ goals, weeklyNorthStarId, onSelect, onContinue }) {
   const candidates = northStarCandidates(goals);
   const selected = weeklyNorthStarId != null;
@@ -285,7 +216,7 @@ function NorthStarStep({ goals, weeklyNorthStarId, onSelect, onContinue }) {
 }
 
 export default function SundayRitualController({ onComplete }) {
-  const { goals, weeklyEvents, updateWeeklyEvents, weeklyNorthStarId, setWeeklyNorthStarId, googleToken, addSpawnedVolumeBlocks, addGoal } = useGarden();
+  const { goals, weeklyEvents, updateWeeklyEvents, weeklyNorthStarId, setWeeklyNorthStarId, googleToken, addSpawnedVolumeBlocks } = useGarden();
   const [step, setStep] = useState('harvest');
   const [googleEvents, setGoogleEvents] = useState([]);
   const [importingFromCloud, setImportingFromCloud] = useState(false);
@@ -407,13 +338,7 @@ export default function SundayRitualController({ onComplete }) {
 
         {step === 'pacing' && (
           <motion.div key="pacing" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="w-full max-w-2xl">
-            <PacingStep goals={goals} addSpawnedVolumeBlocks={addSpawnedVolumeBlocks} onContinue={() => setStep('planningSupport')} />
-          </motion.div>
-        )}
-
-        {step === 'planningSupport' && (
-          <motion.div key="planningSupport" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="w-full max-w-2xl">
-            <PlanningSupportStep goals={goals} addGoal={addGoal} addSpawnedVolumeBlocks={addSpawnedVolumeBlocks} onContinue={() => setStep('pruning')} />
+            <PacingStep goals={goals} addSpawnedVolumeBlocks={addSpawnedVolumeBlocks} onContinue={() => setStep('pruning')} />
           </motion.div>
         )}
 

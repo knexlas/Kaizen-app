@@ -11,7 +11,8 @@ import {
 } from '@dnd-kit/core';
 import { motion, AnimatePresence } from 'framer-motion';
 import { localISODate } from '../../services/dateUtils';
-import { checkPlacementConflict, findNextAvailableStart, toCanonicalSlotKey } from '../../services/schedulingConflictService';
+import { checkPlacementConflict, findNextAvailableStart, toCanonicalSlotKey, slotKeyToMinutesSinceMidnight, minutesToCanonicalSlotKey } from '../../services/schedulingConflictService';
+import { dedupeCalendarEventsForDate, getPlanItemsForDate as getPlanItemsForDateShared } from '../../services/scheduleAdapter';
 
 const WEEKDAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const MAX_DAILY_SPARKS = 10;
@@ -135,9 +136,8 @@ function getEventsForDate(weeklyEvents, dateStr) {
   });
 }
 
-function isAssignmentFixed(a) {
-  if (!a || typeof a !== 'object') return false;
-  return a.isFixed === true || a.type === 'fixed' || a.fixed === true;
+function getVisibleEventsForDate(weeklyEvents, weekAssignments, dateStr) {
+  return dedupeCalendarEventsForDate(weeklyEvents, weekAssignments?.[dateStr], dateStr);
 }
 
 /** Capacity bar for a day column: total Sparks vs max; warning when over. */
@@ -309,8 +309,14 @@ function GroupedBacklogList({ flatTasks, selectedTaskId, onSelectTask, compact =
   );
 }
 
-/** Decimal hour (e.g. 9.5) to "HH:mm" for input type="time". */
+/** Slot (decimal hour or "HH:MM" string) to "HH:mm" for input type="time". */
 function timeSlotToInput(slot) {
+  if (slot != null && typeof slot === 'string' && /^\d{1,2}:\d{1,2}$/.test(slot.trim())) {
+    const [h, m] = slot.trim().split(':').map(Number);
+    if (Number.isFinite(h) && Number.isFinite(m) && h >= 0 && h <= 23 && m >= 0 && m <= 59) {
+      return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+    }
+  }
   const n = Number(slot);
   if (!Number.isFinite(n)) return '09:00';
   const h = Math.floor(n);
@@ -318,12 +324,12 @@ function timeSlotToInput(slot) {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
-/** "HH:mm" string to decimal hour key. */
+/** "HH:mm" string to slot (decimal hour or canonical "HH:MM" for consistency). */
 function inputToTimeSlot(str) {
   if (!str || typeof str !== 'string') return 9;
   const [h, m] = str.split(':').map(Number);
   if (!Number.isFinite(h)) return 9;
-  const mins = Number.isFinite(m) ? m : 0;
+  const mins = Number.isFinite(m) ? Math.max(0, Math.min(59, m)) : 0;
   return h + mins / 60;
 }
 
@@ -342,14 +348,20 @@ function getTaskDurationMinutes(selectedTask, goals) {
   return 60;
 }
 
+function normalizeEventDurationInput(value, fallback = 60) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(15, Math.min(480, parsed));
+}
+
 /** Drawer: "Schedule for [date]" — pick time + task from backlog, or add event/block. */
-export function PlanDayDrawer({ dateStr, open, onClose, backlogTasks, loadDayPlan, saveDayPlanForDate, goals = [] }) {
+export function PlanDayDrawer({ dateStr, open, onClose, backlogTasks, loadDayPlan, saveDayPlanForDate, goals = [], weeklyEvents = [] }) {
   const [planMode, setPlanMode] = useState('task'); // 'task' | 'event'
   const [timeSlot, setTimeSlot] = useState(9);
   const [timeInput, setTimeInput] = useState('09:00');
   const [selectedTask, setSelectedTask] = useState(null);
   const [eventTitle, setEventTitle] = useState('');
-  const [eventDuration, setEventDuration] = useState(60);
+  const [eventDuration, setEventDuration] = useState('60');
   const [saving, setSaving] = useState(false);
   const [existingPlan, setExistingPlan] = useState(null);
   const [conflictResult, setConflictResult] = useState(null); // { conflictingItem, occupiedHours } when placement would overwrite
@@ -368,8 +380,8 @@ export function PlanDayDrawer({ dateStr, open, onClose, backlogTasks, loadDayPla
         if (cancelled) return;
         const planObj = plan && typeof plan === 'object' ? plan : {};
         setExistingPlan(planObj);
-        const firstFreeHour = findNextAvailableStart(planObj, 8, 60);
-        const slot = firstFreeHour !== null ? firstFreeHour : 9;
+        const firstFree = findNextAvailableStart(planObj, 8, 60);
+        const slot = firstFree !== null ? firstFree : '09:00';
         setTimeSlot(slot);
         setTimeInput(timeSlotToInput(slot));
       } catch {
@@ -400,8 +412,7 @@ export function PlanDayDrawer({ dateStr, open, onClose, backlogTasks, loadDayPla
         });
       } else {
         const durationMinutes = getTaskDurationMinutes(selectedTask, goals);
-        const startHour = Math.floor(Number(timeSlot));
-        const conflict = checkPlacementConflict(planObj, startHour, durationMinutes);
+        const conflict = checkPlacementConflict(planObj, timeSlot, durationMinutes);
         if (conflict.conflict) {
           setConflictResult(conflict);
           setSaving(false);
@@ -422,7 +433,7 @@ export function PlanDayDrawer({ dateStr, open, onClose, backlogTasks, loadDayPla
         const planObjAfter = planAfter && typeof planAfter === 'object' ? planAfter : {};
         setExistingPlan(planObjAfter);
         const nextFree = findNextAvailableStart(planObjAfter, 8, 60);
-        const slot = nextFree !== null ? nextFree : 9;
+        const slot = nextFree !== null ? nextFree : '09:00';
         setTimeSlot(slot);
         setTimeInput(timeSlotToInput(slot));
       } else {
@@ -438,14 +449,13 @@ export function PlanDayDrawer({ dateStr, open, onClose, backlogTasks, loadDayPla
   const handleSaveEvent = useCallback(async (addAnother = false) => {
     const title = (eventTitle || '').trim();
     if (!dateStr || !title || typeof loadDayPlan !== 'function' || typeof saveDayPlanForDate !== 'function') return;
-    const durationMinutes = Math.max(15, Math.min(480, Number(eventDuration) || 60));
+    const durationMinutes = normalizeEventDurationInput(eventDuration, 60);
     setConflictResult(null);
     setSaving(true);
     try {
       const plan = await loadDayPlan(dateStr);
       const planObj = plan && typeof plan === 'object' ? plan : {};
-      const startHour = Math.floor(Number(timeSlot));
-      const conflict = checkPlacementConflict(planObj, startHour, durationMinutes);
+      const conflict = checkPlacementConflict(planObj, timeSlot, durationMinutes);
       if (conflict.conflict) {
         setConflictResult(conflict);
         setSaving(false);
@@ -460,7 +470,7 @@ export function PlanDayDrawer({ dateStr, open, onClose, backlogTasks, loadDayPla
         const planObjAfter = planAfter && typeof planAfter === 'object' ? planAfter : {};
         setExistingPlan(planObjAfter);
         const nextFree = findNextAvailableStart(planObjAfter, 8, 60);
-        const slot = nextFree !== null ? nextFree : 9;
+        const slot = nextFree !== null ? nextFree : '09:00';
         setTimeSlot(slot);
         setTimeInput(timeSlotToInput(slot));
       } else {
@@ -478,12 +488,13 @@ export function PlanDayDrawer({ dateStr, open, onClose, backlogTasks, loadDayPla
     const durationMinutes =
       planMode === 'task'
         ? getTaskDurationMinutes(selectedTask, goals)
-        : Math.max(15, Math.min(480, Number(eventDuration) || 60));
-    const startHour = Math.floor(Number(timeSlot));
-    const nextHour = findNextAvailableStart(existingPlan, startHour + 1, durationMinutes);
-    if (nextHour != null) {
-      setTimeSlot(nextHour);
-      setTimeInput(timeSlotToInput(nextHour));
+        : normalizeEventDurationInput(eventDuration, 60);
+    const fromMins = slotKeyToMinutesSinceMidnight(timeSlot);
+    const fromNext = fromMins != null ? minutesToCanonicalSlotKey(fromMins + 1) : '08:00';
+    const nextSlot = findNextAvailableStart(existingPlan, fromNext, durationMinutes);
+    if (nextSlot != null) {
+      setTimeSlot(nextSlot);
+      setTimeInput(timeSlotToInput(nextSlot));
       setConflictResult(null);
     }
   }, [existingPlan, planMode, selectedTask, goals, eventDuration, timeSlot]);
@@ -504,6 +515,7 @@ export function PlanDayDrawer({ dateStr, open, onClose, backlogTasks, loadDayPla
       return dateStr;
     }
   })();
+  const visibleDayEvents = dedupeCalendarEventsForDate(weeklyEvents, existingPlan, dateStr);
 
   return (
     <AnimatePresence>
@@ -530,13 +542,34 @@ export function PlanDayDrawer({ dateStr, open, onClose, backlogTasks, loadDayPla
             Schedule for this day
           </h2>
           <p className="font-sans text-sm text-stone-500 mb-2">{dateLabel}</p>
-          {existingPlan && Object.keys(existingPlan).length > 0 && (
+          {(visibleDayEvents.length > 0 || (existingPlan && Object.keys(existingPlan).length > 0)) && (
             <div className="mb-3 p-2.5 rounded-lg bg-stone-50 border border-stone-200">
-              <p className="font-sans text-xs font-semibold text-stone-600 uppercase tracking-wider mb-1.5">Already scheduled</p>
+              <p className="font-sans text-xs font-semibold text-stone-600 uppercase tracking-wider mb-1.5">Already on this day</p>
+              {visibleDayEvents.length > 0 && (
+                <ul className="space-y-0.5 font-sans text-sm text-sky-800 mb-2">
+                  {visibleDayEvents.map((event, index) => {
+                    const rawStart = event?.start ?? event?.date ?? null;
+                    const parsedStart = rawStart ? new Date(rawStart) : null;
+                    const timeLabel = parsedStart && !Number.isNaN(parsedStart.getTime())
+                      ? parsedStart.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+                      : 'Event';
+                    return (
+                      <li key={event.id ?? `event-${index}`} className="flex gap-2">
+                        <span className="font-mono text-xs text-sky-500 shrink-0">{timeLabel}</span>
+                        <span className="truncate">{event.title ?? event.summary ?? 'Calendar event'}</span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
               <ul className="space-y-0.5 font-sans text-sm text-stone-700">
-                {Object.entries(existingPlan)
+                {Object.entries(existingPlan ?? {})
                   .filter(([k, a]) => k !== 'anytime' && a != null)
-                  .sort(([a], [b]) => (a === 'anytime' ? 1 : Number(a)) - (b === 'anytime' ? 1 : Number(b)))
+                  .sort(([a], [b]) => {
+                    const left = slotKeyToMinutesSinceMidnight(a);
+                    const right = slotKeyToMinutesSinceMidnight(b);
+                    return (left ?? Number.MAX_SAFE_INTEGER) - (right ?? Number.MAX_SAFE_INTEGER);
+                  })
                   .map(([hour, a]) => {
                     let title = 'Task';
                     if (typeof a === 'object' && a.type === 'event') title = a.title ?? 'Event';
@@ -550,7 +583,9 @@ export function PlanDayDrawer({ dateStr, open, onClose, backlogTasks, loadDayPla
                     }
                     return (
                       <li key={hour} className="flex gap-2">
-                        <span className="font-mono text-xs text-stone-500 shrink-0">{formatHourKey(Number(hour))}</span>
+                        <span className="font-mono text-xs text-stone-500 shrink-0">
+                          {typeof hour === 'string' && hour.includes(':') ? hour : formatHourKey(Number(hour))}
+                        </span>
                         <span className="truncate">{title}</span>
                       </li>
                     );
@@ -645,7 +680,8 @@ export function PlanDayDrawer({ dateStr, open, onClose, backlogTasks, loadDayPla
                   max={480}
                   step={15}
                   value={eventDuration}
-                  onChange={(e) => setEventDuration(Number(e.target.value) || 60)}
+                  onChange={(e) => setEventDuration(e.target.value)}
+                  onBlur={() => setEventDuration(String(normalizeEventDurationInput(eventDuration, 60)))}
                   className="w-full px-3 py-2 rounded-lg border border-stone-300 font-sans text-sm"
                 />
               </>
@@ -744,7 +780,7 @@ function ScheduleDrawer({ selected, open, onClose, weekViewDays, today, onSelect
       return localISODate(t) === dateStr;
     })();
     const short = d.toLocaleDateString(undefined, { weekday: 'short' });
-    const events = getEventsForDate(weeklyEvents, dateStr);
+    const events = getVisibleEventsForDate(weeklyEvents, weekAssignments, dateStr);
     const planItems = getPlanItemsForDate(weekAssignments, goals, dateStr);
     const scheduled = scheduledTasks[dateStr] || [];
     const eventCount = events.length;
@@ -813,25 +849,7 @@ function ScheduleDrawer({ selected, open, onClose, weekViewDays, today, onSelect
 
 /** Get plan items for a date from weekAssignments (with isFixed for visual weight). Exported for Command Center Today strip. */
 export function getPlanItemsForDate(weekAssignments, goals, dateStr) {
-  const dayPlan = weekAssignments?.[dateStr];
-  if (!dayPlan || typeof dayPlan !== 'object') return [];
-  const goalMap = new Map((goals ?? []).map((g) => [g.id, g]));
-  return Object.entries(dayPlan)
-    .filter(([, a]) => a != null)
-    .map(([hour, a]) => {
-      let title = '';
-      if (typeof a === 'string') {
-        const g = goalMap.get(a);
-        title = g?.title ?? 'Task';
-      } else if (a?.type === 'event') title = a.title ?? 'Event';
-      else if (a?.title) title = a.title;
-      else if (a?.goalId) {
-        const g = goalMap.get(a.goalId);
-        title = g?.title ?? a.ritualTitle ?? 'Task';
-      } else title = 'Task';
-      return { hour, assignment: a, title, isFixed: isAssignmentFixed(a) };
-    })
-    .sort((a, b) => Number(a.hour) - Number(b.hour));
+  return getPlanItemsForDateShared(weekAssignments, goals, dateStr);
 }
 
 /** Single task/event card on the timeline: fixed = solid + bold + lock; flexible = soft + dashed + leaf; event = sky. */
@@ -840,7 +858,7 @@ function TimelineTaskCard({ title, timeLabel, isFixed, variant = 'plan' }) {
   if (isFixed) {
     return (
       <div
-        className={`text-sm px-2.5 py-2 rounded-lg truncate border-2 font-semibold flex items-center gap-1.5 shadow-sm ${
+        className={`text-[13px] px-3 py-2.5 rounded-lg truncate border-2 font-semibold flex items-center gap-1.5 shadow-sm ${
           isEvent ? 'border-sky-300 bg-sky-100 text-sky-900' : 'border-stone-300 bg-stone-100 text-stone-900'
         }`}
       >
@@ -852,14 +870,14 @@ function TimelineTaskCard({ title, timeLabel, isFixed, variant = 'plan' }) {
   }
   if (isEvent) {
     return (
-      <div className="text-sm px-2.5 py-2 rounded-lg truncate border border-sky-300 bg-sky-50/80 text-sky-900 flex items-center gap-1.5">
+      <div className="text-[13px] px-3 py-2.5 rounded-lg truncate border border-sky-300 bg-sky-50/80 text-sky-900 flex items-center gap-1.5">
         {timeLabel && <span className="font-mono text-xs opacity-90 shrink-0">{timeLabel}</span>}
         <span className="truncate">{title}</span>
       </div>
     );
   }
   return (
-    <div className="text-sm px-2.5 py-2 rounded-lg truncate border border-dashed border-moss-300 bg-moss-50/80 text-moss-900 flex items-center gap-1.5">
+    <div className="text-[13px] px-3 py-2.5 rounded-lg truncate border border-dashed border-moss-300 bg-moss-50/80 text-moss-900 flex items-center gap-1.5">
       {timeLabel && <span className="font-mono text-xs opacity-90 shrink-0">{timeLabel}</span>}
       <span className="truncate">{title}</span>
       <span className="shrink-0" aria-hidden>🍃</span>
@@ -1033,7 +1051,7 @@ function DroppableDayColumn({ dateStr, label, dayNum, isToday, children, schedul
   return (
     <div
       ref={setNodeRef}
-      className={`relative flex flex-col min-w-[100px] flex-1 border-r-2 border-stone-200 last:border-r-0 ${isToday ? 'border-l-4 border-l-moss-500 bg-moss-50/30' : ''} ${isOver && !isPaused ? 'bg-moss-50 ring-2 ring-moss-400/50 ring-inset' : ''} ${!isPaused && !isOver && !isToday ? 'bg-stone-50/50' : ''} ${isPaused ? 'bg-slate-100/80' : ''} ${isOverCapacity ? 'opacity-75 ring-2 ring-amber-300/60 ring-inset' : ''}`}
+      className={`relative flex flex-col min-w-[148px] flex-1 border-r-2 border-stone-200 last:border-r-0 ${isToday ? 'border-l-4 border-l-moss-500 bg-moss-50/30' : ''} ${isOver && !isPaused ? 'bg-moss-50 ring-2 ring-moss-400/50 ring-inset' : ''} ${!isPaused && !isOver && !isToday ? 'bg-stone-50/50' : ''} ${isPaused ? 'bg-slate-100/80' : ''} ${isOverCapacity ? 'opacity-75 ring-2 ring-amber-300/60 ring-inset' : ''}`}
     >
       {isPaused && (
         <div className="absolute inset-0 z-10 flex items-center justify-center bg-slate-300/60 rounded-sm m-1 pointer-events-none" aria-hidden>
@@ -1046,12 +1064,12 @@ function DroppableDayColumn({ dateStr, label, dayNum, isToday, children, schedul
         } ${isPaused ? 'opacity-75' : ''}`}
       >
         <div className="font-sans text-xs font-medium uppercase tracking-wide">{label}</div>
-        <div className="font-serif text-2xl mt-0.5">{dayNum}</div>
+        <div className="font-serif text-3xl mt-0.5 leading-none">{dayNum}</div>
         {totalSparks != null && (
           <CapacityBar totalSparks={totalSparks} maxSparks={MAX_DAILY_SPARKS} />
         )}
       </div>
-      <div className="flex-1 min-h-[200px] p-2.5 flex flex-col gap-1.5 overflow-y-auto">
+      <div className="flex-1 min-h-[320px] p-2.5 flex flex-col gap-2 overflow-y-auto">
         {events.map((e, i) => (
           <TimelineTaskCard
             key={`ev-${i}`}
@@ -1444,7 +1462,7 @@ export default function StagingArea({
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: isMobile ? 400 : 150, tolerance: 8 } })
+    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 5 } })
   );
 
   const backlogDroppable = useDroppable({ id: 'backlog', data: { type: 'backlog' } });
@@ -1452,10 +1470,10 @@ export default function StagingArea({
   const [pauseClearing, setPauseClearing] = useState(false);
 
   const weekPanel = (
-    <div className={`${backlogFirst ? 'lg:w-[65%]' : 'lg:w-[70%]'} min-w-0 flex flex-col rounded-xl border-2 border-stone-200 dark:border-slate-600 bg-white dark:bg-slate-800/80 shadow-sm overflow-hidden`}>
+    <div className={`${backlogFirst ? 'lg:w-[60%]' : 'lg:w-[74%]'} min-w-0 flex flex-col rounded-xl border-2 border-stone-200 dark:border-slate-600 bg-white dark:bg-slate-800/80 shadow-sm overflow-hidden`}>
           <div className="px-4 py-4 border-b-2 border-stone-200 bg-stone-100/80 flex flex-wrap items-center justify-between gap-2">
             <div>
-              <h2 className="font-serif text-stone-800 dark:text-stone-200 text-lg">This week</h2>
+              <h2 className="font-serif text-stone-800 dark:text-stone-200 text-xl">This week</h2>
               {weekViewDays.length >= 2 && (
                 <p className="font-sans text-xs text-stone-500 dark:text-stone-400 mt-0.5">
                   {(() => {
@@ -1469,7 +1487,7 @@ export default function StagingArea({
                   })()}
                 </p>
               )}
-              <p className="font-sans text-sm text-stone-500 dark:text-stone-400 mt-0.5">{isMobile ? 'Tap a task in Unscheduled to schedule it for a day.' : 'Drag from Unscheduled onto a day, or click a day to open it.'}</p>
+              <p className="font-sans text-sm text-stone-500 dark:text-stone-400 mt-0.5">See your week at a glance, then place work where it realistically fits.</p>
             </div>
             {clearDaySchedule && todayStr && (
               <button
@@ -1507,7 +1525,7 @@ export default function StagingArea({
           )}
           <div className="flex flex-1 min-h-0 overflow-x-auto">
             {weekViewDays.map(({ dateStr, label, dayNum }) => {
-              const events = getEventsForDate(weeklyEvents, dateStr);
+              const events = getVisibleEventsForDate(weeklyEvents, weekAssignments, dateStr);
               const planItems = getPlanItemsForDate(weekAssignments, goals, dateStr);
               const scheduledForDay = scheduledTasks[dateStr] || [];
               const isToday = dateStr === todayStr;
@@ -1539,11 +1557,11 @@ export default function StagingArea({
   const backlogPanel = (
         <div
           ref={backlogDroppable.setNodeRef}
-          className={`${backlogFirst ? 'lg:w-[35%]' : 'lg:w-[30%]'} min-w-0 flex flex-col rounded-xl border-2 border-dashed border-stone-200 dark:border-slate-600 bg-stone-50/50 dark:bg-slate-800/50 overflow-hidden ${backlogDroppable.isOver ? 'border-moss-400 bg-moss-50/50 dark:border-moss-500 dark:bg-moss-900/20' : ''}`}
+          className={`${backlogFirst ? 'lg:w-[40%]' : 'lg:w-[26%]'} min-w-0 flex flex-col rounded-xl border-2 border-dashed border-stone-200 dark:border-slate-600 bg-stone-50/50 dark:bg-slate-800/50 overflow-hidden ${backlogDroppable.isOver ? 'border-moss-400 bg-moss-50/50 dark:border-moss-500 dark:bg-moss-900/20' : ''}`}
         >
           <div className="px-4 py-3 border-b border-stone-200 dark:border-slate-600 bg-white dark:bg-slate-800 shrink-0">
             <h2 className="font-serif text-stone-800 dark:text-stone-200 text-lg">Unscheduled</h2>
-            <p className="font-sans text-sm text-stone-500 dark:text-stone-400">Keep tasks here until you&apos;re ready. Drag to a day to schedule, or drop back here to un-schedule.</p>
+            <p className="font-sans text-sm text-stone-500 dark:text-stone-400">Work not placed yet.</p>
           </div>
           <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-4">
             {needsRescheduling.length > 0 && (

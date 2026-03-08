@@ -60,7 +60,8 @@ export default function GoalEditor({ open, goal, onClose, onSave, addGoal, addSu
       setMetricId(goal.metricId ?? '');
       setMetricTargetValue(goal.metricSettings?.targetValue !== undefined && goal.metricSettings?.targetValue !== null ? String(goal.metricSettings.targetValue) : '');
       setMetricCurrentValue(goal.metricSettings?.currentValue !== undefined && goal.metricSettings?.currentValue !== null ? String(goal.metricSettings.currentValue) : '');
-      setTargetHours(Math.max(0, Number(goal.targetHours) ?? 5));
+      const targetHoursRaw = Number(goal.targetHours);
+      setTargetHours(Math.max(0, Number.isFinite(targetHoursRaw) ? targetHoursRaw : 5));
       setEnergyImpact(goal.energyImpact === 'boost' ? 'boost' : 'drain');
       setSpoonCost(goal.spoonCost >= 1 && goal.spoonCost <= 4 ? goal.spoonCost : 1);
       setActivationEnergy(goal.activationEnergy >= 1 && goal.activationEnergy <= 4 ? goal.activationEnergy : 1);

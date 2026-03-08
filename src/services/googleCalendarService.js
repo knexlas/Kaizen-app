@@ -1,4 +1,5 @@
 const CALENDAR_API_BASE = 'https://www.googleapis.com/calendar/v3';
+import { classifyCalendarEvent } from './calendarEventClassifier';
 
 /**
  * Fetch events for the upcoming week from the primary calendar.
@@ -25,10 +26,7 @@ export async function fetchGoogleEvents(accessToken, timeMin, timeMax) {
   // Map Google Events to "Garden Weather" format
   return (data.items || []).map(event => {
     const title = event.summary || 'Busy';
-    // Simple logic to guess weather based on keywords
-    let type = 'leaf';
-    if (title.match(/deadline|urgent|review|meeting/i)) type = 'storm';
-    if (title.match(/lunch|gym|break|coffee/i)) type = 'sun';
+    const { type, weather } = classifyCalendarEvent(title);
 
     return {
       id: event.id,
@@ -36,7 +34,7 @@ export async function fetchGoogleEvents(accessToken, timeMin, timeMax) {
       start: event.start.dateTime || event.start.date,
       end: event.end.dateTime || event.end.date,
       type: type, // 'storm', 'leaf', 'sun'
-      weather: type === 'storm' ? 'storm' : type === 'sun' ? 'sun' : 'cloud', // Legacy support
+      weather, // Legacy support
       source: 'google'
     };
   });

@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { parseOmniAddInput } from '../../services/geminiService';
 import { getTaskDictionaryEntry } from '../../services/energyDictionaryService';
 import { useGarden } from '../../context/GardenContext';
+import { normalizeTaskCapture } from '../../services/taskCaptureService';
 
 /** Recurrence options for Rhythms. Value stored in task.recurrence. */
 const RECURRENCE_OPTIONS = [
@@ -121,18 +122,18 @@ export default function OmniAdd({
       if (result && onParsedRoute) {
         const isCalendar = result.type === 'calendar_event';
         const recurrencePayload = recurrence && recurrence !== 'none' ? (recurrence === 'weekly' ? { type: 'weekly', days: [] } : recurrence === 'monthly' ? { type: 'monthly' } : recurrence === 'custom' ? { type: 'custom' } : { type: 'daily' }) : undefined;
-        onParsedRoute({
+        onParsedRoute(normalizeTaskCapture({
           ...result,
           isFixed: isCalendar ? true : isFixed,
           context: isCalendar ? 'work' : context,
           recurrence: recurrencePayload,
           energyCost: energyCost >= 0 && energyCost <= 3 ? energyCost : 1,
-        });
+        }));
       }
     } catch (err) {
       if (onParsedRoute) {
         const recurrencePayload = recurrence && recurrence !== 'none' ? (recurrence === 'weekly' ? { type: 'weekly', days: [] } : recurrence === 'monthly' ? { type: 'monthly' } : recurrence === 'custom' ? { type: 'custom' } : { type: 'daily' }) : undefined;
-        onParsedRoute({ type: 'goal', title: trimmed, isFixed, context, recurrence: recurrencePayload, energyCost: energyCost >= 0 && energyCost <= 3 ? energyCost : 1 });
+        onParsedRoute(normalizeTaskCapture({ type: 'goal', title: trimmed, isFixed, context, recurrence: recurrencePayload, energyCost: energyCost >= 0 && energyCost <= 3 ? energyCost : 1 }));
       }
     } finally {
       setIsParsing(false);

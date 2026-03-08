@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { useGarden } from '../../context/GardenContext';
 
 /**
  * Non-blocking floating tooltip for the Day 1 Guide. Positions near a target element (by ID).
@@ -8,6 +9,26 @@ import { useState, useEffect, useRef } from 'react';
 export default function FeatureTooltip({ targetId, message, onNext, onDismiss, isLastStep = false }) {
   const [rect, setRect] = useState(null);
   const cardRef = useRef(null);
+  const { spiritConfig } = useGarden();
+
+  const spiritName = spiritConfig?.name || 'Mochi';
+  const spiritEmoji = (() => {
+    if (!spiritConfig) return '✨';
+    const t = spiritConfig?.type;
+    if (t === 'ember') return '🔥';
+    if (t === 'nimbus') return '☁️';
+    if (t === 'cat') return '🐱';
+    if (t === 'owl' || t === 'guide') return '🦉';
+    if (t === 'rabbit') return '🐰';
+    if (t === 'frog') return '🐸';
+    if (t === 'butterfly') return '🦋';
+    if (t === 'custom') {
+      const HEADS = { bunny: '🐰', cat: '🐱', bear: '🐻', fox: '🦊', bot: '🤖', owl: '🦉' };
+      return HEADS[spiritConfig?.head] || '✨';
+    }
+    return '✨';
+  })();
+  const messageText = typeof message === 'function' ? message({ spiritName, spiritEmoji, spiritType: spiritConfig?.type || 'mochi' }) : message;
 
   useEffect(() => {
     if (!targetId || typeof document === 'undefined') return;
@@ -30,7 +51,7 @@ export default function FeatureTooltip({ targetId, message, onNext, onDismiss, i
     };
   }, [targetId]);
 
-  if (!message) return null;
+  if (!messageText) return null;
 
   const viewportW = typeof window !== 'undefined' ? window.innerWidth : 1024;
   const viewportH = typeof window !== 'undefined' ? window.innerHeight : 768;
@@ -78,7 +99,10 @@ export default function FeatureTooltip({ targetId, message, onNext, onDismiss, i
           top: cardTop,
         }}
       >
-        <p className="font-sans text-sm text-stone-800 mb-4">{message}</p>
+        <p className="font-sans text-[10px] uppercase tracking-[0.18em] text-stone-400 mb-2 text-center">
+          {spiritEmoji} {spiritName} guide
+        </p>
+        <p className="font-sans text-sm text-stone-800 mb-4">{messageText}</p>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <button
             type="button"

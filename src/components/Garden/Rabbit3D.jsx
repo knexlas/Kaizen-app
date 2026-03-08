@@ -1,15 +1,16 @@
 import { useRef, useContext } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { Sphere, Box } from '@react-three/drei';
-import { LowPerfContext } from './Garden3D';
+import { LowPerfContext, MotionPausedContext } from './Garden3D';
 
 export default function Rabbit3D({ isWalking }) {
   const group = useRef(null);
   const lowPerf = useContext(LowPerfContext);
+  const motionPaused = useContext(MotionPausedContext);
   const shadow = !lowPerf;
 
   useFrame((state) => {
-    if (!group.current) return;
+    if (!group.current || motionPaused) return;
     if (isWalking) {
       group.current.position.y = Math.max(0, Math.sin(state.clock.elapsedTime * 10) * 0.15);
     }

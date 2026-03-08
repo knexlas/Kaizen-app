@@ -6,11 +6,15 @@ import { getAssignmentsForHour } from './TimeSlicer';
 const HOUR_START = 6;
 const HOUR_END = 23;
 
+/** Current 30-min slot key (e.g. "10:00" or "10:30") for consistency with half-hour plan keys. */
 export function getCurrentSlotKey(now) {
   if (!now || !(now instanceof Date)) return null;
-  const h = now.getHours();
-  if (h < HOUR_START || h > HOUR_END) return null;
-  return `${String(h).padStart(2, '0')}:00`;
+  const mins = now.getHours() * 60 + now.getMinutes();
+  if (mins < HOUR_START * 60 || mins > (HOUR_END + 1) * 60 - 1) return null;
+  const slotMins = Math.floor(mins / 30) * 30;
+  const h = Math.floor(slotMins / 60);
+  const m = slotMins % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
 function getGoalIdFromAssignment(a) {

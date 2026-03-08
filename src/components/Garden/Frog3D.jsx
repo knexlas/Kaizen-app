@@ -1,13 +1,15 @@
 import { useRef, useContext } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { Sphere } from '@react-three/drei';
-import { LowPerfContext } from './Garden3D';
+import { LowPerfContext, MotionPausedContext } from './Garden3D';
 
 export default function Frog3D({ isWalking }) {
   const group = useRef();
   const lowPerf = useContext(LowPerfContext);
+  const motionPaused = useContext(MotionPausedContext);
   const shadow = !lowPerf;
   useFrame((state) => {
+    if (motionPaused) return;
     if (group.current && isWalking) group.current.position.y = Math.max(0, Math.sin(state.clock.elapsedTime * 15) * 0.15);
   });
   return (

@@ -5,9 +5,18 @@
  */
 
 import { localISODate } from './dateUtils';
+import { autoFillWeek as plannerEngineAutoFillWeek } from './plannerEngine';
 
 const DEFAULT_HOUR_START = 6;
 const DEFAULT_HOUR_END = 23;
+
+/**
+ * Canonical entry point for week auto-fill.
+ * @deprecated Direct imports from plannerEngine should be migrated here.
+ */
+export function autoFillWeek(goals, calendarEvents, startDate) {
+  return plannerEngineAutoFillWeek(goals, calendarEvents, startDate);
+}
 
 /** Parse "HH:mm" (e.g. from userSettings.dayStart) to hour 0–23. Used so Calendar/Auto-Planner respect day range. */
 export function hourFromTimeStr(str, defaultHour = 8) {
@@ -163,7 +172,8 @@ export function getDefaultWeekStart() {
 export function getStormImpactForDay(events, dayIndex, options = {}) {
   const weekStart = options.weekStartDate ?? getDefaultWeekStart();
   const stormBufferMinutes = Math.max(0, Number(options.stormBufferMinutes) || 0);
-  const costPerEvent = Math.max(0, Number(options.stormCapacityCostPerEvent) ?? 1);
+  const costPerEventRaw = Number(options.stormCapacityCostPerEvent);
+  const costPerEvent = Math.max(0, Number.isFinite(costPerEventRaw) ? costPerEventRaw : 1);
 
   let stormCount = 0;
   let totalStormMinutes = 0;
@@ -638,7 +648,8 @@ export function generateDailyPlan(goals, maxSlotsOrModifier = 0, calendarEvents 
   if (startHour >= 23) return {};
 
   const opts = { weekStartDate: getDefaultWeekStart(), startHour: DEFAULT_HOUR_START, endHour: DEFAULT_HOUR_END, ...options };
-  const stormBufferMinutes = Math.max(0, Number(opts.stormBufferMinutes) ?? 30);
+  const stormBufferRaw = Number(opts.stormBufferMinutes);
+  const stormBufferMinutes = Math.max(0, Number.isFinite(stormBufferRaw) ? stormBufferRaw : 30);
 
   let futureHours;
   if (Array.isArray(calendarEvents) && calendarEvents.length > 0) {
@@ -802,7 +813,8 @@ export function generateDailyPlan(goals, maxSlotsOrModifier = 0, calendarEvents 
   });
 
   // Demo at 14:00: startStr='15:00', futureHours=['15:00'..'23:00']; no assignments in the past.
-  const isDev = (typeof import.meta !== 'undefined' && import.meta.env?.DEV) || (typeof process !== 'undefined' && process.env?.NODE_ENV === 'development');
+  const nodeEnv = typeof globalThis !== 'undefined' ? globalThis.process?.env?.NODE_ENV : undefined;
+  const isDev = (typeof import.meta !== 'undefined' && import.meta.env?.DEV) || nodeEnv === 'development';
   if (isDev && startHour === 15) {
     console.log('[generateDailyPlan] At 14:00 → from 15:00 onward', { startStr, keys: Object.keys(assignments) });
   }

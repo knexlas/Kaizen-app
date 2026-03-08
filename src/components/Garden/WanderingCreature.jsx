@@ -1,8 +1,9 @@
-import React, { useState, useRef, useEffect, cloneElement } from 'react';
+import React, { useState, useRef, useEffect, cloneElement, useContext } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { Billboard, Text } from '@react-three/drei';
 import * as THREE from 'three';
 import { useGarden } from '../../context/GardenContext';
+import { MotionPausedContext } from './Garden3D';
 
 function getTerrainAt(terrainMap, x, z) {
   if (!terrainMap || typeof terrainMap !== 'object') return undefined;
@@ -54,6 +55,7 @@ export default function WanderingCreature({
   campfirePositions = [],
 }) {
   const { terrainMap, earnEmbers, tourStep, setTourStep } = useGarden();
+  const motionPaused = useContext(MotionPausedContext);
   const groupRef = useRef();
   const [target, setTarget] = useState(() => new THREE.Vector3(0, 0, 0));
   const [isWalking, setIsWalking] = useState(false);
@@ -178,7 +180,7 @@ export default function WanderingCreature({
   };
 
   useFrame((state, delta) => {
-    if (!groupRef.current) return;
+    if (!groupRef.current || motionPaused) return;
 
     const surfaceY = getSurfaceHeightAt(terrainMap, groupRef.current.position.x, groupRef.current.position.z);
 
@@ -240,4 +242,3 @@ export default function WanderingCreature({
     </group>
   );
 }
-

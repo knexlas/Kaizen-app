@@ -1,21 +1,50 @@
 /**
  * Scheduling conflict and duration helpers for day plans.
- * Canonical slot key format is "HH:00" (e.g. "09:00"). All planner writes should use toCanonicalSlotKey.
- * normalizePlanKeys can be used when loading or before saving to migrate legacy keys ("9", "9:00").
- * Plan keys may be string hour "9", "09:00", or decimal "9.5"; we normalize to integer hours for conflict checks.
+ * Canonical slot key format is "HH:MM" (e.g. "09:00", "10:30", "10:05"). Planner writes use toCanonicalSlotKey.
+ * Minute resolution: events at 10:05 block 10:05–11:05 correctly.
  */
 
-/** Convert any hour key to canonical "HH:00" format. Input: number (9), string ("9", "09:00", "9:00"). Returns null for "anytime" or invalid. */
+/** Convert minutes since midnight (0–1439) to canonical "HH:MM". */
+export function minutesToCanonicalSlotKey(mins) {
+  if (mins == null || mins < 0 || mins >= 24 * 60) return null;
+  const h = Math.floor(mins / 60);
+  const m = Math.floor(mins % 60);
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+/** Convert any hour key to canonical "HH:MM". Input: number (9, 9.5), string ("9", "09:00", "10:05", "9.5"). Returns null for "anytime" or invalid. */
 export function toCanonicalSlotKey(key) {
   if (key == null) return null;
   const s = String(key).trim();
   if (s === 'anytime') return null;
-  const h = planKeyToHour(key);
-  if (h == null || h < 0 || h > 23) return null;
-  return `${String(h).padStart(2, '0')}:00`;
+  const mins = slotKeyToMinutesSinceMidnight(key);
+  if (mins == null || mins < 0 || mins > 24 * 60 - 1) return null;
+  return minutesToCanonicalSlotKey(mins);
 }
 
-/** Normalize a plan object so all slot keys are canonical "HH:00". Preserves "anytime". Merges values when two keys map to same canonical key. */
+/** Minutes since midnight for a slot key. "10:30" → 630, 10.5 → 630, "10:00" → 600. Returns null for anytime/invalid. */
+export function slotKeyToMinutesSinceMidnight(key) {
+  if (key == null) return null;
+  const s = String(key).trim();
+  if (s === 'anytime') return null;
+  if (s.includes(':')) {
+    const parts = s.split(':');
+    const h = parseInt(parts[0], 10);
+    if (Number.isNaN(h) || h < 0 || h > 23) return null;
+    const m = parts[1] != null ? parseInt(parts[1], 10) : 0;
+    const mins = Number.isNaN(m) ? 0 : Math.max(0, Math.min(59, m));
+    return h * 60 + mins;
+  }
+  const num = parseFloat(s);
+  if (Number.isFinite(num)) {
+    const h = Math.floor(num);
+    const m = Math.round((num - h) * 60);
+    return Math.max(0, Math.min(23 * 60 + 59, h * 60 + m));
+  }
+  return null;
+}
+
+/** Normalize a plan object so all slot keys are canonical "HH:MM". Preserves "anytime". Merges values when two keys map to same canonical key. */
 export function normalizePlanKeys(plan) {
   if (!plan || typeof plan !== 'object') return {};
   const result = {};
@@ -38,16 +67,11 @@ export function normalizePlanKeys(plan) {
   return result;
 }
 
-/** Normalize a plan key to integer hour (0–23). Handles "9", "09:00", "9.5", 9. */
+/** Normalize a plan key to integer hour (0–23). Handles "9", "09:00", "9.5", 9. Kept for backward compatibility. */
 export function planKeyToHour(key) {
-  if (key == null) return null;
-  const s = String(key).trim();
-  if (s === 'anytime') return null;
-  const num = parseFloat(s);
-  if (!Number.isNaN(num)) return Math.max(0, Math.min(23, Math.floor(num)));
-  const h = parseInt(s.slice(0, 2), 10);
-  if (!Number.isNaN(h)) return Math.max(0, Math.min(23, h));
-  return null;
+  const mins = slotKeyToMinutesSinceMidnight(key);
+  if (mins == null) return null;
+  return Math.floor(mins / 60);
 }
 
 /** Get duration in minutes for an assignment. Default 60. */
@@ -57,38 +81,41 @@ export function getDurationMinutesFromPlanAssignment(assignment) {
   return 60;
 }
 
-/** Set of integer hours that are occupied by existing plan entries (duration-aware). */
+/** Set of integer hours (0–23) that are occupied by existing plan entries (duration-aware, minute-precise). */
 export function getOccupiedHours(plan) {
   const occupied = new Set();
   if (!plan || typeof plan !== 'object') return occupied;
   for (const [key, value] of Object.entries(plan)) {
     if (key === 'anytime') continue;
-    const startHour = planKeyToHour(key);
-    if (startHour == null) continue;
+    const startMins = slotKeyToMinutesSinceMidnight(key);
+    if (startMins == null) continue;
     const durationMinutes = getDurationMinutesFromPlanAssignment(value);
-    const durationHours = Math.ceil(durationMinutes / 60);
-    for (let h = 0; h < durationHours; h++) {
-      const hour = startHour + h;
-      if (hour <= 23) occupied.add(hour);
+    const endMins = startMins + durationMinutes;
+    const startHour = Math.floor(startMins / 60);
+    const endHour = Math.floor((endMins - 1) / 60);
+    for (let h = startHour; h <= endHour; h++) {
+      if (h >= 0 && h <= 23) occupied.add(h);
     }
   }
   return occupied;
 }
 
 /**
- * Check if placing a task at startHour with durationMinutes would conflict with the plan.
- * startHour: integer 0–23 (or decimal, will be floored).
+ * Check if placing a task at startSlot with durationMinutes would conflict with the plan.
+ * startSlot: number (e.g. 10.5 for 10:30) or string "10:30".
  * @returns {{ conflict: boolean, occupiedHours?: number[], conflictingItem?: { hour: number, title: string } }}
  */
-export function checkPlacementConflict(plan, startHour, durationMinutes) {
+export function checkPlacementConflict(plan, startSlot, durationMinutes) {
   const occupied = getOccupiedHours(plan);
-  const start = Math.floor(Number(startHour));
-  if (!Number.isFinite(start) || start < 0 || start > 23) return { conflict: false };
-  const durationHours = Math.ceil((durationMinutes || 60) / 60);
+  const startMins = slotKeyToMinutesSinceMidnight(startSlot);
+  if (startMins == null || startMins < 0 || startMins >= 24 * 60) return { conflict: false };
+  const dur = Math.max(1, durationMinutes || 60);
+  const endMins = startMins + dur;
+  const startHour = Math.floor(startMins / 60);
+  const endHour = Math.floor((endMins - 1) / 60);
   const neededHours = [];
-  for (let h = 0; h < durationHours; h++) {
-    const hour = start + h;
-    if (hour <= 23) neededHours.push(hour);
+  for (let h = startHour; h <= endHour; h++) {
+    if (h >= 0 && h <= 23) neededHours.push(h);
   }
   const conflicting = neededHours.filter((h) => occupied.has(h));
   if (conflicting.length === 0) return { conflict: false };
@@ -97,16 +124,18 @@ export function checkPlacementConflict(plan, startHour, durationMinutes) {
   let conflictingItem = null;
   for (const [key, value] of Object.entries(plan || {})) {
     if (key === 'anytime') continue;
-    const h = planKeyToHour(key);
-    if (h == null) continue;
-    const dur = getDurationMinutesFromPlanAssignment(value);
-    const endH = h + Math.ceil(dur / 60);
-    if (firstConflictHour >= h && firstConflictHour < endH) {
+    const keyStart = slotKeyToMinutesSinceMidnight(key);
+    if (keyStart == null) continue;
+    const durVal = getDurationMinutesFromPlanAssignment(value);
+    const keyEnd = keyStart + durVal;
+    const conflictStartMins = firstConflictHour * 60;
+    const conflictEndMins = (firstConflictHour + 1) * 60;
+    if (keyStart < conflictEndMins && keyEnd > conflictStartMins) {
       const title =
         (value && typeof value === 'object' && value.title) ||
         (value && typeof value === 'object' && value.type === 'event' && value.title) ||
         'Scheduled item';
-      conflictingItem = { hour: h, title };
+      conflictingItem = { hour: Math.floor(keyStart / 60), title };
       break;
     }
   }
@@ -119,15 +148,18 @@ export function checkPlacementConflict(plan, startHour, durationMinutes) {
 }
 
 /**
- * Find the next available start hour that can fit durationMinutes without conflict.
- * Returns null if no slot found before endHour (default 23).
+ * Find the next available start (minute resolution) that can fit durationMinutes without conflict.
+ * fromSlot: number (decimal hour e.g. 10.0833) or string "HH:MM". Returns canonical "HH:MM" or null.
  */
-export function findNextAvailableStart(plan, fromHour, durationMinutes, endHour = 23) {
-  const start = Math.floor(Number(fromHour));
-  const dur = Math.ceil((durationMinutes || 60) / 60);
-  for (let h = start; h <= endHour - dur + 1; h++) {
-    const result = checkPlacementConflict(plan, h, durationMinutes || 60);
-    if (!result.conflict) return h;
+export function findNextAvailableStart(plan, fromSlot, durationMinutes, endHour = 23) {
+  const fromMins = slotKeyToMinutesSinceMidnight(fromSlot);
+  if (fromMins == null || fromMins < 0) return null;
+  const endMins = Math.min(endHour * 60, 24 * 60);
+  const dur = Math.max(1, durationMinutes || 60);
+  for (let m = fromMins; m + dur <= endMins; m += 1) {
+    const key = minutesToCanonicalSlotKey(m);
+    const result = checkPlacementConflict(plan, key, dur);
+    if (!result.conflict) return key;
   }
   return null;
 }

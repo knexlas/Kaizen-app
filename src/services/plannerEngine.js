@@ -175,6 +175,7 @@ function getAvailableSlotsForDate(dateStr, calendarEvents, startHour, endHour) {
 
 /**
  * Auto-fill a 7-day calendar window with routines (early morning / evening) and incomplete subtasks (daytime).
+ * @deprecated Import `autoFillWeek` from `schedulerService` instead.
  * @param {Array} goals - All goals (routines + kaizen/project)
  * @param {Array} calendarEvents - Events: { start, end } (ISO) or { dayIndex, start, end }
  * @param {Date|string} startDate - First day of the week (default today)

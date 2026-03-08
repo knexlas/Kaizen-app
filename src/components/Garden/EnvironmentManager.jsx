@@ -70,10 +70,10 @@ export default function EnvironmentManager({ setTimePhase }) {
         intensity={colors.dirIntensity}
         color={colors.lightColor}
         castShadow={!lowPerf}
-        shadow-mapSize={lowPerf ? [512, 512] : [2048, 2048]}
+        shadow-mapSize={lowPerf ? [256, 256] : [1024, 1024]}
       />
       {phase === 'night' && (
-        <Stars radius={50} depth={50} count={2000} factor={4} saturation={0} fade speed={1} />
+        <Stars radius={50} depth={50} count={lowPerf ? 250 : 900} factor={lowPerf ? 2 : 4} saturation={0} fade speed={1} />
       )}
     </>
   );
