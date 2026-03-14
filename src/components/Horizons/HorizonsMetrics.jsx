@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useGarden } from '../../context/GardenContext';
+import { useDialog } from '../../context/DialogContext';
 import { localISODate } from '../../services/dateUtils';
 
 /** Minimal SVG sparkline: line of values + optional horizontal dashed target. */
@@ -55,6 +56,7 @@ function getMetricValueDaysAgo(goal, daysAgo) {
 
 export default function HorizonsMetrics({ goals = [], logMetric, onRecord }) {
   const { deleteGoal } = useGarden();
+  const { showConfirm } = useDialog();
   const [daysAgo, setDaysAgo] = useState(3);
   const vitalityGoals = useMemo(
     () =>
@@ -112,9 +114,12 @@ export default function HorizonsMetrics({ goals = [], logMetric, onRecord }) {
                   <button
                     type="button"
                     onClick={() => {
-                      if (window.confirm('Drain this pond? This cannot be undone.')) {
-                        deleteGoal(goal.id);
-                      }
+                      showConfirm({
+                        message: 'Drain this pond? This cannot be undone.',
+                        confirmLabel: 'Drain',
+                        destructive: true,
+                        onConfirm: () => deleteGoal(goal.id),
+                      });
                     }}
                     className="shrink-0 p-1.5 rounded-lg text-stone-400 hover:text-red-600 hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-500/40"
                     aria-label="Delete this metric"

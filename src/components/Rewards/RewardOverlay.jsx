@@ -1,5 +1,7 @@
 import { useEffect } from 'react';
 import { useReward } from '../../context/RewardContext';
+import { useGarden } from '../../context/GardenContext';
+import { getGamificationConfig } from '../../constants/gamificationIntensity';
 
 const TONE_CLASSES = {
   moss: 'bg-moss-100 border-moss-300 text-moss-900',
@@ -11,14 +13,16 @@ const VIBE_DURATION_MS = 4000;
 
 export default function RewardOverlay() {
   const { queue, removeTop } = useReward();
+  const { userSettings } = useGarden();
+  const gamificationConfig = getGamificationConfig(userSettings ?? {});
   const top = queue[0];
 
   useEffect(() => {
     if (!top) return;
-    const ms = top.vibePayload ? VIBE_DURATION_MS : (typeof top.durationMs === 'number' ? top.durationMs : 2800);
+    const ms = top.vibePayload ? VIBE_DURATION_MS : gamificationConfig.rewardDurationMs;
     const t = setTimeout(() => removeTop(), ms);
     return () => clearTimeout(t);
-  }, [top?.id, top?.durationMs, top?.vibePayload, removeTop]);
+  }, [top?.id, top?.vibePayload, gamificationConfig.rewardDurationMs, removeTop]);
 
   if (!top) return null;
 

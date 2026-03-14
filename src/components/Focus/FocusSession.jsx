@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { getNextTaskInSequence, getBestNextStepForGoal } from '../../services/nextStepService';
 import { vibrateCelebration } from '../../utils/vibration';
 
 const DURATION_SECONDS = 25 * 60; // 25 minutes
@@ -9,16 +10,17 @@ const CONTROLS_IDLE_MS = 2500;
 const AMBIENCE_STORAGE_KEY = 'kaizenFocusAmbience';
 const FADE_MS = 500;
 
+// Zen Mode soundscape: replace with local files if desired (e.g. /sounds/forest-rain.mp3, /sounds/brown-noise.mp3)
 const SOUNDS = {
   rain: 'https://assets.mixkit.co/sfx/preview/mixkit-light-rain-loop-1253.mp3',
   brownNoise: 'https://assets.mixkit.co/sfx/preview/mixkit-white-noise-1254.mp3',
   gong: 'https://assets.mixkit.co/sfx/preview/mixkit-gong-sound-2746.mp3',
 };
 
-const AMBIENCE_OPTIONS = [
-  { id: 'silence', label: 'Silence', icon: '🔇' },
-  { id: 'rain', label: 'Rain', icon: '🌧️' },
-  { id: 'brownNoise', label: 'Flow (Brown Noise)', icon: '🌊' },
+const ZEN_SOUND_OPTIONS = [
+  { id: 'silence', label: 'Mute', icon: '🔇' },
+  { id: 'brownNoise', label: 'Brown Noise', icon: '🌊' },
+  { id: 'rain', label: 'Forest Rain', icon: '🌧️' },
 ];
 
 function getStoredAmbience() {
@@ -115,19 +117,18 @@ function MochiSpirit({ isComplete }) {
   );
 }
 
-/** If the completed task is a subtask, find the parent goal and return the first uncompleted subtask after the current one. */
+/** Best next step after current task: uses unified next-step service (action-phrased, 5–20 min). */
 function getNextStep(activeTask, goals) {
   if (!activeTask?.id || !Array.isArray(goals) || goals.length === 0) return null;
   const goal = goals.find((g) => g.id === activeTask.id);
-  if (!goal?.subtasks?.length) return null;
-  const subs = goal.subtasks;
-  const currentSubId = activeTask.subtaskId ?? null;
-  const first = subs.find(
-    (s) =>
-      (Number(s.completedHours) || 0) < (Number(s.estimatedHours) || 0.01) &&
-      s.id !== currentSubId
-  );
-  return first ? { id: first.id, title: first.title, goalId: goal.id } : null;
+  if (!goal) return null;
+  if (activeTask.subtaskId) {
+    const next = getNextTaskInSequence(goals, activeTask.id, activeTask.subtaskId);
+    return next ? { id: next.subtaskId, title: next.title, goalId: next.goalId, suggestedMinutes: next.suggestedMinutes } : null;
+  }
+  const best = getBestNextStepForGoal(goal);
+  if (!best || best.blocked) return null;
+  return { id: best.subtaskId, title: best.title, goalId: best.goalId, suggestedMinutes: best.suggestedMinutes };
 }
 
 export default function FocusSession({
@@ -261,17 +262,19 @@ export default function FocusSession({
 
   useEffect(() => {
     if (isComplete) {
-      if (ambienceAudioRef.current) {
-        ambienceAudioRef.current.pause();
-        ambienceAudioRef.current.currentTime = 0;
-      }
+      stopAmbienceFaded();
       const gong = gongAudioRef.current;
       if (gong) {
         gong.src = SOUNDS.gong;
         safePlay(gong, volume, 'Gong');
       }
     }
-  }, [isComplete, volume]);
+  }, [isComplete, volume, stopAmbienceFaded]);
+
+  // Fade out Zen soundscape when timer hits 00:00 (session complete)
+  useEffect(() => {
+    if (sessionComplete) stopAmbienceFaded();
+  }, [sessionComplete, stopAmbienceFaded]);
 
   useEffect(() => {
     const ambienceEl = new Audio();
@@ -282,8 +285,10 @@ export default function FocusSession({
     gongAudioRef.current = gongEl;
     return () => {
       if (fadeCancelRef.current) fadeCancelRef.current();
-      ambienceEl.pause();
-      gongEl.pause();
+      fadeAudio(ambienceEl, 0, FADE_MS, () => {
+        ambienceEl.pause();
+        ambienceEl.currentTime = 0;
+      });
       ambienceAudioRef.current = null;
       gongAudioRef.current = null;
     };
@@ -317,15 +322,16 @@ export default function FocusSession({
 
   const handleHarvestEarly = () => {
     setShowBrokenPath(false);
+    stopAmbienceFaded();
     vibrateCelebration();
     const timeSpentMinutes = Math.max(1, Math.floor(elapsedSeconds / 60));
     onComplete?.({ timeSpentMinutes });
   };
 
-  const handleDistraction = () => {
-    console.log('Distraction event', { taskId: activeTask?.id, taskTitle: activeTask?.title });
+  const handleExitWithAction = (action) => {
     setShowBrokenPath(false);
-    onExit?.();
+    stopAmbienceFaded();
+    onExit?.(typeof onExit === 'function' && action ? { action } : undefined);
   };
 
   const handleResumePath = () => {
@@ -427,6 +433,8 @@ export default function FocusSession({
 
   const durationMinutes = Math.round(durationSeconds / 60);
   const taskTitle = activeTask?.title ?? 'This single step';
+  const goalForContext = goals?.find((g) => g.id === activeTask?.id);
+  const goalLabel = goalForContext?.title && goalForContext.title !== taskTitle ? goalForContext.title : null;
 
   if (!hasCommitted) {
     return (
@@ -434,29 +442,29 @@ export default function FocusSession({
         className="fixed inset-0 z-50 bg-stone-100 flex flex-col items-center justify-center px-4"
         role="dialog"
         aria-modal="true"
-        aria-label="Single-pointed focus commitment"
+        aria-label="Focus commitment"
       >
         <div className="flex flex-col items-center justify-center h-full max-w-md mx-auto text-center animate-in fade-in zoom-in duration-500">
-          <div className="text-5xl mb-6">🍵</div>
-          <h2 className="font-serif text-2xl text-stone-800 mb-4">Let the world fade away.</h2>
-          <p className="font-sans text-stone-600 mb-8 leading-relaxed">
-            &ldquo;For the next <strong className="text-moss-700">{durationMinutes} minutes</strong>, nothing else exists except: <br /><br />
-            <span className="text-lg font-medium text-stone-800 bg-stone-100 px-4 py-2 rounded-lg inline-block mt-2">{taskTitle}</span>&rdquo;
+          <h2 className="font-serif text-xl text-stone-800 mb-2">What you&apos;re focusing on</h2>
+          <p className="font-sans text-stone-600 mb-1 leading-relaxed">
+            <span className="text-lg font-medium text-stone-800 bg-stone-100 px-4 py-2 rounded-lg inline-block">{taskTitle}</span>
           </p>
+          {goalLabel && <p className="font-sans text-sm text-stone-500 mb-4">from {goalLabel}</p>}
+          <p className="font-sans text-sm text-stone-500 mb-8">Planned: {durationMinutes} min</p>
           <motion.button
             type="button"
             onClick={handleCommitClick}
             className="px-8 py-3 bg-moss-600 hover:bg-moss-700 text-white rounded-full font-medium transition-transform hover:scale-105 shadow-md shadow-moss-900/20"
             whileTap={{ scale: 0.95 }}
           >
-            I commit to this single step
+            Start focus
           </motion.button>
           <button
             type="button"
-            onClick={onExit}
+            onClick={() => onExit?.()}
             className="mt-4 text-sm text-stone-400 hover:text-stone-600 transition-colors"
           >
-            Wait, I am not ready
+            Not now
           </button>
         </div>
       </div>
@@ -474,14 +482,14 @@ export default function FocusSession({
     >
       {/* Audio elements created in useEffect for user-intent playback */}
 
-      {/* Top-left: Sound / Ambience (faded until hover) */}
+      {/* Top-left: Zen Mode soundscape (elegant toggle) */}
       <div ref={soundMenuRef} className="absolute top-6 left-6 z-20 flex items-center">
         <div className="relative group">
           <button
             type="button"
             onClick={handleSoundMenuOpen}
-            className="p-2 rounded-lg text-stone-400 hover:text-stone-600 hover:bg-stone-200/80 focus:outline-none focus:ring-2 focus:ring-moss-500/50 transition-opacity group-hover:opacity-100 opacity-60"
-            aria-label="Sound / ambience"
+            className="p-2.5 rounded-xl text-stone-400 hover:text-stone-600 hover:bg-stone-200/80 focus:outline-none focus:ring-2 focus:ring-moss-500/50 transition-opacity group-hover:opacity-100 opacity-70"
+            aria-label="Zen Mode soundscape"
             aria-expanded={soundMenuOpen}
           >
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -492,22 +500,25 @@ export default function FocusSession({
           <AnimatePresence>
             {soundMenuOpen && (
               <motion.div
-                initial={{ opacity: 0, y: -4 }}
+                initial={{ opacity: 0, y: -6 }}
                 animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -4 }}
-                transition={{ duration: 0.15 }}
-                className="absolute left-0 top-full mt-1 py-1 min-w-[180px] rounded-lg border border-stone-200 bg-stone-50/95 backdrop-blur shadow-lg z-30"
+                exit={{ opacity: 0, y: -6 }}
+                transition={{ duration: 0.2 }}
+                className="absolute left-0 top-full mt-2 py-1.5 min-w-[200px] rounded-xl border border-stone-200 bg-white/95 backdrop-blur-md shadow-xl z-30"
               >
-                {AMBIENCE_OPTIONS.map((opt) => (
+                <p className="px-3 py-1.5 font-sans text-xs font-semibold text-stone-500 uppercase tracking-wider border-b border-stone-100">
+                  Zen Mode
+                </p>
+                {ZEN_SOUND_OPTIONS.map((opt) => (
                   <button
                     key={opt.id}
                     type="button"
                     onClick={() => handleSelectAmbience(opt.id)}
-                    className={`w-full px-3 py-2 text-left font-sans text-sm flex items-center gap-2 transition-colors first:rounded-t-lg last:rounded-b-lg focus:outline-none focus:bg-stone-100 ${
-                      ambience === opt.id ? 'text-moss-700 bg-moss-50' : 'text-stone-700 hover:bg-stone-100'
+                    className={`w-full px-3 py-2.5 text-left font-sans text-sm flex items-center gap-2.5 transition-colors first:rounded-t-none last:rounded-b-xl focus:outline-none focus:bg-stone-50 ${
+                      ambience === opt.id ? 'text-moss-700 bg-moss-50/80' : 'text-stone-700 hover:bg-stone-50'
                     }`}
                   >
-                    <span aria-hidden>{opt.icon}</span>
+                    <span aria-hidden className="text-base">{opt.icon}</span>
                     {opt.label}
                   </button>
                 ))}
@@ -549,7 +560,7 @@ export default function FocusSession({
         )}
       </AnimatePresence>
 
-      {/* Broken Path overlay (dark / glassmorphism) */}
+      {/* Pause / exit: recovery options without guilt */}
       <AnimatePresence>
         {showBrokenPath && (
           <motion.div
@@ -560,7 +571,7 @@ export default function FocusSession({
             className="absolute inset-0 z-10 flex items-center justify-center bg-stone-900/50 backdrop-blur-sm px-4"
             role="dialog"
             aria-modal="true"
-            aria-labelledby="broken-path-title"
+            aria-labelledby="focus-pause-title"
           >
             <motion.div
               initial={{ opacity: 0, scale: 0.98 }}
@@ -569,33 +580,43 @@ export default function FocusSession({
               transition={{ duration: 0.2 }}
               className="rounded-3xl bg-white/85 backdrop-blur-md border border-white/50 shadow-2xl max-w-sm w-full p-6"
             >
-              <h2 id="broken-path-title" className="font-serif text-stone-800 text-xl text-center mb-6">
-                The path is broken. Why?
+              <h2 id="focus-pause-title" className="font-serif text-stone-800 text-lg text-center mb-4">
+                What would you like to do?
               </h2>
-              <div className="flex flex-col gap-3">
+              <div className="flex flex-col gap-2">
                 <motion.button
                   type="button"
                   onClick={handleHarvestEarly}
-                  className="w-full py-3 font-sans text-sm text-stone-800 bg-moss-100 border border-moss-500/40 rounded-xl hover:bg-moss-200/80 focus:outline-none focus:ring-2 focus:ring-moss-500/50 transition-colors"
-                  whileTap={{ scale: 0.95 }}
+                  className="w-full py-2.5 font-sans text-sm text-stone-800 bg-moss-100 border border-moss-500/40 rounded-xl hover:bg-moss-200/80 focus:outline-none focus:ring-2 focus:ring-moss-500/50 transition-colors"
+                  whileTap={{ scale: 0.98 }}
                 >
-                  Harvest Early
+                  Log partial time and close
                 </motion.button>
+                {activeTask?.planContext?.slotKey && (
+                  <motion.button
+                    type="button"
+                    onClick={() => handleExitWithAction('reschedule')}
+                    className="w-full py-2.5 font-sans text-sm text-stone-700 bg-stone-100 border border-stone-300 rounded-xl hover:bg-stone-200 focus:outline-none focus:ring-2 focus:ring-moss-500/50 transition-colors"
+                    whileTap={{ scale: 0.98 }}
+                  >
+                    Reschedule this task to later today
+                  </motion.button>
+                )}
                 <motion.button
                   type="button"
-                  onClick={handleDistraction}
-                  className="w-full py-3 font-sans text-sm text-stone-700 bg-stone-200/80 border border-stone-300 rounded-xl hover:bg-stone-300/80 focus:outline-none focus:ring-2 focus:ring-moss-500/50 transition-colors"
-                  whileTap={{ scale: 0.95 }}
+                  onClick={() => handleExitWithAction('return')}
+                  className="w-full py-2.5 font-sans text-sm text-stone-600 border border-stone-300 rounded-xl hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/50 transition-colors"
+                  whileTap={{ scale: 0.98 }}
                 >
-                  Distraction / Weed
+                  Return to plan (keep slot)
                 </motion.button>
                 <motion.button
                   type="button"
                   onClick={handleResumePath}
-                  className="w-full py-3 font-sans text-sm text-stone-600 border border-stone-300 rounded-xl hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/50 transition-colors"
-                  whileTap={{ scale: 0.95 }}
+                  className="w-full py-2.5 font-sans text-sm text-stone-600 border border-stone-200 rounded-xl hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-moss-500/50 transition-colors"
+                  whileTap={{ scale: 0.98 }}
                 >
-                  Resume Path
+                  Resume
                 </motion.button>
               </div>
             </motion.div>
@@ -613,9 +634,18 @@ export default function FocusSession({
             transition={{ duration: 0.3 }}
             className="w-full max-w-sm rounded-3xl bg-white/85 backdrop-blur-md border border-white/50 shadow-2xl p-6"
           >
+            {(() => {
+              const plannedMin = Math.round(durationSeconds / 60);
+              const actualMin = completedTimeSpentMinutes ?? plannedMin;
+              return (
+                <p className="font-sans text-sm text-stone-500 text-center mb-4">
+                  Planned {plannedMin} min · Actual {actualMin} min
+                </p>
+              );
+            })()}
             {nextKaizenStep && (
-              <div className="mb-6 p-4 bg-indigo-500/20 border border-indigo-400/30 rounded-2xl animate-fade-in">
-                <p className="text-indigo-200 text-sm mb-2">🔥 Keep the momentum going?</p>
+              <div className="mb-6 p-4 bg-moss-50 border border-moss-200 rounded-xl">
+                <p className="font-sans text-sm text-stone-700 mb-2">Next step</p>
                 <button
                   type="button"
                   onClick={() => {
@@ -624,14 +654,14 @@ export default function FocusSession({
                       Math.max(1, Math.floor(durationSeconds / 60));
                     onStartNextStep?.(nextKaizenStep, { timeSpentMinutes: mins });
                   }}
-                  className="w-full py-3 bg-white text-indigo-600 font-bold rounded-xl shadow-lg hover:scale-[1.02] transition-transform flex justify-center items-center gap-2"
+                  className="w-full py-2.5 font-sans text-sm font-medium text-moss-800 bg-moss-100 border border-moss-300 rounded-lg hover:bg-moss-200 focus:outline-none focus:ring-2 focus:ring-moss-500/50"
                 >
-                  Start Next: {nextKaizenStep.title} (5m)
+                  {nextKaizenStep.title} (~{nextKaizenStep.suggestedMinutes ?? 5} min)
                 </button>
               </div>
             )}
             <h2 className="font-serif text-stone-800 text-xl text-center mb-6">
-              Focus Complete. How was your flow?
+              How was your flow?
             </h2>
             <div className="flex justify-center gap-4 flex-wrap">
               {[
@@ -666,6 +696,8 @@ export default function FocusSession({
             <h1 className="mt-8 font-serif text-3xl md:text-4xl text-stone-900 text-center max-w-md">
               {sessionMode === 'break' ? 'Rest your eyes' : activeTask.title}
             </h1>
+            {goalLabel && <p className="mt-1 font-sans text-sm text-stone-500">{goalLabel}</p>}
+            <p className="mt-1 font-sans text-xs text-stone-400">Planned: {durationMinutes} min</p>
           </>
         )}
         <AnimatePresence mode="wait">

@@ -167,15 +167,8 @@ export default function WanderingCreature({
   const handlePet = () => {
     if (displayName === 'Spirit' && tourStep === 4 && typeof setTourStep === 'function') setTourStep(0);
     setIsInteracting(true);
-    const now = Date.now();
-    const cooldownPassed = now - lastPetTimeRef.current >= PET_COOLDOWN_MS;
-    if (cooldownPassed && typeof earnEmbers === 'function') {
-      earnEmbers(1);
-      lastPetTimeRef.current = now;
-      fireToast(`You pet the ${displayName}! ❤️ +1 Ember`);
-    } else {
-      fireToast(`Happy ${displayName}! ❤️`);
-    }
+    lastPetTimeRef.current = Date.now();
+    fireToast(`Happy ${displayName}! ❤️`);
     setTimeout(() => setIsInteracting(false), INTERACT_DURATION_MS);
   };
 

@@ -94,7 +94,15 @@ function Sparkline({ data }) {
   );
 }
 
-export default function MorningCheckIn({ onComplete, onDismiss, goals = [], logMetric, yesterdayPlan = null }) {
+export default function MorningCheckIn({
+  onComplete,
+  onDismiss,
+  goals = [],
+  logMetric,
+  yesterdayPlan = null,
+  initialEnergyLevel = 5,
+  mode = 'checkin',
+}) {
   const { smallJoys, clearDaySchedule, today, tourStep } = useGarden();
   const [randomJoy] = useState(() => {
     if (!smallJoys || smallJoys.length === 0) return null;
@@ -102,7 +110,7 @@ export default function MorningCheckIn({ onComplete, onDismiss, goals = [], logM
   });
   const { setEnergyLevel } = useEnergy();
   const [step, setStep] = useState('energy');
-  const [selectedEnergyLevel, setSelectedEnergyLevel] = useState(5);
+  const [selectedEnergyLevel, setSelectedEnergyLevel] = useState(() => Math.max(SPARKS_MIN, Math.min(SPARKS_MAX, Number(initialEnergyLevel) || 5)));
   const [measurementValues, setMeasurementValues] = useState({});
   const [showPauseConfirm, setShowPauseConfirm] = useState(false);
   const [pauseClearing, setPauseClearing] = useState(false);
@@ -122,6 +130,8 @@ export default function MorningCheckIn({ onComplete, onDismiss, goals = [], logM
     if (typeof yesterdayPlan.spoonCount === 'number' && yesterdayPlan.spoonCount >= 1 && yesterdayPlan.spoonCount <= 10) return yesterdayPlan.spoonCount;
     return modifierToSparks(yesterdayPlan.modifier);
   }, [yesterdayPlan]);
+
+  const isAdjustMode = mode === 'adjust';
 
   const handleEnergySelect = (sparks) => {
     const level = Math.max(SPARKS_MIN, Math.min(SPARKS_MAX, Number(sparks)));
@@ -200,9 +210,9 @@ export default function MorningCheckIn({ onComplete, onDismiss, goals = [], logM
               className="contents"
             >
               <h2 id="morning-checkin-title" className="font-serif text-stone-900 text-xl text-center mb-2">
-                Good Morning.
+                {isAdjustMode ? "Adjust today's Sparks" : 'Good Morning.'}
               </h2>
-              {randomJoy && (
+              {!isAdjustMode && randomJoy && (
                 <div className="mb-6 px-4 py-3 bg-gradient-to-r from-moss-50 to-stone-50 border border-moss-100 rounded-2xl flex items-center gap-3 shadow-sm" role="status">
                   <span className="text-xl">🌸</span>
                   <p className="font-sans text-sm text-stone-600 italic">
@@ -213,7 +223,7 @@ export default function MorningCheckIn({ onComplete, onDismiss, goals = [], logM
               <p className="font-sans text-stone-600 text-center mb-4">
                 How many Sparks do you have today? (1–10)
               </p>
-              {yesterdayPlan && yesterdaySparks != null && (
+              {!isAdjustMode && yesterdayPlan && yesterdaySparks != null && (
                 <div className="mb-4">
                   <button
                     type="button"
@@ -262,7 +272,7 @@ export default function MorningCheckIn({ onComplete, onDismiss, goals = [], logM
                   disabled={selectedEnergyLevel == null}
                   className="w-full py-3 rounded-xl font-sans font-medium text-stone-50 bg-moss-600 hover:bg-moss-700 focus:outline-none focus:ring-2 focus:ring-moss-500/50 disabled:opacity-50 disabled:pointer-events-none transition-colors"
                 >
-                  Continue with {(selectedEnergyLevel ?? 5)} Sparks
+                  {isAdjustMode ? `Save ${(selectedEnergyLevel ?? 5)} Sparks` : `Continue with ${(selectedEnergyLevel ?? 5)} Sparks`}
                 </button>
                 <button
                   type="button"

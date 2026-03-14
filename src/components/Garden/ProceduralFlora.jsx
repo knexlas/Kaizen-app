@@ -3,6 +3,7 @@ import { useFrame } from '@react-three/fiber';
 import { useGLTF } from '@react-three/drei';
 import { getGoalProgressPercent, getHash } from './gardenProgress';
 import { LowPerfContext } from './Garden3D';
+import { GOAL_GARDEN_STATE } from '../../services/gardenStateService';
 
 export function KenneyModel({ path, scale = 1, lowPerf = false }) {
   const { scene } = useGLTF(path);
@@ -36,7 +37,11 @@ function getLastWateredOrCreated(goal) {
   return Number.isNaN(t) ? null : t;
 }
 
-export default function ProceduralFlora({ goal, isHovered }) {
+/**
+ * Visual state from project/activity: nurtured (normal), neglected (dormant), restored (back to life), stuck (gentle wilt).
+ * Motivating, not punitive: dormant = resting; restored = small glow.
+ */
+export default function ProceduralFlora({ goal, isHovered, gardenState }) {
   const lowPerf = useContext(LowPerfContext);
   const progress = getGoalProgressPercent(goal) || 0;
   const growthScale = Math.max(0.3, progress / 100);
@@ -46,6 +51,16 @@ export default function ProceduralFlora({ goal, isHovered }) {
     lastWateredOrCreated == null
       ? false
       : Date.now() - lastWateredOrCreated > THIRSTY_HOURS * 60 * 60 * 1000;
+
+  const state = gardenState ?? GOAL_GARDEN_STATE.NURTURED;
+  const isNeglected = state === GOAL_GARDEN_STATE.NEGLECTED;
+  const isRestored = state === GOAL_GARDEN_STATE.RESTORED;
+  const isStuck = state === GOAL_GARDEN_STATE.STUCK;
+
+  const dormant = isThirsty || isNeglected;
+  const droop = dormant ? [0.25, 0, 0.2] : isStuck ? [0.12, 0, 0.08] : [0, 0, 0];
+  const soilColor = dormant ? '#a8a29e' : isStuck ? '#57534e' : '#4a3f35';
+  const scaleMod = isNeglected ? 0.85 : isRestored ? 1.02 : 1;
 
   const isProject = goal?._projectGoal;
   const hash = getHash(String(goal?.id ?? ''));
@@ -62,14 +77,12 @@ export default function ProceduralFlora({ goal, isHovered }) {
   });
 
   return (
-    <group scale={0.8} position={[0, 0, 0]}>
-      {/* Tilled Soil Base */}
+    <group scale={0.8 * scaleMod} position={[0, 0, 0]}>
       <mesh position={[0, 0.05, 0]} receiveShadow={!lowPerf} castShadow={!lowPerf}>
         <cylinderGeometry args={[0.45, 0.5, 0.1, 8]} />
-        <meshStandardMaterial color={isThirsty ? '#d6d3d1' : '#4a3f35'} roughness={1} />
+        <meshStandardMaterial color={soilColor} roughness={1} />
       </mesh>
-      {/* Droop wrapper when thirsty; inner group has sway animation */}
-      <group rotation={isThirsty ? [0.2, 0, 0.2] : [0, 0, 0]}>
+      <group rotation={droop}>
         <group ref={plantRef}>
           <KenneyModel path={modelFile} scale={growthScale} lowPerf={lowPerf} />
         </group>

@@ -9,11 +9,14 @@ import { toCanonicalSlotKey, slotKeyToMinutesSinceMidnight } from '../../service
 import { recommendDailyPriority } from '../../services/geminiService';
 import { summarizeDayPlan, dedupeCalendarEventsForDate } from '../../services/scheduleAdapter';
 import { useGarden } from '../../context/GardenContext';
+import { useEnergy } from '../../context/EnergyContext';
 import { useReward } from '../../context/RewardContext';
+import { useDialog } from '../../context/DialogContext';
 import { buildReward } from '../../services/dopamineEngine';
 import { localISODate } from '../../services/dateUtils';
 import { getSettings } from '../../services/userSettings';
 import { shouldReduceMotion } from '../../services/motion';
+import { getGamificationIntensity } from '../../constants/gamificationIntensity';
 import { vibrateShort } from '../../utils/vibration';
 import { DefaultSpiritSvg } from './MochiSpirit';
 import WoodenSpoon from '../WoodenSpoon';
@@ -290,6 +293,8 @@ function TimeSlot({
   hourEnd = HOUR_END,
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: hour });
+  const { dailyEnergy } = useEnergy();
+  const spoons = typeof dailyEnergy === 'number' ? dailyEnergy : 10;
   const rawList = Array.isArray(assignmentsList) ? assignmentsList : (assignmentsList != null ? [assignmentsList] : []);
   const isRowFormat = rawList.length > 0 && rawList[0] && typeof rawList[0] === 'object' && 'slotKey' in rawList[0];
   const list = isRowFormat ? rawList : rawList.map((a, i) => ({ slotKey: hour, assignment: a, indexInSlot: i }));
@@ -457,6 +462,8 @@ function TimeSlot({
               const firstUncompleted = goal?.milestones?.find((m) => !m.completed);
               const milestoneTitle = firstUncompleted?.title ?? firstUncompleted?.text;
               const taskKey = assignment.id ?? `${slotKey}-${index}-${assignment.title ?? goal?.title ?? 'task'}`;
+              const taskActivation = goal?.activationEnergy ?? getSpoonCost(goal ?? assignment ?? {});
+              const isDimmedForEnergy = taskActivation > 3 && spoons <= 3;
               return (
                 <motion.div
                   key={taskKey}
@@ -465,10 +472,15 @@ function TimeSlot({
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.8 }}
                   transition={{ type: 'spring', stiffness: 300, damping: 25 }}
-                  className="flex items-start gap-2 min-w-0 flex-shrink-0"
+                  className="flex items-start gap-2 min-w-0 flex-shrink-0 relative"
                   style={{ height: heightPx, minHeight: 12 }}
                 >
-                  <div className={`flex-1 min-w-0 h-full rounded-xl overflow-hidden px-2 border transition-shadow hover:shadow-md ${slotBgForChip} ${isSlotCompleted ? 'opacity-90 border-stone-300' : ''} ${isMicroTask ? 'flex flex-row items-center py-1' : 'flex flex-col justify-center py-1.5'}`}>
+                  <div className={`flex-1 min-w-0 h-full rounded-xl overflow-hidden px-2 border transition-shadow hover:shadow-md relative ${slotBgForChip} ${isSlotCompleted ? 'opacity-90 border-stone-300' : ''} ${isMicroTask ? 'flex flex-row items-center py-1' : 'flex flex-col justify-center py-1.5'} ${isDimmedForEnergy ? 'opacity-40 grayscale saturate-50' : ''}`} title={isDimmedForEnergy ? 'Energy too low today' : undefined}>
+                    {isDimmedForEnergy && (
+                      <span className="absolute top-1 right-1 px-1.5 py-0.5 rounded text-[10px] font-sans font-medium bg-stone-600/90 text-stone-200 shadow-sm" title="Energy too low today">
+                        Resting
+                      </span>
+                    )}
                     {routineSession ? (
                       isMicroTask ? (
                         <div className="flex items-center gap-1.5 min-w-0 w-full">
@@ -720,6 +732,7 @@ function AnytimePoolSection({
 
 function GoalMenu({ goal, onEdit, onCompost, onClose, anchorRef }) {
   const menuRef = useRef(null);
+  const { showConfirm } = useDialog();
   useEffect(() => {
     const handleClickOutside = (e) => {
       if (menuRef.current && !menuRef.current.contains(e.target) && anchorRef?.current && !anchorRef.current.contains(e.target)) onClose?.();
@@ -729,9 +742,16 @@ function GoalMenu({ goal, onEdit, onCompost, onClose, anchorRef }) {
   }, [onClose, anchorRef]);
 
   const handleCompost = () => {
-    if (!window.confirm('Return this energy to the soil? (This cannot be undone).')) return;
-    onCompost?.(goal.id);
-    onClose?.();
+    showConfirm({
+      message: 'Return this energy to the soil? This cannot be undone.',
+      confirmLabel: 'Compost',
+      cancelLabel: 'Cancel',
+      destructive: true,
+      onConfirm: () => {
+        onCompost?.(goal.id);
+        onClose?.();
+      },
+    });
   };
 
   return (
@@ -796,6 +816,7 @@ function subtaskStatus(st) {
 }
 
 function SeedChip({ goal, item, isRitual = false, assignments = {}, hours = HOURS, onSeedClick, onMilestoneCheck, onEditGoal, onCompostGoal, onAddRoutineTime, onPlantRoutineBlock, onAddSubtask, onStartFocus, onTap, compact = false }) {
+  const { showPrompt } = useDialog();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuAnchorRef = useRef(null);
   const dragId = isRitual && item?.id ? `ritual-${goal?.id}-${item.id}` : goal?.id;
@@ -1001,8 +1022,15 @@ function SeedChip({ goal, item, isRitual = false, assignments = {}, hours = HOUR
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
-                const title = window.prompt('Project name?', '');
-                if (title?.trim()) onAddSubtask(goal.id, { title: title.trim(), estimatedHours: 0, completedHours: 0, deadline: null, color: null });
+                showPrompt({
+                  title: 'Add project',
+                  message: 'Name for the new project?',
+                  defaultValue: '',
+                  submitLabel: 'Add',
+                  onSubmit: (title) => {
+                    if (title?.trim()) onAddSubtask(goal.id, { title: title.trim(), estimatedHours: 0, completedHours: 0, deadline: null, color: null });
+                  },
+                });
               }}
               className="shrink-0 px-2 py-1.5 rounded-lg border border-dashed border-moss-400 bg-moss-50 font-sans text-xs text-moss-700 hover:bg-moss-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
               aria-label="Add project"
@@ -1270,7 +1298,7 @@ const WeatherBadge = ({ type }) => {
   return <span className="text-sm" title="Clear day">☀️</span>;
 };
 
-function WeekView({ weekAssignments, goals, onDayClick, onPlanWeek, planningWeek, weekPreview, onConfirmWeekPlan, onDiscardWeekPlan, calendarEvents }) {
+function WeekView({ weekAssignments, goals, onDayClick, onPlanWeek, planningWeek, weekPreview, onConfirmWeekPlan, onDiscardWeekPlan, calendarEvents, primaryWeekPlanning = 'suggest' }) {
   const dates = useMemo(() => getWeekDates(), []);
   const todayStr = useMemo(() => localISODate(), []);
   const displayAssignments = weekPreview ?? weekAssignments;
@@ -1316,14 +1344,25 @@ function WeekView({ weekAssignments, goals, onDayClick, onPlanWeek, planningWeek
             </>
           )}
           {!weekPreview && onPlanWeek && (
-            <button
-              type="button"
-              onClick={onPlanWeek}
-              disabled={planningWeek}
-              className="px-3 py-1.5 rounded-lg border border-moss-300 bg-moss-50 font-sans text-sm text-moss-800 hover:bg-moss-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40 disabled:opacity-60 transition-colors"
-            >
-              {planningWeek ? 'Planning...' : '✨ Plan My Week'}
-            </button>
+            primaryWeekPlanning === 'ai' ? (
+              <button
+                type="button"
+                onClick={onPlanWeek}
+                disabled={planningWeek}
+                className="px-3 py-1.5 rounded-lg border border-moss-300 bg-moss-50 font-sans text-sm text-moss-800 hover:bg-moss-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40 disabled:opacity-60 transition-colors"
+              >
+                {planningWeek ? 'Planning...' : '✨ Plan My Week'}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={onPlanWeek}
+                disabled={planningWeek}
+                className="font-sans text-xs text-moss-600 hover:text-moss-800 hover:underline focus:outline-none focus:ring-2 focus:ring-moss-500/40 rounded px-1 py-0.5 disabled:opacity-60"
+              >
+                {planningWeek ? 'Planning...' : 'Or use AI to plan week'}
+              </button>
+            )
           )}
         </div>
       </div>
@@ -1764,8 +1803,11 @@ function TimeSlicer({
   monthlyRoadmap = null,
   zenMode = false,
   suppressPrimaryActionsInZen = false,
+  primaryWeekPlanning = 'suggest', // 'suggest' = rule-based primary (Suggest my week in action row); 'ai' = Plan My Week prominent
 }) {
-  const { googleToken: googleTokenContext, spiritConfig, addLog, tourStep, setTourStep } = useGarden();
+  const garden = useGarden();
+  const { googleToken: googleTokenContext, spiritConfig, addLog, tourStep, setTourStep, userSettings } = garden;
+  const gamificationMinimal = getGamificationIntensity(userSettings ?? {}) === 'minimal';
   const { pushReward } = useReward();
   const googleToken = googleTokenProp ?? googleTokenContext ?? null;
 
@@ -1795,10 +1837,8 @@ function TimeSlicer({
   const [prioritizeLoading, setPrioritizeLoading] = useState(false);
   const [now, setNow] = useState(() => new Date());
   const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < MOBILE_BREAKPOINT);
-  const garden = useGarden();
-  const userSettings = garden?.userSettings ?? {};
-  const dayStartStr = userSettings.dayStart ?? '08:00';
-  const dayEndStr = userSettings.dayEnd ?? '22:00';
+  const dayStartStr = userSettings?.dayStart ?? '08:00';
+  const dayEndStr = userSettings?.dayEnd ?? '22:00';
   const hourStart = useMemo(() => parseTimeToHour(dayStartStr) ?? 8, [dayStartStr]);
   const hourEnd = useMemo(() => parseTimeToHour(dayEndStr) ?? 22, [dayEndStr]);
   const hoursArray = useMemo(
@@ -2559,6 +2599,7 @@ function TimeSlicer({
           onConfirmWeekPlan={onConfirmWeekPlan}
           onDiscardWeekPlan={onDiscardWeekPlan}
           calendarEvents={calendarEvents}
+          primaryWeekPlanning={primaryWeekPlanning}
         />
       )}
 
@@ -2730,7 +2771,7 @@ function TimeSlicer({
                       setQuickEventDuration('30');
                     }}
                     onRemoveSlotItem={removeAssignment}
-                    disableConfetti={getSettings().lowStim || shouldReduceMotion(getSettings())}
+                    disableConfetti={getSettings().lowStim || shouldReduceMotion(getSettings()) || gamificationMinimal}
                     hourStart={hourStart}
                     hourEnd={hourEnd}
                   />

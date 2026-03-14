@@ -11,8 +11,18 @@ import {
 } from '@dnd-kit/core';
 import { motion, AnimatePresence } from 'framer-motion';
 import { localISODate } from '../../services/dateUtils';
-import { checkPlacementConflict, findNextAvailableStart, toCanonicalSlotKey, slotKeyToMinutesSinceMidnight, minutesToCanonicalSlotKey } from '../../services/schedulingConflictService';
+import {
+  checkPlacementConflict,
+  checkPlacementConflictWithCalendar,
+  findNextAvailableStart,
+  findNextAvailableStartWithCalendar,
+  toCanonicalSlotKey,
+  slotKeyToMinutesSinceMidnight,
+  minutesToCanonicalSlotKey,
+  getDurationMinutesFromPlanAssignment,
+} from '../../services/schedulingConflictService';
 import { dedupeCalendarEventsForDate, getPlanItemsForDate as getPlanItemsForDateShared } from '../../services/scheduleAdapter';
+import { getPlannedMinutesByDay } from '../../utils/plannedHoursAggregation';
 
 const WEEKDAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const MAX_DAILY_SPARKS = 10;
@@ -140,26 +150,23 @@ function getVisibleEventsForDate(weeklyEvents, weekAssignments, dateStr) {
   return dedupeCalendarEventsForDate(weeklyEvents, weekAssignments?.[dateStr], dateStr);
 }
 
-/** Capacity bar for a day column: total Sparks vs max; warning when over. */
-function CapacityBar({ totalSparks, maxSparks = MAX_DAILY_SPARKS }) {
-  const pct = Math.min(100, (totalSparks / maxSparks) * 100);
-  const isOver = totalSparks > maxSparks;
+/** Hours bar for a day column: planned vs capacity; clear over-capacity label. */
+function DayHoursBar({ plannedHours = 0, capacityHours }) {
+  if (capacityHours == null || capacityHours <= 0) return null;
+  const over = plannedHours > capacityHours;
+  const pct = Math.min(100, (plannedHours / capacityHours) * 100);
   return (
-    <div className="shrink-0 px-1 py-1.5" title={isOver ? 'This day is looking pretty full!' : undefined}>
-      <div className="h-2 w-full rounded-full bg-stone-300 overflow-hidden">
+    <div className="shrink-0 px-1 py-1" title={over ? 'Over capacity' : 'Planned hours / capacity'}>
+      <div className="h-1.5 w-full rounded-full bg-stone-200 overflow-hidden">
         <div
-          className={`h-full rounded-full transition-all ${isOver ? 'bg-amber-400' : 'bg-moss-500'}`}
+          className={`h-full rounded-full transition-all ${over ? 'bg-amber-500' : 'bg-moss-500'}`}
           style={{ width: `${pct}%` }}
         />
       </div>
-      <p className="text-[10px] text-stone-500 mt-0.5 tabular-nums" title={isOver ? 'This day is looking pretty full!' : undefined}>
-        {totalSparks}/{maxSparks}
+      <p className={`text-[10px] mt-0.5 tabular-nums ${over ? 'text-amber-700 font-medium' : 'text-stone-500'}`}>
+        {(plannedHours ?? 0).toFixed(1)}h / {capacityHours}h
+        {over ? ' · Over capacity' : ''}
       </p>
-      {isOver && (
-        <p className="text-[10px] text-amber-700 truncate" title="This day is looking pretty full!">
-          Pretty full
-        </p>
-      )}
     </div>
   );
 }
@@ -354,8 +361,34 @@ function normalizeEventDurationInput(value, fallback = 60) {
   return Math.max(15, Math.min(480, parsed));
 }
 
+/** Sum planned minutes from a day plan (all slots except anytime). */
+function getPlannedMinutesFromPlan(plan) {
+  if (!plan || typeof plan !== 'object') return 0;
+  let total = 0;
+  for (const [key, value] of Object.entries(plan)) {
+    if (key === 'anytime') continue;
+    const list = Array.isArray(value) ? value : [value];
+    for (const a of list) total += getDurationMinutesFromPlanAssignment(a);
+  }
+  return total;
+}
+
+const DEFAULT_DAY_CAPACITY_HOURS = 14;
+
+/** Week view: show planned vs capacity per day (e.g. "3.5h / 14h"). Used in drawer/summary; day column uses DayHoursBar. */
+function DayCapacityLabel({ plannedHours, capacityHours }) {
+  if (capacityHours == null || capacityHours <= 0) return null;
+  const over = plannedHours > capacityHours;
+  return (
+    <div className={`font-sans text-[10px] mt-0.5 ${over ? 'text-amber-700 font-medium' : 'text-stone-500'}`} title={over ? 'Over capacity' : 'Planned hours / capacity'}>
+      {(plannedHours ?? 0).toFixed(1)}h / {capacityHours}h
+      {over ? ' · Over capacity' : ''}
+    </div>
+  );
+}
+
 /** Drawer: "Schedule for [date]" — pick time + task from backlog, or add event/block. */
-export function PlanDayDrawer({ dateStr, open, onClose, backlogTasks, loadDayPlan, saveDayPlanForDate, goals = [], weeklyEvents = [] }) {
+export function PlanDayDrawer({ dateStr, open, onClose, backlogTasks, loadDayPlan, saveDayPlanForDate, goals = [], weeklyEvents = [], dayCapacityHours = DEFAULT_DAY_CAPACITY_HOURS }) {
   const [planMode, setPlanMode] = useState('task'); // 'task' | 'event'
   const [timeSlot, setTimeSlot] = useState(9);
   const [timeInput, setTimeInput] = useState('09:00');
@@ -380,7 +413,9 @@ export function PlanDayDrawer({ dateStr, open, onClose, backlogTasks, loadDayPla
         if (cancelled) return;
         const planObj = plan && typeof plan === 'object' ? plan : {};
         setExistingPlan(planObj);
-        const firstFree = findNextAvailableStart(planObj, 8, 60);
+        const firstFree = Array.isArray(weeklyEvents) && weeklyEvents.length > 0
+          ? findNextAvailableStartWithCalendar(planObj, weeklyEvents, dateStr, '08:00', 60, 22)
+          : findNextAvailableStart(planObj, 8, 60);
         const slot = firstFree !== null ? firstFree : '09:00';
         setTimeSlot(slot);
         setTimeInput(timeSlotToInput(slot));
@@ -392,7 +427,7 @@ export function PlanDayDrawer({ dateStr, open, onClose, backlogTasks, loadDayPla
       }
     })();
     return () => { cancelled = true; };
-  }, [open, dateStr, loadDayPlan]);
+  }, [open, dateStr, loadDayPlan, weeklyEvents]);
 
   const handleSave = useCallback(async (addAnother = false) => {
     if (!dateStr || !selectedTask || typeof loadDayPlan !== 'function' || typeof saveDayPlanForDate !== 'function') return;
@@ -412,7 +447,9 @@ export function PlanDayDrawer({ dateStr, open, onClose, backlogTasks, loadDayPla
         });
       } else {
         const durationMinutes = getTaskDurationMinutes(selectedTask, goals);
-        const conflict = checkPlacementConflict(planObj, timeSlot, durationMinutes);
+        const conflict = Array.isArray(weeklyEvents) && weeklyEvents.length > 0
+          ? checkPlacementConflictWithCalendar(planObj, weeklyEvents, dateStr, timeSlot, durationMinutes)
+          : checkPlacementConflict(planObj, timeSlot, durationMinutes);
         if (conflict.conflict) {
           setConflictResult(conflict);
           setSaving(false);
@@ -432,7 +469,9 @@ export function PlanDayDrawer({ dateStr, open, onClose, backlogTasks, loadDayPla
         const planAfter = await loadDayPlan(dateStr);
         const planObjAfter = planAfter && typeof planAfter === 'object' ? planAfter : {};
         setExistingPlan(planObjAfter);
-        const nextFree = findNextAvailableStart(planObjAfter, 8, 60);
+        const nextFree = Array.isArray(weeklyEvents) && weeklyEvents.length > 0
+          ? findNextAvailableStartWithCalendar(planObjAfter, weeklyEvents, dateStr, '08:00', 60, 22)
+          : findNextAvailableStart(planObjAfter, 8, 60);
         const slot = nextFree !== null ? nextFree : '09:00';
         setTimeSlot(slot);
         setTimeInput(timeSlotToInput(slot));
@@ -444,7 +483,7 @@ export function PlanDayDrawer({ dateStr, open, onClose, backlogTasks, loadDayPla
     } finally {
       setSaving(false);
     }
-  }, [dateStr, timeSlot, selectedTask, goals, scheduleAsAnytime, loadDayPlan, saveDayPlanForDate, onClose]);
+  }, [dateStr, timeSlot, selectedTask, goals, scheduleAsAnytime, weeklyEvents, loadDayPlan, saveDayPlanForDate, onClose]);
 
   const handleSaveEvent = useCallback(async (addAnother = false) => {
     const title = (eventTitle || '').trim();
@@ -455,7 +494,9 @@ export function PlanDayDrawer({ dateStr, open, onClose, backlogTasks, loadDayPla
     try {
       const plan = await loadDayPlan(dateStr);
       const planObj = plan && typeof plan === 'object' ? plan : {};
-      const conflict = checkPlacementConflict(planObj, timeSlot, durationMinutes);
+      const conflict = Array.isArray(weeklyEvents) && weeklyEvents.length > 0
+        ? checkPlacementConflictWithCalendar(planObj, weeklyEvents, dateStr, timeSlot, durationMinutes)
+        : checkPlacementConflict(planObj, timeSlot, durationMinutes);
       if (conflict.conflict) {
         setConflictResult(conflict);
         setSaving(false);
@@ -469,7 +510,9 @@ export function PlanDayDrawer({ dateStr, open, onClose, backlogTasks, loadDayPla
         const planAfter = await loadDayPlan(dateStr);
         const planObjAfter = planAfter && typeof planAfter === 'object' ? planAfter : {};
         setExistingPlan(planObjAfter);
-        const nextFree = findNextAvailableStart(planObjAfter, 8, 60);
+        const nextFree = Array.isArray(weeklyEvents) && weeklyEvents.length > 0
+          ? findNextAvailableStartWithCalendar(planObjAfter, weeklyEvents, dateStr, '08:00', 60, 22)
+          : findNextAvailableStart(planObjAfter, 8, 60);
         const slot = nextFree !== null ? nextFree : '09:00';
         setTimeSlot(slot);
         setTimeInput(timeSlotToInput(slot));
@@ -481,23 +524,25 @@ export function PlanDayDrawer({ dateStr, open, onClose, backlogTasks, loadDayPla
     } finally {
       setSaving(false);
     }
-  }, [dateStr, timeSlot, eventTitle, eventDuration, loadDayPlan, saveDayPlanForDate, onClose]);
+  }, [dateStr, timeSlot, eventTitle, eventDuration, weeklyEvents, loadDayPlan, saveDayPlanForDate, onClose]);
 
   const handleUseNextSlot = useCallback(() => {
-    if (!existingPlan) return;
+    if (!existingPlan || !dateStr) return;
     const durationMinutes =
       planMode === 'task'
         ? getTaskDurationMinutes(selectedTask, goals)
         : normalizeEventDurationInput(eventDuration, 60);
     const fromMins = slotKeyToMinutesSinceMidnight(timeSlot);
     const fromNext = fromMins != null ? minutesToCanonicalSlotKey(fromMins + 1) : '08:00';
-    const nextSlot = findNextAvailableStart(existingPlan, fromNext, durationMinutes);
+    const nextSlot = Array.isArray(weeklyEvents) && weeklyEvents.length > 0
+      ? findNextAvailableStartWithCalendar(existingPlan, weeklyEvents, dateStr, fromNext, durationMinutes, 22)
+      : findNextAvailableStart(existingPlan, fromNext, durationMinutes);
     if (nextSlot != null) {
       setTimeSlot(nextSlot);
       setTimeInput(timeSlotToInput(nextSlot));
       setConflictResult(null);
     }
-  }, [existingPlan, planMode, selectedTask, goals, eventDuration, timeSlot]);
+  }, [existingPlan, dateStr, planMode, selectedTask, goals, eventDuration, timeSlot, weeklyEvents]);
 
   useEffect(() => {
     if (!open) return;
@@ -516,6 +561,16 @@ export function PlanDayDrawer({ dateStr, open, onClose, backlogTasks, loadDayPla
     }
   })();
   const visibleDayEvents = dedupeCalendarEventsForDate(weeklyEvents, existingPlan, dateStr);
+  const plannedMinutes = getPlannedMinutesFromPlan(existingPlan ?? null);
+  const addingMinutes = planMode === 'task' && selectedTask
+    ? getTaskDurationMinutes(selectedTask, goals)
+    : planMode === 'event'
+      ? normalizeEventDurationInput(eventDuration, 60)
+      : 0;
+  const totalAfterAdd = plannedMinutes + addingMinutes;
+  const capacityMinutes = Math.max(1, dayCapacityHours) * 60;
+  const isOverplanned = totalAfterAdd > capacityMinutes && addingMinutes > 0;
+  const plannedHoursLabel = `${(plannedMinutes / 60).toFixed(1)}h / ${dayCapacityHours}h`;
 
   return (
     <AnimatePresence>
@@ -542,6 +597,12 @@ export function PlanDayDrawer({ dateStr, open, onClose, backlogTasks, loadDayPla
             Schedule for this day
           </h2>
           <p className="font-sans text-sm text-stone-500 mb-2">{dateLabel}</p>
+          <div className="mb-3 flex items-center justify-between font-sans text-sm text-stone-600">
+            <span>Planned: {plannedHoursLabel}</span>
+            {isOverplanned && (
+              <span className="text-amber-700 font-medium" role="alert">Overplanned: this day will exceed capacity.</span>
+            )}
+          </div>
           {(visibleDayEvents.length > 0 || (existingPlan && Object.keys(existingPlan).length > 0)) && (
             <div className="mb-3 p-2.5 rounded-lg bg-stone-50 border border-stone-200">
               <p className="font-sans text-xs font-semibold text-stone-600 uppercase tracking-wider mb-1.5">Already on this day</p>
@@ -928,10 +989,7 @@ function DraggableBacklogTask({ task, isDragging, onTaskClick }) {
           </div>
         )}
         <div className="flex items-center gap-1.5 mt-1">
-          <span className="text-stone-400 text-xs">{'✦'.repeat(task.estimatedSparks || 1)}</span>
-          {task.isKaizen && (
-            <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-moss-100 text-moss-700">Kaizen</span>
-          )}
+          <span className="text-stone-500 text-xs">~{Math.max(15, (task.estimatedSparks || 1) * 15)} min</span>
         </div>
       </div>
       {onTaskClick && taskRef && (
@@ -1041,13 +1099,14 @@ function DraggableScheduledTask({ task, isDragging, dateStr, onCompleteVolumeBlo
   );
 }
 
-function DroppableDayColumn({ dateStr, label, dayNum, isToday, children, scheduledForDay, events, planItems, activeDragId, isPaused, totalSparks, onCompleteVolumeBlock, onTaskClick, onPlanDay }) {
+function DroppableDayColumn({ dateStr, label, dayNum, isToday, children, scheduledForDay, events, planItems, activeDragId, isPaused, totalSparks, plannedHours = 0, capacityHours = DEFAULT_DAY_CAPACITY_HOURS, onCompleteVolumeBlock, onTaskClick, onPlanDay }) {
   const { isOver, setNodeRef } = useDroppable({
     id: `day-${dateStr}`,
     data: { type: 'day', dateStr, isPaused: !!isPaused },
   });
   const isDragging = Boolean(activeDragId);
-  const isOverCapacity = isDragging && totalSparks != null && totalSparks >= MAX_DAILY_SPARKS && !isOver;
+  const overByHours = capacityHours > 0 && plannedHours >= capacityHours;
+  const isOverCapacity = isDragging && (overByHours || (totalSparks != null && totalSparks >= MAX_DAILY_SPARKS)) && !isOver;
   return (
     <div
       ref={setNodeRef}
@@ -1065,8 +1124,8 @@ function DroppableDayColumn({ dateStr, label, dayNum, isToday, children, schedul
       >
         <div className="font-sans text-xs font-medium uppercase tracking-wide">{label}</div>
         <div className="font-serif text-3xl mt-0.5 leading-none">{dayNum}</div>
-        {totalSparks != null && (
-          <CapacityBar totalSparks={totalSparks} maxSparks={MAX_DAILY_SPARKS} />
+        {capacityHours != null && capacityHours > 0 && (
+          <DayHoursBar plannedHours={plannedHours} capacityHours={capacityHours} />
         )}
       </div>
       <div className="flex-1 min-h-[320px] p-2.5 flex flex-col gap-2 overflow-y-auto">
@@ -1161,6 +1220,11 @@ export default function StagingArea({
       };
     });
   }, [todayStr]);
+
+  const plannedMinutesByDay = useMemo(
+    () => getPlannedMinutesByDay(weekAssignments, goals, weekViewDays.map((d) => d.dateStr)),
+    [weekAssignments, goals, weekViewDays]
+  );
 
   const currentMonthStr = useMemo(() => (todayStr || '').slice(0, 7), [todayStr]);
   const allBacklogTasks = useMemo(() => buildBacklogTasks(goals, currentMonthStr), [goals, currentMonthStr]);
@@ -1374,7 +1438,18 @@ export default function StagingArea({
         });
         return;
       }
-      rescheduleNeedsReschedulingItem(taskData.item, dateStr);
+      (async () => {
+        try {
+          const plan = typeof loadDayPlan === 'function' ? await loadDayPlan(dateStr) : (weekAssignments?.[dateStr] ?? {});
+          const duration = getDurationMinutesFromPlanAssignment(taskData.item?.assignment);
+          const nextSlot = Array.isArray(weeklyEvents) && weeklyEvents.length > 0
+            ? findNextAvailableStartWithCalendar(plan ?? {}, weeklyEvents, dateStr, '08:00', duration, 22)
+            : findNextAvailableStart(plan ?? {}, 8, duration, 22);
+          rescheduleNeedsReschedulingItem(taskData.item, dateStr, nextSlot ?? undefined);
+        } catch (e) {
+          rescheduleNeedsReschedulingItem(taskData.item, dateStr);
+        }
+      })();
       return;
     }
 
@@ -1458,7 +1533,7 @@ export default function StagingArea({
         return next;
       });
     }
-  }, [rescheduleNeedsReschedulingItem, checkCalendarConflict, removeSpawnedVolumeBlock]);
+  }, [rescheduleNeedsReschedulingItem, checkCalendarConflict, removeSpawnedVolumeBlock, loadDayPlan, weekAssignments, weeklyEvents]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -1531,6 +1606,7 @@ export default function StagingArea({
               const isToday = dateStr === todayStr;
               const isPaused = Boolean(pausedDays[dateStr]);
               const totalSparks = events.length * 2 + planItems.length * 2 + scheduledForDay.reduce((s, t) => s + (t.estimatedSparks ?? 2), 0);
+              const plannedHours = (plannedMinutesByDay[dateStr] ?? 0) / 60;
               return (
                 <DroppableDayColumn
                   key={dateStr}
@@ -1544,6 +1620,8 @@ export default function StagingArea({
                   activeDragId={activeDragId}
                   isPaused={isPaused}
                   totalSparks={totalSparks}
+                  plannedHours={plannedHours}
+                  capacityHours={DEFAULT_DAY_CAPACITY_HOURS}
                   onCompleteVolumeBlock={handleCompleteVolumeBlock}
                   onTaskClick={onTaskClick}
                   onPlanDay={onPlanDay}
@@ -1599,14 +1677,14 @@ export default function StagingArea({
                   onClick={() => setBacklogTab('someday')}
                   className={`px-3 py-1.5 font-sans text-sm font-medium rounded-t ${backlogTab === 'someday' ? 'bg-stone-200 text-stone-800' : 'text-stone-500 hover:text-stone-700'}`}
                 >
-                  Someday / Vault
+                  Someday
                 </button>
               </div>
               {backlogTab === 'this-week' && (
                 <>
                   {spawnedVolumeBlocks.length > 0 && (
                     <div className="space-y-2">
-                      <h3 className="font-sans text-xs font-semibold text-moss-700 uppercase tracking-wide">Spawned this week</h3>
+                      <h3 className="font-sans text-xs font-semibold text-moss-700 uppercase tracking-wide">Added this week</h3>
                       {isMobile
                         ? spawnedVolumeBlocks.map((block) => (
                             <button
@@ -1660,7 +1738,7 @@ export default function StagingArea({
               {backlogTab === 'someday' && (
                 <>
                   {somedayUnscheduled.length === 0 ? (
-                    <p className="font-sans text-sm text-stone-400 py-4 text-center">Someday vault is empty. Ideas will land here by default.</p>
+                    <p className="font-sans text-sm text-stone-400 py-4 text-center">Nothing scheduled for later. Add tasks from goals to get started.</p>
                   ) : (
                     <GroupedBacklogList
                       flatTasks={somedayUnscheduled}

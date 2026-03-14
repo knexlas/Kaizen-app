@@ -27,10 +27,10 @@ export default function SupportSuggestionCard({ open, parentGoal, domainId, sugg
         onClick={(e) => e.stopPropagation()}
       >
         <h2 id="support-suggestion-title" className="font-serif text-lg text-stone-900 dark:text-stone-100 mb-1">
-          Want a small support step for this goal?
+          Optional support step
         </h2>
         <p className="font-sans text-sm text-stone-600 dark:text-stone-400 mb-4">
-          This goal often goes better with one simple support habit. Would you like to add one helpful extra? Completely optional — you're in control.
+          Add one small habit to support this goal. Optional.
         </p>
         <ul className="space-y-3 mb-5" aria-label="Support suggestions">
           {suggestions.slice(0, 3).map((s) => (

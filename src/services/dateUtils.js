@@ -125,6 +125,20 @@ export function diffDays(endDate, startDate) {
   return Math.floor(ms / (24 * 60 * 60 * 1000));
 }
 
+/**
+ * Days until a deadline date (YYYY-MM-DD). Positive = future, negative = overdue, null if missing/invalid.
+ * Single source of truth for deadline display and risk logic across cockpit and services.
+ * @param {string|null|undefined} dateStr - YYYY-MM-DD
+ * @returns {number|null}
+ */
+export function daysUntilDeadline(dateStr) {
+  if (!dateStr || typeof dateStr !== 'string') return null;
+  const deadline = new Date(dateStr + 'T23:59:59');
+  if (Number.isNaN(deadline.getTime())) return null;
+  const now = new Date();
+  return Math.ceil((deadline - now) / (24 * 60 * 60 * 1000));
+}
+
 if (typeof import.meta !== 'undefined' && import.meta.env?.DEV) {
   // Sanity: 2025-02-17 is Monday -> mon0=0, js=1; 2025-02-23 is Sunday -> mon0=6, js=0
   const mon = new Date('2025-02-17T12:00:00');

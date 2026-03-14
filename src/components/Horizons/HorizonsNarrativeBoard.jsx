@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useDialog } from '../../context/DialogContext';
 import { generateGoalBreakdownMilestones } from '../../services/geminiService';
 
 /**
@@ -7,6 +8,7 @@ import { generateGoalBreakdownMilestones } from '../../services/geminiService';
  * Milestones as Step 1, Step 2, Step 3… with tasks. No calendar dates — narrative only.
  */
 function NarrativeCard({ goal, expanded, onToggle, onGoalClick, onDeleteGoal }) {
+  const { showConfirm } = useDialog();
   const [breakdown, setBreakdown] = useState(goal.narrativeBreakdown ?? null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -23,7 +25,7 @@ function NarrativeCard({ goal, expanded, onToggle, onGoalClick, onDeleteGoal }) 
       }
     } catch (e) {
       console.warn('Generate narrative failed', e);
-      setError("Connection or API issue. Check VITE_GEMINI_API_KEY or try again.");
+      setError("Connection issue. Try again or check Settings.");
     } finally {
       setLoading(false);
     }
@@ -157,7 +159,12 @@ function NarrativeCard({ goal, expanded, onToggle, onGoalClick, onDeleteGoal }) 
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
-                if (window.confirm('Delete this goal? This cannot be undone.')) onDeleteGoal(goal.id);
+                showConfirm({
+                message: 'Delete this goal? This cannot be undone.',
+                confirmLabel: 'Delete',
+                destructive: true,
+                onConfirm: () => onDeleteGoal(goal.id),
+              });
               }}
               className="text-xs text-stone-500 hover:text-red-600 px-2 py-1 rounded bg-stone-100"
             >

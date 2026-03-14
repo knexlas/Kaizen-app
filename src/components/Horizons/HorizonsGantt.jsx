@@ -1,4 +1,5 @@
 import { useMemo, useState, useCallback } from 'react';
+import { useDialog } from '../../context/DialogContext';
 /**
  * Parse a range string that may mention 'Week' or 'Day', and return column indices for the current scale.
  * @param {string} rangeStr - e.g. 'Week 1', 'Week 2-4', 'Day 8-10'
@@ -139,6 +140,7 @@ export default function HorizonsGantt({
   onTaskClick,
   onScheduleTask,
 }) {
+  const { showConfirm, showPrompt } = useDialog();
   const [timeScale, setTimeScale] = useState('weeks'); // 'days' | 'weeks'
   const [expandedPhases, setExpandedPhases] = useState({});
   const [collapsedProjects, setCollapsedProjects] = useState({}); // { [goalId]: true } = project Gantt collapsed
@@ -348,7 +350,7 @@ export default function HorizonsGantt({
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            if (window.confirm('Delete this project? This cannot be undone.')) onDeleteGoal(goal.id);
+                            showConfirm({ message: 'Delete this project? This cannot be undone.', confirmLabel: 'Delete', destructive: true, onConfirm: () => onDeleteGoal(goal.id) });
                           }}
                           className="text-xs text-stone-400 hover:text-red-600 px-2 py-1 rounded bg-stone-100"
                         >
@@ -392,8 +394,7 @@ export default function HorizonsGantt({
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            const title = window.prompt('Phase title', phase.title);
-                            if (title != null && title.trim()) onUpdateMilestone(goal.id, phase.id, { title: title.trim() });
+                            showPrompt({ title: 'Phase title', defaultValue: phase.title, submitLabel: 'Save', onSubmit: (title) => { if (title?.trim()) onUpdateMilestone(goal.id, phase.id, { title: title.trim() }); } });
                           }}
                           className="text-stone-400 hover:text-stone-600 text-xs px-1.5 py-0.5 rounded"
                           title="Edit phase"
@@ -406,7 +407,7 @@ export default function HorizonsGantt({
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            if (window.confirm(`Delete phase "${phase.title}"? Tasks in it will be removed.`)) onDeleteMilestone(goal.id, phase.id);
+                            showConfirm({ message: `Delete phase "${phase.title}"? Tasks in it will be removed.`, confirmLabel: 'Delete', destructive: true, onConfirm: () => onDeleteMilestone(goal.id, phase.id) });
                           }}
                           className="text-stone-400 hover:text-red-600 text-xs px-1.5 py-0.5 rounded"
                           title="Delete phase"
@@ -432,8 +433,7 @@ export default function HorizonsGantt({
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            const weekRange = window.prompt('Week range (e.g. Week 1-2)', phase.weekRange);
-                            if (weekRange != null && weekRange.trim()) onUpdateMilestone(goal.id, phase.id, { weekRange: weekRange.trim() });
+                            showPrompt({ title: 'Week range', defaultValue: phase.weekRange, placeholder: 'e.g. Week 1-2', submitLabel: 'Save', onSubmit: (weekRange) => { if (weekRange?.trim()) onUpdateMilestone(goal.id, phase.id, { weekRange: weekRange.trim() }); } });
                           }}
                           className="text-[10px] text-stone-400 hover:text-stone-600"
                           title="Edit week range"
@@ -481,8 +481,7 @@ export default function HorizonsGantt({
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                const title = window.prompt('Task title', st.title);
-                                if (title != null && title.trim()) onUpdateSubtask(goal.id, st.id, { title: title.trim() });
+                                showPrompt({ title: 'Task title', defaultValue: st.title, submitLabel: 'Save', onSubmit: (title) => { if (title?.trim()) onUpdateSubtask(goal.id, st.id, { title: title.trim() }); } });
                               }}
                               className="text-stone-400 hover:text-stone-600 text-[10px]"
                               title="Edit task"
@@ -495,7 +494,7 @@ export default function HorizonsGantt({
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                if (window.confirm(`Delete "${st.title}"?`)) onDeleteSubtask(goal.id, st.id);
+                                showConfirm({ message: `Delete "${st.title}"?`, confirmLabel: 'Delete', destructive: true, onConfirm: () => onDeleteSubtask(goal.id, st.id) });
                               }}
                               className="text-stone-400 hover:text-red-600 text-[10px]"
                               title="Delete task"
@@ -551,8 +550,7 @@ export default function HorizonsGantt({
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation();
-                              const title = window.prompt('New task title', 'New task');
-                              if (title != null && title.trim()) onAddSubtask(goal.id, { title: title.trim(), estimatedHours: 1, phaseId: phase.id, weekRange: phase.weekRange });
+                              showPrompt({ title: 'New task', defaultValue: 'New task', submitLabel: 'Add', onSubmit: (title) => { if (title?.trim()) onAddSubtask(goal.id, { title: title.trim(), estimatedHours: 1, phaseId: phase.id, weekRange: phase.weekRange }); } });
                             }}
                             className="text-xs text-moss-600 hover:text-moss-700 font-medium"
                           >

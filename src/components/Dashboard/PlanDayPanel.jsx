@@ -12,6 +12,7 @@ export default function PlanDayPanel({
   plannerTodayBacklogTasks,
   handleQuickScheduleTodayTask,
   isPlanningDay = false,
+  onPlanTodayRitual,
 }) {
   return (
     <motion.div className="mb-6 px-1" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2, ease: 'easeOut' }}>
@@ -62,6 +63,11 @@ export default function PlanDayPanel({
                 </ul>
               ) : null}
               <div className="flex flex-wrap items-center gap-2">
+                {onPlanTodayRitual && (
+                  <PrimaryPlannerAction onClick={onPlanTodayRitual}>
+                    Shape your day
+                  </PrimaryPlannerAction>
+                )}
                 <PrimaryPlannerAction onClick={() => setPlannerPlanDayDateStr(today)}>
                   Open Day Planner
                 </PrimaryPlannerAction>

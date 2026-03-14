@@ -21,8 +21,9 @@ function buildTinyRoutineGoal(title, minutes = 5) {
 /**
  * Canonical focus start contract for all entry points.
  * Returns a session payload plus optional goal to persist first.
+ * planContext: { dateStr, slotKey } when starting from a scheduled slot (enables reschedule/return on exit).
  */
-export function startFocusCommand({ goal, title, minutes = 5, subtaskId = null } = {}) {
+export function startFocusCommand({ goal, title, minutes = 5, subtaskId = null, planContext = null } = {}) {
   if (goal?.id) {
     return {
       goalToCreate: null,
@@ -30,6 +31,7 @@ export function startFocusCommand({ goal, title, minutes = 5, subtaskId = null }
         ...goal,
         sessionDurationMinutes: clampMinutes(minutes, 5),
         subtaskId: subtaskId ?? null,
+        planContext: planContext && planContext.dateStr && planContext.slotKey ? { dateStr: planContext.dateStr, slotKey: planContext.slotKey } : null,
       },
     };
   }
@@ -41,6 +43,7 @@ export function startFocusCommand({ goal, title, minutes = 5, subtaskId = null }
         ...goalToCreate,
         sessionDurationMinutes: clampMinutes(minutes, 5),
         subtaskId: null,
+        planContext: null,
       },
     };
   }

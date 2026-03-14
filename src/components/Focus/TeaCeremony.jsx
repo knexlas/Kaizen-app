@@ -233,15 +233,24 @@ export default function TeaCeremony({ task, completedTask, subtasks = [], onComp
           animate={{ opacity: 1 }}
           transition={{ delay: 0.15, duration: 0.4 }}
         >
-          The session is complete.
+          Session complete
         </motion.h2>
+        <motion.p
+          className="font-sans text-sm text-stone-600 text-center mb-2"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.2, duration: 0.4 }}
+        >
+          {durationMinutes} min logged
+          {subtasks?.length > 0 && subtaskId ? ` to ${subtasks.find((s) => s.id === subtaskId)?.title ?? 'task'}` : ''}.
+        </motion.p>
         <motion.p
           className="font-serif text-lg text-stone-800/80 text-center mb-10"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ delay: 0.3, duration: 0.4 }}
         >
-          How did this harvest feel?
+          How did it feel?
         </motion.p>
 
         {/* Rating cards (horizontal) */}

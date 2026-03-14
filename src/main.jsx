@@ -6,6 +6,7 @@ import App from './App.jsx'
 import { GardenProvider } from './context/GardenContext.jsx'
 import { ThemeProvider } from './context/ThemeContext.jsx'
 import { RewardProvider } from './context/RewardContext.jsx'
+import { DialogProvider } from './context/DialogContext.jsx'
 import RewardOverlay from './components/Rewards/RewardOverlay.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 
@@ -15,8 +16,10 @@ createRoot(document.getElementById('root')).render(
       <ThemeProvider>
         <GardenProvider>
           <RewardProvider>
-            <App />
-            <RewardOverlay />
+            <DialogProvider>
+              <App />
+              <RewardOverlay />
+            </DialogProvider>
           </RewardProvider>
         </GardenProvider>
       </ThemeProvider>

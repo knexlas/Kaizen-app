@@ -756,9 +756,13 @@ export async function parseOmniAddInput(userText) {
   if (!text) return null;
   if (!apiKey) return { type: 'goal', title: text.slice(0, 120) };
 
+  const today = new Date().toISOString().slice(0, 10);
   const prompt = `Classify this short user input into exactly one type and extract a title. No other text.
 Types: "goal" (something to achieve, a project, habit, or metric), "task" (a concrete to-do or action), "calendar_event" (meeting, appointment, or time-bound event).
-If the user mentions a time (e.g. "tomorrow 3pm", "next Tuesday 9am"), set type to "calendar_event" and include startTime/endTime as ISO 8601 strings (use today's date if no date given).
+DATE/TIME RULES (critical): If the user mentions a day or time (e.g. "tomorrow at 3pm", "next Tuesday 9am", "Friday 2pm", "today at 5"), you MUST:
+- Resolve relative dates to a concrete date using today (${today}) as reference. "Tomorrow" = next calendar day, "next Tuesday" = the upcoming Tuesday, "Friday" = this or next Friday depending on context.
+- Return startTime and endTime as full ISO 8601 strings (e.g. 2025-03-05T15:00:00.000Z). Do NOT use null when a time is clearly stated. If only a time is given, use today's date. If no end time, set endTime to startTime + 1 hour.
+- Set type to "calendar_event" when any date or time is mentioned.
 Return ONLY valid JSON in this exact shape (no markdown): {"type":"goal"|"task"|"calendar_event","title":"short title","startTime":"ISO string or null","endTime":"ISO string or null"}
 Input: "${text.replace(/"/g, '\\"').slice(0, 500)}"`;
 

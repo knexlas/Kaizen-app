@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useGarden } from '../../context/GardenContext';
+import { getPlanningEntryConfig } from '../../constants/plannerPresets';
 import { useReward } from '../../context/RewardContext';
 import { suggestGoalStructure } from '../../services/geminiService';
 import InfoTooltip from '../InfoTooltip';
@@ -122,7 +123,8 @@ function newVine(overrides = {}) {
 }
 
 function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks = [], initialIsFixed, initialContext, initialRecurrence, initialEnergyCost, existingRoutineGoals = [], existingVitalityGoals = [], ritualCategories = [], onAddRitualCategory, onOpenProjectPlanner }) {
-  const { ownedSeeds = [] } = useGarden();
+  const { ownedSeeds = [], userSettings } = useGarden();
+  const planningEntry = useMemo(() => getPlanningEntryConfig(userSettings ?? {}), [userSettings]);
   const [goalType, setGoalType] = useState(null); // null | 'kaizen' | 'routine' | 'vitality'
   const [title, setTitle] = useState('');
   const [selectedSeed, setSelectedSeed] = useState(null); // { id, name, model, icon } or null
@@ -563,16 +565,18 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
                     <span className="font-sans text-stone-600 text-xs mt-0.5">(Health / Metric)</span>
                     <p className="font-sans text-stone-500 text-xs mt-2">Track a number. Weight, sleep, body fat. Lower or higher.</p>
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => { onOpenProjectPlanner?.(); onClose?.(); }}
-                    className="flex flex-col items-start p-5 rounded-2xl border-2 border-stone-200 bg-white hover:border-amber-400 hover:bg-amber-50/50 transition-all text-left focus:outline-none focus:ring-2 focus:ring-moss-500/50"
-                  >
-                    <span className="text-2xl mb-2" aria-hidden>🌻</span>
-                    <span className="font-serif text-stone-900 text-base">Plan a Project</span>
-                    <span className="font-sans text-stone-600 text-xs mt-0.5">(Massive Goal)</span>
-                    <p className="font-sans text-stone-500 text-xs mt-2">A huge undertaking. Mochi will slice it into phases and timelines.</p>
-                  </button>
+                  {planningEntry.showPlanAProjectInGoalCreator && (
+                    <button
+                      type="button"
+                      onClick={() => { onOpenProjectPlanner?.(); onClose?.(); }}
+                      className="flex flex-col items-start p-5 rounded-2xl border-2 border-stone-200 bg-white hover:border-amber-400 hover:bg-amber-50/50 transition-all text-left focus:outline-none focus:ring-2 focus:ring-moss-500/50"
+                    >
+                      <span className="text-2xl mb-2" aria-hidden>🌻</span>
+                      <span className="font-serif text-stone-900 text-base">Plan a Project</span>
+                      <span className="font-sans text-stone-600 text-xs mt-0.5">(Massive Goal)</span>
+                      <p className="font-sans text-stone-500 text-xs mt-2">A huge undertaking. Mochi will slice it into phases and timelines.</p>
+                    </button>
+                  )}
                 </div>
                 <button
                   type="button"

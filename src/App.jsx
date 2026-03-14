@@ -9,9 +9,11 @@ import { completeCheckInCommand } from './services/coreCommands';
 import { useTheme } from './context/ThemeContext';
 import SundayRitualController from './components/Rituals/SundayRitualController';
 import GardenDashboard from './components/Dashboard/GardenDashboard';
-import MissedDayModal from './components/Onboarding/MissedDayModal';
+import MorningCheckIn from './components/Dashboard/MorningCheckIn';
 import FirstRunFlow from './components/Onboarding/FirstRunFlow';
+import PreferenceOnboarding from './components/Onboarding/PreferenceOnboarding';
 import SeasonParticles from './components/SeasonParticles';
+import { getGamificationConfig } from './constants/gamificationIntensity';
 /** YYYY-MM-DD for yesterday, local timezone. */
 function yesterdayString() {
   const d = new Date();
@@ -42,6 +44,7 @@ function App() {
   } = useGarden();
   const { pushReward } = useReward();
 
+  const preferencesCompleted = userSettings?.onboardingPreferencesCompleted === true;
   const hasOnboarded = userSettings?.hasOnboarded === true;
   const yesterdayPlan =
     lastCheckInDate === yesterdayString()
@@ -94,12 +97,17 @@ function App() {
   };
 
   const handleMissedDayChoose = (choice) => {
-    if (choice == null) return;
+    const level = choice == null ? null : Math.max(1, Math.min(10, Number(choice) || 5));
+    if (level == null) return;
+    const today = localISODate(new Date());
+    const missedDays = lastCheckInDate
+      ? Math.max(1, Math.ceil((new Date(today) - new Date(lastCheckInDate)) / (24 * 60 * 60 * 1000)))
+      : 1;
     archivePlanToCompost?.();
-    completeMorningCheckIn(choice);
-    const { plan } = completeCheckInCommand({ choice, goals, weeklyEvents, userSettings });
+    completeMorningCheckIn(level);
+    const { plan } = completeCheckInCommand({ choice: level, goals, weeklyEvents, userSettings });
     setAssignments(plan);
-    const reward = buildReward({ type: 'MORNING_CHECKIN_DONE', payload: { spoonCount: choice } });
+    const reward = buildReward({ type: 'MORNING_CHECKIN_DONE', payload: { spoonCount: level, missedDays } });
     if (reward) pushReward(reward);
     setView('dashboard');
   };
@@ -112,21 +120,30 @@ function App() {
   return (
     <EnergyProvider>
       <div className={`min-h-screen font-sans relative ${theme.containerClass} ${a11yClasses}`}>
-        {!a11y.lowStim && <SeasonParticles particleType={theme.particleType} />}
+        {!a11y.lowStim && getGamificationConfig(userSettings ?? {}).showParticles && <SeasonParticles particleType={theme.particleType} />}
         <div className="relative z-10">
           {(!hydrated || (hasOnboarded && view === 'loading')) && (
-            <div className="flex min-h-screen items-center justify-center text-stone-500">
-              <span className="animate-pulse">Loading…</span>
+            <div className="flex min-h-screen flex-col items-center justify-center gap-3 text-stone-500" role="status" aria-live="polite">
+              <span className="text-4xl" aria-hidden>🌱</span>
+              <span className="animate-pulse font-sans text-sm">Loading your garden…</span>
             </div>
           )}
-          {hydrated && !hasOnboarded && (
+          {hydrated && !preferencesCompleted && (
+            <PreferenceOnboarding onComplete={() => {}} />
+          )}
+          {hydrated && preferencesCompleted && !hasOnboarded && (
             <FirstRunFlow onComplete={() => {}} />
           )}
           {hasOnboarded && view === 'sunday_ritual' && (
             <SundayRitualController onComplete={handleRitualComplete} />
           )}
           {hasOnboarded && view === 'intro' && (
-            <MissedDayModal open={true} onChoose={handleMissedDayChoose} />
+            <MorningCheckIn
+              goals={goals}
+              logMetric={logMetric}
+              yesterdayPlan={yesterdayPlan}
+              onComplete={(modifier, energyLevel) => handleMissedDayChoose(energyLevel ?? modifier)}
+            />
           )}
           {hasOnboarded && view === 'dashboard' && (
             <GardenDashboard />

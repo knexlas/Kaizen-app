@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { getSettings } from '../../services/userSettings';
+import { getCopyForTone } from '../../constants/helperCopy';
 
 export default function GuidedEmptyState({
   variant,
@@ -9,6 +10,7 @@ export default function GuidedEmptyState({
   onPickGoal,
   goals = [],
   lowStim,
+  helperTone = 'default',
 }) {
   const a11y = lowStim ?? getSettings().lowStim;
   const isPlain = a11y;
@@ -25,6 +27,8 @@ export default function GuidedEmptyState({
   const [showHow, setShowHow] = useState(false);
 
   if (variant === 'needEnergy') {
+    const title = getCopyForTone('empty_need_energy_title', helperTone);
+    const cta = getCopyForTone('empty_need_energy_cta', helperTone);
     return (
       <div
         className={
@@ -34,7 +38,7 @@ export default function GuidedEmptyState({
         }
       >
         <p className="font-serif text-xl text-center mb-4">
-          Let&apos;s start gently. How&apos;s your energy today?
+          {title}
         </p>
         <div className="flex justify-center">
           <button
@@ -46,7 +50,7 @@ export default function GuidedEmptyState({
                 : 'px-6 py-3 rounded-full font-sans font-medium bg-moss-500 text-white hover:bg-moss-600 focus:ring-2 focus:ring-moss-500 focus:ring-offset-2'
             }
           >
-            Set today&apos;s spoons
+            {cta}
           </button>
         </div>
       </div>
@@ -54,6 +58,8 @@ export default function GuidedEmptyState({
   }
 
   if (variant === 'noTasks') {
+    const nextTitle = getCopyForTone('empty_next_step_title', helperTone);
+    const nextSubtitle = getCopyForTone('empty_next_step_subtitle', helperTone);
     return (
       <div
         className={
@@ -62,9 +68,9 @@ export default function GuidedEmptyState({
             : 'rounded-xl border-2 p-6 border-moss-300 bg-moss-50/80 text-moss-900 shadow-sm'
         }
       >
-        <p className="font-serif text-lg text-center mb-4">Next step</p>
+        <p className="font-serif text-lg text-center mb-4">{nextTitle}</p>
         <p className="font-sans text-sm text-center text-stone-600 mb-4">
-          Start tiny — 5 minutes, 1 spoon. Tap one to add and start focus.
+          {nextSubtitle}
         </p>
         <div className="flex flex-col gap-2">
           {dynamicSuggestions.map(({ key, label }) => (

@@ -501,12 +501,12 @@ export function GardenProvider({ children }) {
     }
   }, [loadDayPlan, saveDayPlanForDate, goals, isAssignmentFixed]);
 
-  /** Move a needs-rescheduling item onto a new day (same hour) and remove from list. */
-  const rescheduleNeedsReschedulingItem = useCallback(async (item, targetDateStr) => {
+  /** Move a needs-rescheduling item onto a new day. Optional preferredSlotKey: when provided (e.g. from calendar-aware find-next-slot), use it; otherwise use item.hour. */
+  const rescheduleNeedsReschedulingItem = useCallback(async (item, targetDateStr, preferredSlotKey = null) => {
     if (!item?.id || !saveDayPlanForDate || !loadDayPlan) return;
     const existing = await loadDayPlan(targetDateStr);
     const next = { ...(existing && typeof existing === 'object' ? existing : {}) };
-    const hourKey = toCanonicalSlotKey(item.hour) ?? String(item.hour);
+    const hourKey = preferredSlotKey ? (toCanonicalSlotKey(preferredSlotKey) ?? String(preferredSlotKey)) : (toCanonicalSlotKey(item.hour) ?? String(item.hour));
     const existingList = Array.isArray(next[hourKey]) ? next[hourKey] : next[hourKey] != null ? [next[hourKey]] : [];
     next[hourKey] = [...existingList, item.assignment];
     await saveDayPlanForDate(targetDateStr, next);

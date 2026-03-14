@@ -1,0 +1,17 @@
+{
+  "name": "Kaizen Garden",
+  "short_name": "Kaizen Garden",
+  "description": "Plan your day, grow your projects, and stay focused—one step at a time.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#fafaf9",
+  "theme_color": "#4a6b4a",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

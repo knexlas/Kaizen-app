@@ -3,7 +3,9 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { parseOmniAddInput } from '../../services/geminiService';
 import { getTaskDictionaryEntry } from '../../services/energyDictionaryService';
 import { useGarden } from '../../context/GardenContext';
+import { useReward } from '../../context/RewardContext';
 import { normalizeTaskCapture } from '../../services/taskCaptureService';
+import { toCanonicalSlotKey } from '../../services/schedulingConflictService';
 
 /** Recurrence options for Rhythms. Value stored in task.recurrence. */
 const RECURRENCE_OPTIONS = [
@@ -37,7 +39,8 @@ export default function OmniAdd({
   onOpenBrainDump,
   onParsedRoute,
 }) {
-  const { googleUser } = useGarden();
+  const { googleUser, loadDayPlan, saveDayPlanForDate } = useGarden();
+  const { pushReward } = useReward();
   const uid = googleUser?.uid;
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState('');
@@ -109,6 +112,19 @@ export default function OmniAdd({
     else if (id === 'note') onOpenBrainDump?.();
   };
 
+  const formatScheduledForToast = (scheduledDateStr, scheduledTimeStr) => {
+    try {
+      const [y, m, d] = scheduledDateStr.split('-').map(Number);
+      const [h, min] = scheduledTimeStr.split(':').map(Number);
+      const dte = new Date(y, m - 1, d, h, min);
+      const datePart = dte.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+      const timePart = dte.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+      return `${datePart} at ${timePart}`;
+    } catch {
+      return `${scheduledDateStr} ${scheduledTimeStr}`;
+    }
+  };
+
   const handleSubmit = async (e) => {
     e?.preventDefault?.();
     const trimmed = input.trim();
@@ -119,21 +135,73 @@ export default function OmniAdd({
     setIsParsing(true);
     try {
       const result = await parseOmniAddInput(trimmed);
-      if (result && onParsedRoute) {
-        const isCalendar = result.type === 'calendar_event';
-        const recurrencePayload = recurrence && recurrence !== 'none' ? (recurrence === 'weekly' ? { type: 'weekly', days: [] } : recurrence === 'monthly' ? { type: 'monthly' } : recurrence === 'custom' ? { type: 'custom' } : { type: 'daily' }) : undefined;
-        onParsedRoute(normalizeTaskCapture({
-          ...result,
-          isFixed: isCalendar ? true : isFixed,
-          context: isCalendar ? 'work' : context,
-          recurrence: recurrencePayload,
-          energyCost: energyCost >= 0 && energyCost <= 3 ? energyCost : 1,
-        }));
+      const isCalendar = result?.type === 'calendar_event';
+      const recurrencePayload = recurrence && recurrence !== 'none' ? (recurrence === 'weekly' ? { type: 'weekly', days: [] } : recurrence === 'monthly' ? { type: 'monthly' } : recurrence === 'custom' ? { type: 'custom' } : { type: 'daily' }) : undefined;
+      const merged = {
+        ...result,
+        isFixed: isCalendar ? true : isFixed,
+        context: isCalendar ? 'work' : context,
+        recurrence: recurrencePayload,
+        energyCost: energyCost >= 0 && energyCost <= 3 ? energyCost : 1,
+      };
+      const capture = normalizeTaskCapture(merged, trimmed);
+
+      if (capture.scheduledDate && typeof loadDayPlan === 'function' && typeof saveDayPlanForDate === 'function') {
+        try {
+          const slotKey = capture.scheduledTime ? toCanonicalSlotKey(capture.scheduledTime) : (capture.startTime ? toCanonicalSlotKey(new Date(capture.startTime).getHours() + new Date(capture.startTime).getMinutes() / 60) : null);
+          if (!slotKey) {
+            if (onParsedRoute) onParsedRoute(capture);
+          } else {
+            let durationMinutes = 60;
+            let startTimeISO;
+            let endTimeISO;
+            if (capture.startTime && capture.endTime) {
+              const start = new Date(capture.startTime).getTime();
+              const end = new Date(capture.endTime).getTime();
+              if (Number.isFinite(start) && Number.isFinite(end) && end > start) {
+                durationMinutes = Math.max(1, Math.min(480, Math.round((end - start) / (60 * 1000))));
+              }
+              startTimeISO = capture.startTime;
+              endTimeISO = capture.endTime;
+            } else if (capture.startTime) {
+              const start = new Date(capture.startTime);
+              const end = new Date(start.getTime() + durationMinutes * 60 * 1000);
+              startTimeISO = start.toISOString();
+              endTimeISO = end.toISOString();
+            }
+            const current = (await loadDayPlan(capture.scheduledDate)) ?? {};
+            const next = { ...(typeof current === 'object' && current ? current : {}) };
+            const assignment = {
+              type: 'event',
+              title: capture.title || trimmed,
+              duration: durationMinutes,
+              fixed: true,
+              isFixed: true,
+              source: 'local',
+              ...(startTimeISO && { startTime: startTimeISO }),
+              ...(endTimeISO && { endTime: endTimeISO }),
+            };
+            const existing = next[slotKey];
+            if (existing == null) next[slotKey] = assignment;
+            else next[slotKey] = [...(Array.isArray(existing) ? existing : [existing]), assignment];
+            await saveDayPlanForDate(capture.scheduledDate, next);
+            const label = formatScheduledForToast(capture.scheduledDate, capture.scheduledTime || '09:00');
+            pushReward?.({ message: `Task captured and scheduled for ${label}.`, tone: 'moss', icon: '📅', durationMs: 3000 });
+            setInput('');
+            close();
+          }
+        } catch (err) {
+          console.warn('OmniAdd direct schedule failed', err);
+          pushReward?.({ message: 'Could not schedule automatically. Opening planner.', tone: 'slate', icon: '⚠️', sound: null });
+          if (onParsedRoute) onParsedRoute(capture);
+        }
+      } else {
+        if (onParsedRoute) onParsedRoute(capture);
       }
     } catch (err) {
       if (onParsedRoute) {
         const recurrencePayload = recurrence && recurrence !== 'none' ? (recurrence === 'weekly' ? { type: 'weekly', days: [] } : recurrence === 'monthly' ? { type: 'monthly' } : recurrence === 'custom' ? { type: 'custom' } : { type: 'daily' }) : undefined;
-        onParsedRoute(normalizeTaskCapture({ type: 'goal', title: trimmed, isFixed, context, recurrence: recurrencePayload, energyCost: energyCost >= 0 && energyCost <= 3 ? energyCost : 1 }));
+        onParsedRoute(normalizeTaskCapture({ type: 'goal', title: trimmed, isFixed, context, recurrence: recurrencePayload, energyCost: energyCost >= 0 && energyCost <= 3 ? energyCost : 1 }, trimmed));
       }
     } finally {
       setIsParsing(false);

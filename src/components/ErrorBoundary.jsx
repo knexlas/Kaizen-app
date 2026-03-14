@@ -35,30 +35,27 @@ export default class ErrorBoundary extends Component {
         <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-stone-100">
           <div className="text-6xl mb-4" aria-hidden>{spiritEmoji}</div>
           <h1 className="font-serif text-xl text-stone-800 text-center mb-2">
-            Oops! A vine got tangled in the garden.
+            Something went wrong
           </h1>
-          <p className="font-sans text-sm text-stone-500 text-center mb-4 max-w-sm">
-            Something went wrong. Refreshing usually fixes it.
+          <p className="font-sans text-sm text-stone-500 text-center mb-6 max-w-sm">
+            We hit a snag. Refreshing the app usually fixes it. Your data is saved locally.
           </p>
           {error && (
-            <div className="w-full max-w-lg mb-6 rounded-xl bg-stone-800 text-left overflow-hidden border border-stone-600">
-              <p className="font-sans text-xs font-medium text-amber-300 px-4 py-2 bg-stone-900/80">
-                Error (for debugging):
-              </p>
-              <pre className="font-mono text-xs text-stone-300 p-4 overflow-auto max-h-40 whitespace-pre-wrap break-words">
-                {error.message ?? String(error)}
-              </pre>
-              {errorInfo?.componentStack && (
-                <details className="border-t border-stone-600">
-                  <summary className="font-sans text-xs text-stone-400 px-4 py-2 cursor-pointer hover:bg-stone-800">
-                    Component stack
-                  </summary>
-                  <pre className="font-mono text-xs text-stone-500 p-4 overflow-auto max-h-32 whitespace-pre-wrap">
+            <details className="w-full max-w-lg mb-6 rounded-xl bg-stone-200/80 dark:bg-stone-800/80 border border-stone-300 dark:border-stone-600 overflow-hidden">
+              <summary className="font-sans text-xs font-medium text-stone-500 dark:text-stone-400 px-4 py-2 cursor-pointer hover:bg-stone-300/50 dark:hover:bg-stone-700/50">
+                Technical details (for support)
+              </summary>
+              <div className="px-4 py-2 border-t border-stone-300 dark:border-stone-600">
+                <pre className="font-mono text-xs text-stone-600 dark:text-stone-400 overflow-auto max-h-32 whitespace-pre-wrap break-words">
+                  {error.message ?? String(error)}
+                </pre>
+                {errorInfo?.componentStack && (
+                  <pre className="font-mono text-[10px] text-stone-500 dark:text-stone-500 mt-2 overflow-auto max-h-24 whitespace-pre-wrap border-t border-stone-300 dark:border-stone-600 pt-2 mt-2">
                     {errorInfo.componentStack}
                   </pre>
-                </details>
-              )}
-            </div>
+                )}
+              </div>
+            </details>
           )}
           <button
             type="button"

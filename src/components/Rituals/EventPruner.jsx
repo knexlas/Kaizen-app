@@ -89,7 +89,7 @@ export default function EventPruner({ weekDays = [], initialEvents, onCommit, go
 
   const handleImportFromCloud = async () => {
     if (!googleToken) {
-      alert('Please connect Calendar on Dashboard first.');
+      window.dispatchEvent(new CustomEvent('kaizen:toast', { detail: { message: 'Connect your calendar in Dashboard first, then try again.' } }));
       return;
     }
     const merged = await onImportFromCloud?.(events);

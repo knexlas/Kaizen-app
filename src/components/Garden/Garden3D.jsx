@@ -4,6 +4,8 @@ import { OrbitControls, Sky, Environment, RoundedBox, useGLTF, Sparkles, Billboa
 import * as THREE from 'three';
 import { useGarden } from '../../context/GardenContext';
 import { getGoalProgressPercent } from './gardenProgress';
+import { getGoalGardenState } from '../../services/gardenStateService';
+import { getProjectHealthState } from '../../services/projectSupportService';
 import WanderingCreature from './WanderingCreature';
 import ProceduralFlora from './ProceduralFlora';
 import AnimatedModel from './AnimatedModel';
@@ -261,7 +263,7 @@ function AmbientScatter() {
   );
 }
 
-function GoalNode({ goal, onGoalClick, onToolUsed, activeTool, waterGoal, fireToast, setActiveTool, positionOverride, isArchitectMode, selectedObjectId, setSelectedObjectId }) {
+function GoalNode({ goal, onGoalClick, onToolUsed, activeTool, waterGoal, fireToast, setActiveTool, positionOverride, isArchitectMode, selectedObjectId, setSelectedObjectId, gardenState }) {
   const [hovered, setHovered] = useState(false);
   const [justWatered, setJustWatered] = useState(false);
   const lowPerf = useContext(LowPerfContext);
@@ -352,7 +354,7 @@ function GoalNode({ goal, onGoalClick, onToolUsed, activeTool, waterGoal, fireTo
           <meshStandardMaterial color="#fbbf24" emissive="#fbbf24" emissiveIntensity={0.8} transparent opacity={0.95} />
         </mesh>
       )}
-      <ProceduralFlora goal={goal} isHovered={hovered} />
+      <ProceduralFlora goal={goal} isHovered={hovered} gardenState={gardenState} />
       {justWatered && (
         <Sparkles count={lowPerf ? 5 : 20} scale={[2, 2, 2]} position={[0, 1.2, 0]} size={2} speed={0.3} color="#93c5fd" />
       )}
@@ -419,7 +421,7 @@ function DecorationNode({ decoration, activeTool, setActiveTool, positionOverrid
   );
 }
 
-function Scene({ placedGoals, onPlant, onGoalClick, onToolUsed, timePhase, activeTool, waterGoal, fireToast, setActiveTool, decorations, canvasInteractionDisabled, campfirePositions = [], isArchitectMode, selectedObjectId, setSelectedObjectId, updateObjectPosition, onOpenNursery, spiritForm, lowPerf }) {
+function Scene({ placedGoals, onPlant, onGoalClick, onToolUsed, timePhase, activeTool, waterGoal, fireToast, setActiveTool, decorations, canvasInteractionDisabled, campfirePositions = [], isArchitectMode, selectedObjectId, setSelectedObjectId, updateObjectPosition, onOpenNursery, spiritForm, lowPerf, gardenStateByGoalId = {} }) {
   const { terrainMap } = useGarden();
   const isItemBeingMoved = (id, kind) =>
     activeTool?.type === 'place' && activeTool?.isRelocating && activeTool?.originalType === kind && (activeTool?.item?.id === id || activeTool?.decorationId === id || activeTool?.decoration?.id === id);
@@ -501,6 +503,7 @@ function Scene({ placedGoals, onPlant, onGoalClick, onToolUsed, timePhase, activ
           isArchitectMode={isArchitectMode}
           selectedObjectId={selectedObjectId}
           setSelectedObjectId={setSelectedObjectId}
+          gardenState={gardenStateByGoalId[goal.id]}
           positionOverride={
             Array.isArray(goal.position3D) && goal.position3D.length >= 3
               ? [
@@ -677,7 +680,7 @@ function spiritTypeToForm(spiritConfig, userSettings) {
 export default function Garden3D({ onGoalClick, onOpenShop, onOpenNursery, focusGoal, onOpenJournal, onOpenInsights, onToolUsed, uiBlocksCanvas = false, ecoMode = false, invalidateRef }) {
   const [timePhase, setTimePhase] = useState('day');
   const [pageHidden, setPageHidden] = useState(() => (typeof document !== 'undefined' ? document.visibilityState === 'hidden' : false));
-  const { goals, editGoal, activeTool, setActiveTool, paintTerrain, updateDecoration, waterGoal, decorations = [], spiritConfig, userSettings, isArchitectMode, selectedObjectId, setSelectedObjectId, updateObjectPosition } = useGarden();
+  const { goals, logs, editGoal, activeTool, setActiveTool, paintTerrain, updateDecoration, waterGoal, decorations = [], spiritConfig, userSettings, isArchitectMode, selectedObjectId, setSelectedObjectId, updateObjectPosition } = useGarden();
   const graphicsMode = userSettings?.gardenGraphicsMode ?? 'auto';
   const initialPerfProfile = useMemo(() => getGraphicsProfile(graphicsMode), [graphicsMode]);
   const [dpr, setDpr] = useState(initialPerfProfile.dpr);
@@ -721,6 +724,16 @@ export default function Garden3D({ onGoalClick, onOpenShop, onOpenNursery, focus
   }, [allGoals]);
 
   const placedGoals = placedGoalsForScene;
+  const gardenStateByGoalId = useMemo(() => {
+    const map = {};
+    const logList = Array.isArray(logs) ? logs : [];
+    placedGoalsForScene.forEach((goal) => {
+      const g = allGoals.find((x) => x.id === goal.id || x.id === goal._firstMemberId) || goal;
+      const { state } = getGoalGardenState(g, logList, (goal, ctx) => getProjectHealthState(goal, ctx ?? {}));
+      map[goal.id] = state;
+    });
+    return map;
+  }, [placedGoalsForScene, allGoals, logs]);
   const unplacedGoals = allGoals.filter((g) => g.type !== 'routine' && (!g.position3D || !Array.isArray(g.position3D))) ?? [];
   const unplacedRoutineCategories = useMemo(() => {
     const routineGoals = allGoals.filter((g) => g.type === 'routine');
@@ -880,6 +893,7 @@ export default function Garden3D({ onGoalClick, onOpenShop, onOpenNursery, focus
               decorations={decorations}
               canvasInteractionDisabled={uiBlocksCanvas}
               campfirePositions={campfirePositions}
+              gardenStateByGoalId={gardenStateByGoalId}
             />
             {onOpenShop && (
           <group>

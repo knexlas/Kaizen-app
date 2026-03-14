@@ -1,9 +1,11 @@
 import { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useGarden } from '../../context/GardenContext';
+import { useDialog } from '../../context/DialogContext';
 import { tweakMilestones, generateProficiencyEstimates, suggestProjectForGoal } from '../../services/geminiService';
 import { getGoalSupportDomain, resolveSupportSuggestions, createFromSupportSuggestion } from '../../services/domainSupportService';
 import ProficiencyArc from './ProficiencyArc';
+import ProjectDetailView from '../Projects/ProjectDetailView';
 
 const DOMAINS = [
   { id: 'finance', label: 'Finance', emoji: '📈' },
@@ -22,8 +24,9 @@ const DAY_LETTERS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 const ROUTINE_CATEGORIES = ['💪 Wellness', '📁 Life Admin', '🧹 Household', '🧼 Care & Hygiene'];
 
-export default function GoalEditor({ open, goal, onClose, onSave, addGoal, addSubtask, updateSubtask, deleteSubtask, onOpenProjectPlanner }) {
+export default function GoalEditor({ open, goal, onClose, onSave, addGoal, addSubtask, updateSubtask, deleteSubtask, onOpenProjectPlanner, onStartFocus, onReschedule }) {
   const { metrics = [], addMetric, toggleMilestone, goals = [] } = useGarden();
+  const { showPrompt } = useDialog();
   const supportSuggestions = useMemo(() => (goal ? resolveSupportSuggestions(goal, 2) : []), [goal]);
   const [title, setTitle] = useState('');
   const [domain, setDomain] = useState('');
@@ -39,6 +42,9 @@ export default function GoalEditor({ open, goal, onClose, onSave, addGoal, addSu
   const [spoonCost, setSpoonCost] = useState(1);
   const [activationEnergy, setActivationEnergy] = useState(1);
   const [projectDeadline, setProjectDeadline] = useState('');
+  const [projectClient, setProjectClient] = useState('');
+  const [projectBillable, setProjectBillable] = useState(false);
+  const [projectWaitingOnClient, setProjectWaitingOnClient] = useState(false);
   const [isTweaking, setIsTweaking] = useState(false);
   const [rituals, setRituals] = useState([]);
   const [category, setCategory] = useState(''); // routine category for Seedbag grouping
@@ -49,8 +55,13 @@ export default function GoalEditor({ open, goal, onClose, onSave, addGoal, addSu
   const [loadingProjectSuggestion, setLoadingProjectSuggestion] = useState(false);
   const [expandedPhases, setExpandedPhases] = useState({});
   const togglePhase = (id) => setExpandedPhases((prev) => ({ ...prev, [id]: !prev[id] }));
+  const [showProjectEditForm, setShowProjectEditForm] = useState(false);
 
   const uid = () => crypto.randomUUID?.() ?? `ms-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+
+  useEffect(() => {
+    if (goal) setShowProjectEditForm(false);
+  }, [goal?.id]);
 
   useEffect(() => {
     if (goal) {
@@ -66,6 +77,9 @@ export default function GoalEditor({ open, goal, onClose, onSave, addGoal, addSu
       setSpoonCost(goal.spoonCost >= 1 && goal.spoonCost <= 4 ? goal.spoonCost : 1);
       setActivationEnergy(goal.activationEnergy >= 1 && goal.activationEnergy <= 4 ? goal.activationEnergy : 1);
       setProjectDeadline(goal?._projectDeadline ?? '');
+      setProjectClient(goal?._client ?? goal?.client ?? '');
+      setProjectBillable(goal?._billable === true || goal?.billable === true);
+      setProjectWaitingOnClient(goal?._waitingOnClient === true);
       setRituals((goal.rituals ?? []).map((r) => ({ id: r.id, title: r.title ?? '', days: r.days ?? [], frequency: r.frequency || 'weekly', monthDay: r.monthDay ?? null })));
       setCategory(goal.type === 'routine' ? (goal.category ?? '') : '');
       setLinkedRoutineId(goal.linkedRoutineId ?? '');
@@ -203,6 +217,9 @@ export default function GoalEditor({ open, goal, onClose, onSave, addGoal, addSu
     }
     if (isProject) {
       updates._projectDeadline = projectDeadline.trim() || undefined;
+      updates._client = projectClient.trim() || undefined;
+      updates._billable = projectBillable;
+      updates._waitingOnClient = projectWaitingOnClient;
     }
     const showHabitStack = goal?.type === 'kaizen' || goal?._projectGoal === true;
     if (showHabitStack) {
@@ -217,6 +234,8 @@ export default function GoalEditor({ open, goal, onClose, onSave, addGoal, addSu
 
   if (!open) return null;
 
+  const isProjectView = isProject && !showProjectEditForm;
+
   return (
     <AnimatePresence>
       <motion.div
@@ -227,27 +246,58 @@ export default function GoalEditor({ open, goal, onClose, onSave, addGoal, addSu
         onClick={onClose}
         role="dialog"
         aria-modal="true"
-        aria-labelledby="goal-editor-title"
+        aria-labelledby={isProjectView ? 'project-detail-title' : 'goal-editor-title'}
       >
         <motion.div
           initial={{ scale: 0.96, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           exit={{ scale: 0.96, opacity: 0 }}
           onClick={(e) => e.stopPropagation()}
-          className="relative bg-stone-50 rounded-2xl border border-stone-200 shadow-xl max-w-sm w-full p-6 max-h-[90vh] overflow-y-auto"
+          className={`relative bg-stone-50 dark:bg-stone-900 rounded-2xl border border-stone-200 dark:border-stone-700 shadow-xl w-full p-6 max-h-[90vh] overflow-y-auto ${isProjectView ? 'max-w-lg' : 'max-w-sm'}`}
         >
           <button
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="absolute top-3 right-3 w-8 h-8 flex items-center justify-center rounded-lg text-stone-400 hover:text-stone-600 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
+            className="absolute top-3 right-3 w-8 h-8 flex items-center justify-center rounded-lg text-stone-400 hover:text-stone-600 dark:hover:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
           >
             ×
           </button>
-          <h2 id="goal-editor-title" className="font-serif text-stone-900 text-xl mb-5">
-            Rename / Edit
-          </h2>
-          <form onSubmit={handleSubmit} className="space-y-5">
+          {isProjectView ? (
+            <>
+              <ProjectDetailView
+                goal={goal}
+                onClose={onClose}
+                onStartFocus={onStartFocus}
+                onReschedule={onReschedule}
+                onEditSettings={() => setShowProjectEditForm(true)}
+                updateSubtask={updateSubtask}
+              />
+              <div className="mt-6 pt-4 border-t border-stone-200 dark:border-stone-700">
+                <button
+                  type="button"
+                  onClick={() => setShowProjectEditForm(true)}
+                  className="w-full py-2.5 rounded-lg border border-stone-200 dark:border-stone-600 font-sans text-sm text-stone-600 dark:text-stone-400 hover:bg-stone-100 dark:hover:bg-stone-800 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
+                >
+                  Edit project settings
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <h2 id="goal-editor-title" className="font-serif text-stone-900 dark:text-stone-100 text-xl mb-5">
+                {isProject && showProjectEditForm ? 'Edit project settings' : 'Rename / Edit'}
+              </h2>
+              {isProject && showProjectEditForm && (
+                <button
+                  type="button"
+                  onClick={() => setShowProjectEditForm(false)}
+                  className="mb-4 py-1.5 px-3 rounded-lg border border-stone-200 dark:border-stone-600 font-sans text-sm text-stone-600 dark:text-stone-400 hover:bg-stone-100 dark:hover:bg-stone-800"
+                >
+                  ← Back to project
+                </button>
+              )}
+              <form onSubmit={handleSubmit} className="space-y-5">
             <div>
               <label htmlFor="edit-goal-title" className="block font-sans text-sm font-medium text-stone-600 mb-1">
                 Title
@@ -281,6 +331,37 @@ export default function GoalEditor({ open, goal, onClose, onSave, addGoal, addSu
                       onChange={(e) => setProjectDeadline(e.target.value)}
                       className="w-full py-2 px-3 rounded-lg border border-stone-200 bg-white text-stone-900 font-sans focus:outline-none focus:ring-2 focus:ring-moss-500/40 focus:border-moss-500"
                     />
+                    <label htmlFor="edit-goal-project-client" className="block font-sans text-sm font-medium text-stone-600 mt-3 mb-1">
+                      Client
+                    </label>
+                    <input
+                      id="edit-goal-project-client"
+                      type="text"
+                      value={projectClient}
+                      onChange={(e) => setProjectClient(e.target.value)}
+                      placeholder="e.g. Acme Corp"
+                      className="w-full py-2 px-3 rounded-lg border border-stone-200 bg-white text-stone-900 font-sans placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-moss-500/40 focus:border-moss-500"
+                    />
+                    <div className="flex items-center gap-2 mt-3">
+                      <input
+                        id="edit-goal-project-billable"
+                        type="checkbox"
+                        checked={projectBillable}
+                        onChange={(e) => setProjectBillable(e.target.checked)}
+                        className="rounded border-stone-300 text-moss-500 focus:ring-moss-500/50"
+                      />
+                      <label htmlFor="edit-goal-project-billable" className="font-sans text-sm text-stone-600">Billable</label>
+                    </div>
+                    <div className="flex items-center gap-2 mt-2">
+                      <input
+                        id="edit-goal-project-waiting-on-client"
+                        type="checkbox"
+                        checked={projectWaitingOnClient}
+                        onChange={(e) => setProjectWaitingOnClient(e.target.checked)}
+                        className="rounded border-stone-300 text-moss-500 focus:ring-moss-500/50"
+                      />
+                      <label htmlFor="edit-goal-project-waiting-on-client" className="font-sans text-sm text-stone-600">Waiting on client</label>
+                    </div>
                   </>
                 ) : (
                   <>
@@ -494,11 +575,19 @@ export default function GoalEditor({ open, goal, onClose, onSave, addGoal, addSu
                 <button
                   type="button"
                   onClick={() => {
-                    const name = window.prompt('New metric name (e.g. Steps, Sleep hours)');
-                    if (name && addMetric) {
-                      const id = addMetric(name);
-                      if (id) setMetricId(id);
-                    }
+                    showPrompt({
+                      title: 'New metric',
+                      message: 'Metric name (e.g. Steps, Sleep hours)',
+                      defaultValue: '',
+                      placeholder: 'e.g. Steps, Sleep hours',
+                      submitLabel: 'Add',
+                      onSubmit: (name) => {
+                        if (name && addMetric) {
+                          const id = addMetric(name);
+                          if (id) setMetricId(id);
+                        }
+                      },
+                    });
                   }}
                   className="shrink-0 py-2 px-3 rounded-lg font-sans text-sm border border-stone-200 text-stone-600 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
                 >
@@ -879,6 +968,8 @@ export default function GoalEditor({ open, goal, onClose, onSave, addGoal, addSu
               </button>
             </div>
           </form>
+            </>
+          )}
         </motion.div>
       </motion.div>
     </AnimatePresence>

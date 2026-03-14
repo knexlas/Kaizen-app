@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import confetti from 'canvas-confetti';
 import { useGarden } from '../../context/GardenContext';
 import { setOnboardingCompleted } from '../../services/onboardingStateService';
+import { getPlannerPreset, getPersonaWelcomeLine } from '../../constants/plannerPresets';
 
 const STEP_WELCOME = 'welcome';
 const STEP_FIRST_ACTION = 'first_action';
@@ -27,8 +28,10 @@ function runCelebration() {
  * Action-first; no long product tour before first value.
  */
 export default function FirstRunFlow({ onComplete }) {
-  const { addGoal, editGoal, updateUserSettings, completeMorningCheckIn } = useGarden();
+  const { addGoal, editGoal, updateUserSettings, completeMorningCheckIn, userSettings } = useGarden();
   const [step, setStep] = useState(STEP_WELCOME);
+  const preset = getPlannerPreset(userSettings ?? {});
+  const personaLine = getPersonaWelcomeLine(preset);
   const [microWinTitle, setMicroWinTitle] = useState('');
   const [microWinGoalId, setMicroWinGoalId] = useState(null);
   const [microWinChecked, setMicroWinChecked] = useState(false);
@@ -100,6 +103,9 @@ export default function FirstRunFlow({ onComplete }) {
               <h1 id="first-run-title" className="font-serif text-2xl text-stone-900 dark:text-stone-100 mb-2">
                 Welcome to the garden
               </h1>
+              <p className="font-sans text-sm text-moss-700 dark:text-moss-300 mb-2">
+                {personaLine}
+              </p>
               <p className="font-sans text-stone-600 dark:text-stone-400 text-sm leading-relaxed mb-6">
                 One small step at a time. Let&apos;s create your first step — something you can do in about 3 minutes right now.
               </p>

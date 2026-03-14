@@ -32,10 +32,11 @@ import InfoTooltip from '../InfoTooltip';
 import { useReward } from '../../context/RewardContext';
 import { buildReward } from '../../services/dopamineEngine';
 import { breakDownTask, processIncomingCompost, planProjectFromDocument } from '../../services/geminiService';
+import { buildProjectGoalFromPlan } from '../../utils/projectGoalFromPlan';
 
 const MOBILE_BREAKPOINT = 640;
 
-export default function CompostHeap({ open, onClose, onPlant, onPrism }) {
+export default function CompostHeap({ open, onClose, onPlant, onPrism, onViewInPlanner }) {
   const { compost = [], addToCompost, removeFromCompost, goals = [], addSubtask, addGoal } = useGarden();
   const { pushReward } = useReward();
   const [activeTab, setActiveTab] = useState('ideas'); // 'ideas' | 'projects'
@@ -49,6 +50,7 @@ export default function CompostHeap({ open, onClose, onPlant, onPrism }) {
   const [docDeadline, setDocDeadline] = useState('');
   const [docContext, setDocContext] = useState('');
   const [plannedResult, setPlannedProjectResult] = useState(null);
+  const [createdProjectFromDoc, setCreatedProjectFromDoc] = useState(null);
   const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < MOBILE_BREAKPOINT);
   const inputRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -225,57 +227,14 @@ export default function CompostHeap({ open, onClose, onPlant, onPrism }) {
         plan = await planProjectFromDocument(base64Data, mimeType, file.name, false, deadlineParam, contextParam);
       }
       if (!plan || !Array.isArray(plan.phases) || plan.phases.length === 0) throw new Error('Mochi could not generate a plan from this document.');
-      const uid = () => crypto.randomUUID?.() ?? `id-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-      const totalWeeks = Math.max(1, Number(plan.totalWeeks) || 14);
-      const milestones = [];
-      const subtasks = [];
-      (plan.phases || []).forEach((phase) => {
-        const phaseId = uid();
-        milestones.push({
-          id: phaseId,
-          title: phase.title || phase.milestone || 'Phase milestone',
-          weekRange: phase.weekRange || null,
-          completed: false,
-        });
-        (phase.tasks || []).forEach((task) => {
-          const estimatedRaw = Number(task?.estimatedHours);
-          const estimatedHours = Math.max(0, Number.isFinite(estimatedRaw) ? estimatedRaw : 2);
-          subtasks.push({
-            id: uid(),
-            phaseId,
-            title: String(task?.title ?? task?.name ?? '').trim() || 'Task',
-            estimatedHours,
-            completedHours: 0,
-            deadline: null,
-            color: null,
-            weekRange: task?.weekRange != null && String(task.weekRange).trim() ? String(task.weekRange).trim() : null,
-          });
-        });
-      });
       const projectTitle = (plan.title && String(plan.title).trim()) ? String(plan.title).trim().slice(0, 200) : (plan.summary || file.name || 'Project').trim().slice(0, 200) || 'Project from document';
-      const notesParts = [plan.summary || ''].filter(Boolean);
-      if (totalWeeks) notesParts.push(`${totalWeeks} weeks`);
-      const notes = notesParts.join(' \u00b7 ') || undefined;
-      const newProject = {
-        id: uid(),
-        type: 'kaizen',
-        title: projectTitle,
-        domain: 'mind',
-        estimatedMinutes: 60,
-        targetHours: subtasks.reduce((sum, st) => sum + (st.estimatedHours || 0), 0) || 5,
-        totalMinutes: 0,
-        createdAt: new Date().toISOString(),
-        milestones,
-        subtasks,
-        notes,
-        rituals: [],
-        _projectName: projectTitle,
-        _projectDeadline: docDeadline && String(docDeadline).trim() ? String(docDeadline).trim() : null,
-        _projectTotalWeeks: totalWeeks,
-        _projectGoal: true,
-      };
+      const newProject = buildProjectGoalFromPlan(plan, {
+        titleOverride: projectTitle,
+        deadline: docDeadline && String(docDeadline).trim() ? String(docDeadline).trim() : null,
+      });
       addGoal(newProject);
       setPlannedProjectResult(plan);
+      setCreatedProjectFromDoc(newProject);
     } catch (err) {
       console.warn('Plan from document failed:', err);
       window.dispatchEvent(new CustomEvent('kaizen:toast', { detail: { message: err?.message || 'Could not plan from document. Try again.' } }));
@@ -356,13 +315,24 @@ export default function CompostHeap({ open, onClose, onPlant, onPrism }) {
                   🔭 Where did this go? Because this is a massive project, Mochi planted it in your Horizons tab. Check there to see your full timeline!
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={() => { setPlannedProjectResult(null); onClose?.(); }}
-                className="w-full py-3.5 rounded-xl font-sans text-base font-medium text-white bg-moss-600 hover:bg-moss-700 focus:outline-none focus:ring-2 focus:ring-moss-500/50 focus:ring-offset-2 transition-colors"
-              >
-                Got it, let&apos;s go!
-              </button>
+              <div className="flex flex-col gap-2">
+                {typeof onViewInPlanner === 'function' && createdProjectFromDoc && (
+                  <button
+                    type="button"
+                    onClick={() => { onViewInPlanner(createdProjectFromDoc); setPlannedProjectResult(null); setCreatedProjectFromDoc(null); onClose?.(); }}
+                    className="w-full py-3.5 rounded-xl font-sans text-base font-medium text-white bg-moss-600 hover:bg-moss-700 focus:outline-none focus:ring-2 focus:ring-moss-500/50 focus:ring-offset-2 transition-colors"
+                  >
+                    View in planner
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => { setPlannedProjectResult(null); setCreatedProjectFromDoc(null); onClose?.(); }}
+                  className={`w-full py-3.5 rounded-xl font-sans text-base font-medium border border-stone-300 dark:border-stone-600 text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800/70 focus:outline-none focus:ring-2 focus:ring-stone-400/30 transition-colors ${typeof onViewInPlanner === 'function' && createdProjectFromDoc ? '' : 'bg-moss-600 hover:bg-moss-700 text-white border-moss-600'}`}
+                >
+                  {typeof onViewInPlanner === 'function' && createdProjectFromDoc ? "Got it, I'll go later" : "Got it, let's go!"}
+                </button>
+              </div>
             </div>
           ) : (
             <>

@@ -1,13 +1,17 @@
 import { useState, useMemo } from 'react';
 import { useGarden } from '../../context/GardenContext';
+import { useDialog } from '../../context/DialogContext';
 import { motion, AnimatePresence } from 'framer-motion';
+import RoutinePlayer from '../Focus/RoutinePlayer';
 
 const FORM_CATEGORIES = ['🧼 Care & Hygiene', '🧹 Household', '📁 Life Admin', '💪 Wellness'];
 
 export default function RoutinesManager() {
   const { routines, addRoutine, deleteRoutine } = useGarden();
+  const { showConfirm } = useDialog();
   const [newRoutine, setNewRoutine] = useState({ title: '', category: '🧼 Care & Hygiene', duration: 15 });
   const [expandedCategory, setExpandedCategory] = useState(null); // accordion: which category is open
+  const [routineForPlayer, setRoutineForPlayer] = useState(null);
 
   const byCategory = useMemo(() => {
     const map = {};
@@ -33,7 +37,13 @@ export default function RoutinesManager() {
   };
 
   const handleDelete = (id) => {
-    if (window.confirm('Remove this routine?')) deleteRoutine(id);
+    showConfirm({
+      message: 'Remove this routine from your list?',
+      confirmLabel: 'Remove',
+      cancelLabel: 'Keep',
+      destructive: true,
+      onConfirm: () => deleteRoutine(id),
+    });
   };
 
   return (
@@ -122,15 +132,27 @@ export default function RoutinesManager() {
                           <span className="font-sans text-sm font-medium text-stone-800">{r.title}</span>
                           <span className="font-sans text-xs text-stone-500 ml-2">[{r.duration} min]</span>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => handleDelete(r.id)}
-                          className="p-1.5 rounded-lg text-red-600 hover:bg-red-50 shrink-0"
-                          aria-label="Delete"
-                          title="Delete"
-                        >
-                          🗑️
-                        </button>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => setRoutineForPlayer(r)}
+                            className="px-5 py-2.5 rounded-xl bg-moss-500 hover:bg-moss-600 text-white font-sans font-semibold flex items-center gap-2 transition-colors focus:outline-none focus:ring-2 focus:ring-moss-500/50 shadow-sm"
+                            aria-label="Play routine"
+                            title="Play routine"
+                          >
+                            <span aria-hidden className="text-lg leading-none">▶</span>
+                            Play Routine
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDelete(r.id)}
+                            className="p-1.5 rounded-lg text-red-600 hover:bg-red-50 shrink-0"
+                            aria-label="Delete"
+                            title="Delete"
+                          >
+                            🗑️
+                          </button>
+                        </div>
                       </motion.li>
                     ))}
                   </AnimatePresence>
@@ -140,6 +162,15 @@ export default function RoutinesManager() {
           );
         })}
       </div>
+
+      <AnimatePresence>
+        {routineForPlayer && (
+          <RoutinePlayer
+            routine={routineForPlayer}
+            onClose={() => setRoutineForPlayer(null)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

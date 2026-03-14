@@ -39,7 +39,7 @@ export default function MissedDayModal({ open, onChoose }) {
             Welcome back. How’s today?
           </h2>
           <p className="font-sans text-stone-700 text-base leading-relaxed mb-6">
-            Pick one — we’ll set up your day and you can change it anytime.
+            Pick one — we’ll set up your day. You can change it anytime. Your garden is still here.
           </p>
           <div className="flex flex-col gap-3">
             <button
@@ -48,7 +48,7 @@ export default function MissedDayModal({ open, onChoose }) {
               className="w-full py-4 px-5 rounded-xl font-sans font-medium text-left border-2 border-amber-200 bg-amber-50/80 text-amber-900 hover:border-amber-300 hover:bg-amber-100 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2 transition-colors"
             >
               <span className="block text-lg font-semibold">1 spoon day</span>
-              <span className="block text-sm font-normal text-amber-800/90 mt-0.5">Ultra-light plan — one small slot</span>
+              <span className="block text-sm font-normal text-amber-800/90 mt-0.5">Ultra-light — one small slot</span>
             </button>
             <button
               type="button"
@@ -63,7 +63,7 @@ export default function MissedDayModal({ open, onChoose }) {
               onClick={() => onChoose(0)}
               className="w-full py-4 px-5 rounded-xl font-sans font-medium text-left border-2 border-stone-200 bg-stone-100/80 text-stone-800 hover:border-stone-300 hover:bg-stone-200 focus:outline-none focus:ring-2 focus:ring-stone-400 focus:ring-offset-2 transition-colors"
             >
-              <span className="block text-lg font-semibold">No plan — just compost capture</span>
+              <span className="block text-lg font-semibold">No plan — just capture</span>
               <span className="block text-sm font-normal text-stone-600 mt-0.5">Capture thoughts; plan later (or not)</span>
             </button>
           </div>

@@ -2,9 +2,12 @@ import { useState, useMemo, useEffect, useCallback, useRef, lazy, Suspense } fro
 import { motion, AnimatePresence } from 'framer-motion';
 import { useGarden } from '../../context/GardenContext';
 import { useEnergy } from '../../context/EnergyContext';
+import { useDialog } from '../../context/DialogContext';
 import { getGoalSupportDomain, SUPPORT_DOMAINS } from '../../services/domainSupportService';
 import { startFocusCommand } from '../../services/coreCommands';
 import { getGoalProgressPercent, getPlantStage, STAGE_EMOJI, PROJECT_STAGE_EMOJI, FLORA, PONDS, ROCKS, getHash } from './gardenProgress';
+import { getGoalGardenState, getGardenSummary, getGardenStateLabel, GOAL_GARDEN_STATE } from '../../services/gardenStateService';
+import { getProjectHealthState } from '../../services/projectSupportService';
 import VirtualJoystick from './VirtualJoystick';
 
 const SpiritShop = lazy(() => import('./SpiritShop'));
@@ -55,10 +58,31 @@ const GARDEN_GRADIENTS = {
   },
 };
 
+function getChecklistItemTitle(item) {
+  if (typeof item === 'object' && item !== null) return item.title ?? item.name ?? '';
+  return String(item ?? '');
+}
+
+function isChecklistItemCompleted(item) {
+  return typeof item === 'object' && item !== null && (item.completed === true || item.status === 'completed');
+}
+
+function getGoalChecklist(goal) {
+  const items = goal?.subtasks || goal?.phases || goal?.milestones || [];
+  if (!Array.isArray(items)) return [];
+  return items.map((item, index) => ({
+    id: item?.id ?? index,
+    title: getChecklistItemTitle(item),
+    completed: isChecklistItemCompleted(item),
+  }));
+}
+
 export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCreator, onEditGoal, onOpenNursery, ecoMode: ecoModeProp = false }) {
   const {
     goals: contextGoals,
     logs = [],
+    lastCheckInDate,
+    weekAssignments = {},
     decorations = [],
     fertilizerCount = 0,
     fertilizeGoal,
@@ -78,6 +102,7 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
     setSelectedObjectId,
   } = useGarden();
   const { dailyEnergy } = useEnergy();
+  const { showPrompt } = useDialog();
   const spoons = typeof dailySpoonCount === 'number' ? dailySpoonCount : dailyEnergy;
   const energyTier = getEnergyTier(spoons);
   const gradientStyle = GARDEN_GRADIENTS[energyTier];
@@ -101,6 +126,7 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
   const [viewingGoal, setViewingGoal] = useState(null);
   const [isShopOpen, setIsShopOpen] = useState(false);
   const [activeAlmanac, setActiveAlmanac] = useState(null); // 'journal' | 'insights' | null
+  const [gardenMode, setGardenMode] = useState('explore'); // 'explore' | 'manage'
   const canvasInvalidateRef = useRef(null);
   const ecoMode = ecoModeProp || isShopOpen;
   const [showPlantingModal, setShowPlantingModal] = useState(false);
@@ -119,6 +145,21 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
     if (!isShopOpen) return;
     setShowGraphicsMenu(false);
   }, [isShopOpen]);
+
+  useEffect(() => {
+    if (viewMode === 'garden') return;
+    setGardenMode('explore');
+    setActiveTool(null);
+    setIsArchitectMode(false);
+  }, [viewMode, setActiveTool, setIsArchitectMode]);
+
+  useEffect(() => {
+    if (gardenMode === 'manage') return;
+    setActiveTool(null);
+    setFertilizeMode(false);
+    setShowGraphicsMenu(false);
+    setIsArchitectMode(false);
+  }, [gardenMode, setActiveTool, setIsArchitectMode]);
 
   /** Start focus from garden: use main app flow (FocusSession + Tea Ceremony) so progress and rewards stay in sync. */
   const handleStartFocusFromGarden = useCallback((goal, minutes = 25) => {
@@ -142,6 +183,11 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
 
   const growingCount = allGoals.filter((g) => !isProjectDone(g) && getGoalProgressPercent(g) < 100).length;
   const harvestedCount = allGoals.filter((g) => isProjectDone(g) || getGoalProgressPercent(g) >= 100).length;
+
+  const gardenSummary = useMemo(
+    () => getGardenSummary(allGoals, logs, lastCheckInDate, weekAssignments),
+    [allGoals, logs, lastCheckInDate, weekAssignments]
+  );
 
   const ROUTINE_CATEGORIES = ['💪 Wellness', '📁 Life Admin', '🧹 Household', '🧼 Care & Hygiene'];
   const unplacedGoals = allGoals.filter((g) => g.type !== 'routine' && (!g.position3D || !Array.isArray(g.position3D)));
@@ -181,6 +227,67 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
   }, [plantableSeeds, allGoals]);
   const firstUnplacedGoal = unplacedGoals[0];
   const firstUnplacedDecoration = unplacedDecorations[0];
+  const gardenSummaryText = useMemo(() => {
+    if (viewMode === 'garden') {
+      if (allGoals.length === 0) return 'Plant your first seed to begin.';
+      const harvestLabel = harvestedCount === 1 ? 'harvest' : 'harvests';
+      return `${growingCount} growing, ${harvestedCount} ${harvestLabel}`;
+    }
+    if (goals.length === 0) return 'Nothing completed yet. Finished goals will appear here.';
+    const goalLabel = goals.length === 1 ? 'goal' : 'goals';
+    return `${goals.length} completed ${goalLabel} on display`;
+  }, [allGoals.length, goals.length, growingCount, harvestedCount, viewMode]);
+  const gardenModeDescription = useMemo(() => {
+    if (viewMode !== 'garden') return 'Browse what you have finished and revisit completed work.';
+    return gardenMode === 'manage'
+      ? 'Tools are open so you can plant, water, and rearrange without cluttering the rest of the experience.'
+      : 'Walk the garden, inspect goals, and reflect without extra controls on screen.';
+  }, [gardenMode, viewMode]);
+  const viewingGoalChecklist = useMemo(() => getGoalChecklist(viewingGoal), [viewingGoal]);
+  const viewingGoalNextStep = useMemo(
+    () => viewingGoalChecklist.find((item) => !item.completed)?.title ?? viewingGoalChecklist[0]?.title ?? null,
+    [viewingGoalChecklist]
+  );
+  const viewingGoalSnapshot = useMemo(() => {
+    if (!viewingGoal) return null;
+    const progressPercent = getGoalProgressPercent(viewingGoal);
+    const stage = getPlantStage(progressPercent);
+    const stageEmoji = viewingGoal._projectGoal ? PROJECT_STAGE_EMOJI[stage] : STAGE_EMOJI[stage];
+    const nextAt = stage === 'seed' ? 10 : stage === 'sprout' ? 50 : stage === 'bloom' ? 100 : null;
+    const totalMin = Number(viewingGoal.totalMinutes) || 0;
+    const lastTended = lastTendedForGoal(viewingGoal.id);
+    const { state: goalState } = getGoalGardenState(viewingGoal, logs, (goal, ctx) => getProjectHealthState(goal, ctx ?? {}));
+
+    let statusLabel = 'In motion';
+    let statusNote = 'You can keep tending this goal at your own pace.';
+    let statusClasses = 'bg-moss-50 text-moss-800 border-moss-200';
+
+    if (goalState === GOAL_GARDEN_STATE.STUCK) {
+      statusLabel = 'Needs next step';
+      statusNote = 'Open the project when you are ready to clarify the next action.';
+      statusClasses = 'bg-amber-50 text-amber-800 border-amber-200';
+    } else if (goalState === GOAL_GARDEN_STATE.NEGLECTED) {
+      statusLabel = 'Waiting for attention';
+      statusNote = 'There has not been recent activity, but it is still here when you return.';
+      statusClasses = 'bg-stone-100 text-stone-700 border-stone-200';
+    } else if (goalState === GOAL_GARDEN_STATE.RESTORED) {
+      statusLabel = 'Recently restarted';
+      statusNote = 'This goal has momentum again.';
+      statusClasses = 'bg-sky-50 text-sky-800 border-sky-200';
+    }
+
+    return {
+      progressPercent,
+      stage,
+      stageEmoji,
+      nextAt,
+      totalMin,
+      lastTended,
+      statusLabel,
+      statusNote,
+      statusClasses,
+    };
+  }, [lastTendedForGoal, logs, viewingGoal]);
 
   const isPaintActive = (material) => activeTool?.type === 'paint' && activeTool?.material === material;
   const toolBtn = (material, label, emoji) => (
@@ -249,6 +356,15 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
             />
           </div>
         )}
+        {gardenSummary.totalActive > 0 && (gardenSummary.neglectedCount > 0 || gardenSummary.stuckCount > 0) && (
+          <p className="font-sans text-sm text-stone-600 mx-2 mb-1 text-center">
+            Your garden reflects your projects. {gardenSummary.stuckCount > 0 && gardenSummary.neglectedCount > 0
+              ? `${gardenSummary.stuckCount} could use a next step, ${gardenSummary.neglectedCount} haven't had recent activity — both are here when you're ready.`
+              : gardenSummary.stuckCount > 0
+                ? `${gardenSummary.stuckCount} could use a next step when you're ready.`
+                : `${gardenSummary.neglectedCount} haven't had recent activity — still here when you're ready.`}
+          </p>
+        )}
         <div id="guide-garden-canvas" className="m-1 sm:m-2 h-[88vh] min-h-[400px] w-full rounded-3xl overflow-hidden relative">
           <Suspense fallback={<div className="absolute inset-0 bg-stone-200/70 animate-pulse" aria-hidden="true" />}>
             <Garden3D
@@ -289,17 +405,165 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
                   : 'opacity-100 transition-opacity duration-300'
               }
             >
+            <div className="absolute top-4 left-4 z-50 w-[min(21rem,calc(100vw-2rem))] pointer-events-auto">
+              <div className="rounded-[1.5rem] border border-white/70 bg-white/78 p-3 shadow-xl backdrop-blur-md">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-sans text-[11px] font-semibold uppercase tracking-[0.2em] text-stone-500">
+                      {viewMode === 'garden' ? (gardenMode === 'manage' ? 'Manage mode' : 'Explore mode') : 'Completed view'}
+                    </p>
+                    <p className="mt-1 font-sans text-sm leading-5 text-stone-700">{gardenModeDescription}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowGraphicsMenu((prev) => !prev)}
+                    className="shrink-0 rounded-full border border-stone-200 bg-white/85 px-3 py-1.5 font-sans text-xs font-semibold text-stone-600 transition-colors hover:bg-white focus:outline-none focus:ring-2 focus:ring-moss-500/40"
+                    aria-expanded={showGraphicsMenu}
+                    aria-label="Open graphics menu"
+                  >
+                    {graphicsMode}
+                  </button>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    id="guide-garden-almanac"
+                    type="button"
+                    onClick={() => setActiveAlmanac('journal')}
+                    className="rounded-full bg-moss-700 px-3 py-2 font-sans text-sm font-semibold text-white shadow-sm transition-colors hover:bg-moss-800 focus:outline-none focus:ring-2 focus:ring-moss-500/50 focus:ring-offset-2"
+                    aria-label="Open journal"
+                  >
+                    Journal
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveAlmanac('insights')}
+                    className="rounded-full border border-stone-200 bg-white/90 px-3 py-2 font-sans text-sm font-semibold text-stone-700 transition-colors hover:bg-white focus:outline-none focus:ring-2 focus:ring-moss-500/40 focus:ring-offset-2"
+                  >
+                    Insights
+                  </button>
+                  {viewMode === 'garden' && (
+                    <span className="rounded-full bg-stone-100 px-3 py-2 font-sans text-xs font-medium text-stone-600">
+                      {gardenMode === 'manage' ? 'Finish a quick change, then return to explore.' : 'Switch to Manage when you want tools.'}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <AnimatePresence>
+                {showGraphicsMenu && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -8 }}
+                    transition={{ duration: 0.16 }}
+                    className="mt-2 w-56 rounded-2xl border border-stone-200 bg-white/95 p-2 shadow-xl backdrop-blur-md"
+                  >
+                    {[
+                      ['auto', 'Auto', 'Adapts to your device and motion settings.'],
+                      ['smooth', 'Smooth', 'Prefer richer visuals and motion when possible.'],
+                      ['saver', 'Saver', 'Prefer battery life and lower animation cost.'],
+                    ].map(([value, label, description]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => {
+                          updateUserSettings?.({ gardenGraphicsMode: value });
+                          setShowGraphicsMenu(false);
+                        }}
+                        className={`w-full rounded-xl px-3 py-2 text-left transition-colors focus:outline-none focus:ring-2 focus:ring-moss-500/40 ${
+                          graphicsMode === value ? 'bg-moss-50 text-moss-900' : 'text-stone-700 hover:bg-stone-100'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="font-sans text-sm font-semibold">{label}</span>
+                          {graphicsMode === value && <span className="text-[11px] font-semibold uppercase tracking-wide text-moss-700">Active</span>}
+                        </div>
+                        <div className="mt-1 text-xs text-stone-500">{description}</div>
+                      </button>
+                    ))}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+            {viewMode === 'garden' && (
+              <div className="absolute top-4 right-4 z-50 flex max-w-[min(20rem,calc(100vw-2rem))] flex-col items-end gap-2 pointer-events-auto">
+                <div className="inline-flex rounded-full border border-white/70 bg-white/80 p-1 shadow-lg backdrop-blur-md">
+                  <button
+                    type="button"
+                    onClick={() => setGardenMode('explore')}
+                    className={`rounded-full px-4 py-2 font-sans text-sm font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-moss-500/40 ${
+                      gardenMode === 'explore' ? 'bg-stone-900 text-white' : 'text-stone-600 hover:bg-white'
+                    }`}
+                  >
+                    Explore
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setGardenMode('manage')}
+                    className={`rounded-full px-4 py-2 font-sans text-sm font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-moss-500/40 ${
+                      gardenMode === 'manage' ? 'bg-stone-900 text-white' : 'text-stone-600 hover:bg-white'
+                    }`}
+                  >
+                    Manage
+                  </button>
+                </div>
+                {gardenMode === 'manage' && (
+                  <>
+                    <div className="flex flex-wrap justify-end gap-2">
+                      {fertilizerCount > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setFertilizeMode((prev) => !prev)}
+                          className={`rounded-full border px-3 py-2 font-sans text-sm font-semibold transition-all focus:outline-none focus:ring-2 focus:ring-moss-500/50 focus:ring-offset-2 ${
+                            fertilizeMode
+                              ? 'border-amber-300 bg-amber-100 text-amber-900 shadow-md'
+                              : 'border-stone-200 bg-white/90 text-stone-700 hover:bg-white'
+                          }`}
+                          title={fertilizeMode ? 'Click a growing plant to fertilize it.' : 'Turn on fertilize mode.'}
+                        >
+                          {fertilizerCount} Fertilizer
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActiveTool(null);
+                          setSelectedObjectId(null);
+                          setIsArchitectMode(!isArchitectMode);
+                        }}
+                        className={`rounded-full border px-3 py-2 font-sans text-sm font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-moss-500/50 focus:ring-offset-2 ${
+                          isArchitectMode
+                            ? 'border-amber-300 bg-amber-200/90 text-amber-900'
+                            : 'border-stone-200 bg-white/90 text-stone-700 hover:bg-white'
+                        }`}
+                        aria-pressed={!!isArchitectMode}
+                        aria-label={isArchitectMode ? 'Done editing layout' : 'Edit layout'}
+                        title={isArchitectMode ? 'Done editing layout' : 'Edit layout'}
+                      >
+                        {isArchitectMode ? 'Done editing' : 'Edit layout'}
+                      </button>
+                    </div>
+                    <div className="max-w-[18rem] rounded-2xl bg-stone-900/72 px-3 py-2 text-right font-sans text-xs text-stone-50 shadow-md backdrop-blur">
+                      {isArchitectMode
+                        ? 'Tap an object to select it, then tap the ground to move it.'
+                        : fertilizeMode
+                          ? 'Fertilizer is ready. Click a growing plant to use it.'
+                          : 'Tools appear below so you can make one change at a time.'}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
             <button
               id="guide-garden-almanac"
               type="button"
               onClick={() => setActiveAlmanac('journal')}
-              className="absolute top-4 left-4 z-50 p-3 bg-white/80 backdrop-blur rounded-2xl shadow-lg hover:bg-white transition-all text-stone-700 font-bold flex items-center gap-2 focus:outline-none focus:ring-2 focus:ring-moss-500/50 focus:ring-offset-2 pointer-events-auto"
+              className="hidden absolute top-4 left-4 z-50 p-3 bg-white/80 backdrop-blur rounded-2xl shadow-lg hover:bg-white transition-all text-stone-700 font-bold flex items-center gap-2 focus:outline-none focus:ring-2 focus:ring-moss-500/50 focus:ring-offset-2 pointer-events-auto"
               aria-label="Open Almanac"
             >
               <span aria-hidden>📖</span>
               Almanac
             </button>
-            <div className="absolute top-16 left-4 z-50 pointer-events-auto">
+            <div className="hidden absolute top-16 left-4 z-50 pointer-events-auto">
               <button
                 type="button"
                 onClick={() => setShowGraphicsMenu((prev) => !prev)}
@@ -353,7 +617,7 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
                 setSelectedObjectId(null);
                 setIsArchitectMode(!isArchitectMode);
               }}
-              className={`absolute top-4 right-4 z-50 px-3 py-2 rounded-2xl shadow-lg border backdrop-blur font-sans text-sm font-semibold transition-colors pointer-events-auto focus:outline-none focus:ring-2 focus:ring-moss-500/50 focus:ring-offset-2 ${
+              className={`hidden absolute top-4 right-4 z-50 px-3 py-2 rounded-2xl shadow-lg border backdrop-blur font-sans text-sm font-semibold transition-colors pointer-events-auto focus:outline-none focus:ring-2 focus:ring-moss-500/50 focus:ring-offset-2 ${
                 isArchitectMode
                   ? 'bg-amber-200/90 border-amber-300 text-amber-900 hover:bg-amber-200'
                   : 'bg-white/80 border-stone-200 text-stone-700 hover:bg-white'
@@ -365,7 +629,7 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
               {isArchitectMode ? '✅ Done Editing' : '🏗️ Edit Layout'}
             </button>
             {isArchitectMode && (
-              <div className="absolute top-16 right-4 z-50 px-3 py-2 rounded-2xl bg-stone-900/70 text-stone-50 text-xs font-sans shadow-md backdrop-blur pointer-events-none max-w-[220px]">
+              <div className="hidden absolute top-16 right-4 z-50 px-3 py-2 rounded-2xl bg-stone-900/70 text-stone-50 text-xs font-sans shadow-md backdrop-blur pointer-events-none max-w-[220px]">
                 Tap an object to select, then tap the ground to move it.
               </div>
             )}
@@ -388,7 +652,93 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
                 >
                   ×
                 </button>
-                <h3 className="font-serif text-xl text-stone-900 pr-10 mb-2">{viewingGoal.title}</h3>
+                <div className="pr-10">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="font-serif text-xl text-stone-900">{viewingGoal.title}</h3>
+                    {viewingGoal._projectGoal && (
+                      <span className="rounded-full bg-amber-100 px-2 py-1 font-sans text-[11px] font-semibold uppercase tracking-wide text-amber-800">
+                        Project
+                      </span>
+                    )}
+                  </div>
+                  <p className="mt-2 font-sans text-sm text-stone-500">
+                    {viewingGoal.deadline || viewingGoal._projectDeadline
+                      ? new Date((viewingGoal.deadline || viewingGoal._projectDeadline) + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
+                      : 'No deadline'}
+                  </p>
+                </div>
+                {viewingGoalSnapshot && (
+                  <div className="mt-4 space-y-4">
+                    <div className="rounded-2xl border border-stone-200 bg-stone-50/90 p-4">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className={`rounded-full border px-2.5 py-1 font-sans text-xs font-semibold ${viewingGoalSnapshot.statusClasses}`}>
+                          {viewingGoalSnapshot.statusLabel}
+                        </span>
+                        <span className="rounded-full bg-white px-2.5 py-1 font-sans text-xs font-medium text-stone-600">
+                          {viewingGoalSnapshot.stageEmoji} {viewingGoalSnapshot.stage}
+                          {viewingGoalSnapshot.nextAt != null ? ` to ${viewingGoalSnapshot.nextAt}%` : ''}
+                        </span>
+                      </div>
+                      <p className="mt-3 font-sans text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">Next step</p>
+                      <p className="mt-1 font-sans text-sm text-stone-800">
+                        {viewingGoalNextStep || 'No next step yet. Open the project when you are ready to define one.'}
+                      </p>
+                      <p className="mt-2 font-sans text-xs text-stone-500">{viewingGoalSnapshot.statusNote}</p>
+                    </div>
+                    <div>
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="font-sans text-xs text-stone-500">Progress</p>
+                        <p className="font-sans text-xs font-medium text-stone-600">{Math.round(viewingGoalSnapshot.progressPercent)}%</p>
+                      </div>
+                      <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-stone-200">
+                        <motion.div
+                          className="h-full rounded-full bg-moss-600"
+                          initial={{ width: 0 }}
+                          animate={{ width: `${viewingGoalSnapshot.progressPercent}%` }}
+                          transition={{ duration: 0.4 }}
+                        />
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <span className="rounded-full bg-white px-3 py-1.5 font-sans text-xs text-stone-600 shadow-sm">
+                        {viewingGoalSnapshot.totalMin} min logged
+                      </span>
+                      {viewingGoalSnapshot.lastTended && (
+                        <span className="rounded-full bg-white px-3 py-1.5 font-sans text-xs text-stone-600 shadow-sm">
+                          Last tended {viewingGoalSnapshot.lastTended.date
+                            ? new Date(viewingGoalSnapshot.lastTended.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+                            : 'recently'}
+                        </span>
+                      )}
+                    </div>
+                    <div>
+                      <div className="mb-2 flex items-center justify-between gap-3">
+                        <p className="font-sans text-xs font-medium uppercase tracking-wider text-stone-500">Next checks</p>
+                        {viewingGoalChecklist.length > 0 && (
+                          <p className="font-sans text-xs text-stone-400">
+                            {viewingGoalChecklist.filter((item) => item.completed).length}/{viewingGoalChecklist.length} complete
+                          </p>
+                        )}
+                      </div>
+                      {viewingGoalChecklist.length > 0 ? (
+                        <ul className="space-y-1.5">
+                          {viewingGoalChecklist.slice(0, 5).map((item) => (
+                            <li key={item.id} className="flex items-center gap-2 font-sans text-sm">
+                              <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border text-[10px] ${item.completed ? 'bg-moss-500 text-white' : 'border-stone-300'}`}>
+                                {item.completed ? '✓' : ''}
+                              </span>
+                              <span className={item.completed ? 'text-stone-400 line-through' : 'text-stone-700'}>{item.title || 'Untitled step'}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="font-sans text-xs text-stone-400">No steps yet. Add the next action when you need it.</p>
+                      )}
+                    </div>
+                  </div>
+                )}
+                <div className="hidden">
+                  <h3 className="font-serif text-xl text-stone-900 pr-10 mb-2">{viewingGoal.title}</h3>
                 <p className="font-sans text-sm text-stone-500 mb-4">
                   {viewingGoal.deadline || viewingGoal._projectDeadline
                     ? new Date((viewingGoal.deadline || viewingGoal._projectDeadline) + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
@@ -406,7 +756,7 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
                   </div>
                   <p className="font-sans text-xs text-stone-600 mt-1">{Math.round(getGoalProgressPercent(viewingGoal))}%</p>
                 </div>
-                {/* Growth legibility: stage, total time, last tended */}
+                {/* Growth legibility: stage, total time, last tended, project state */}
                 {(() => {
                   const pct = getGoalProgressPercent(viewingGoal);
                   const stage = getPlantStage(pct);
@@ -414,6 +764,8 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
                   const nextAt = stage === 'seed' ? 10 : stage === 'sprout' ? 50 : stage === 'bloom' ? 100 : null;
                   const totalMin = Number(viewingGoal.totalMinutes) || 0;
                   const lastTended = lastTendedForGoal(viewingGoal.id);
+                  const { state: goalState, lastActivityAt } = getGoalGardenState(viewingGoal, logs, (goal, ctx) => getProjectHealthState(goal, ctx ?? {}));
+                  const stateLabel = getGardenStateLabel(goalState);
                   return (
                     <div className="mb-4 p-3 rounded-xl bg-stone-50 border border-stone-100">
                       <p className="font-sans text-xs font-medium text-stone-600 mb-1.5">Growth</p>
@@ -426,6 +778,17 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
                       {lastTended && (
                         <p className="font-sans text-xs text-stone-500 mt-1">
                           Last tended: {lastTended.date ? new Date(lastTended.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '—'} · {(Number(lastTended.minutes) || 0) > 0 ? `${lastTended.minutes} min focus` : 'completed'}
+                        </p>
+                      )}
+                      {stateLabel && goalState !== GOAL_GARDEN_STATE.NURTURED && (
+                        <p className="font-sans text-xs text-stone-500 mt-1.5 italic">
+                          {goalState === GOAL_GARDEN_STATE.STUCK
+                            ? 'No next step — add one in Project Planner when you\'re ready.'
+                            : goalState === GOAL_GARDEN_STATE.NEGLECTED
+                              ? 'No recent activity — it\'s still here when you\'re ready.'
+                              : goalState === GOAL_GARDEN_STATE.RESTORED
+                                ? 'Recently picked up again.'
+                                : stateLabel}
                         </p>
                       )}
                     </div>
@@ -450,6 +813,26 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
                   {!(viewingGoal.subtasks?.length || viewingGoal.phases?.length || viewingGoal.milestones?.length) && (
                     <p className="font-sans text-xs text-stone-400">No vines yet.</p>
                   )}
+                </div>
+                </div>
+                <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+                  <button
+                    type="button"
+                    onClick={() => handleStartFocusFromGarden(viewingGoal, 25)}
+                    className="flex-1 rounded-xl bg-indigo-500 px-4 py-3 font-sans font-bold text-white shadow-lg transition-all hover:bg-indigo-600"
+                  >
+                    Start Focus Session
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onGoalClick?.(viewingGoal);
+                      setViewingGoal(null);
+                    }}
+                    className="flex-1 rounded-xl border border-stone-200 bg-white px-4 py-3 font-sans font-semibold text-stone-700 transition-colors hover:bg-stone-50"
+                  >
+                    Open project
+                  </button>
                 </div>
                 <button
                   type="button"
@@ -498,7 +881,7 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
                 <button
                   type="button"
                   onClick={() => handleStartFocusFromGarden(viewingGoal, 25)}
-                  className="w-full mt-4 py-3 bg-indigo-500 hover:bg-indigo-600 text-white rounded-xl font-bold shadow-lg flex justify-center items-center gap-2 transition-all"
+                  className="hidden w-full mt-4 py-3 bg-indigo-500 hover:bg-indigo-600 text-white rounded-xl font-bold shadow-lg flex justify-center items-center gap-2 transition-all"
                 >
                   <span aria-hidden>🧘</span> Start Focus Session
                 </button>
@@ -580,11 +963,11 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
         <div
           id="guide-garden-tools"
           className={
-            isShopOpen
+            isShopOpen || viewMode !== 'garden' || gardenMode !== 'manage'
               ? 'opacity-0 pointer-events-none transition-opacity duration-300'
               : 'transition-opacity duration-300'
           }
-          style={!isShopOpen ? { opacity: toolboxFaded ? 0.35 : 1 } : undefined}
+          style={!isShopOpen && viewMode === 'garden' && gardenMode === 'manage' ? { opacity: toolboxFaded ? 0.35 : 1 } : undefined}
         >
         <div
           className="absolute bottom-4 left-1/2 -translate-x-1/2 z-50 flex flex-wrap items-center justify-center gap-2 px-3 py-2 rounded-2xl bg-stone-800/90 backdrop-blur-sm shadow-lg border border-stone-600/50 pointer-events-auto"
@@ -870,10 +1253,18 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
                       <button
                         type="button"
                         onClick={() => {
-                          const raw = window.prompt('Extend deadline to (YYYY-MM-DD):');
-                          if (raw && /^\d{4}-\d{2}-\d{2}$/.test(raw.trim())) {
-                            onEditGoal?.(selectedGoal.id, { _projectDeadline: raw.trim() });
-                          }
+                          showPrompt({
+                            title: 'Extend deadline',
+                            message: 'New date (YYYY-MM-DD)',
+                            defaultValue: selectedGoal._projectDeadline ? new Date(selectedGoal._projectDeadline + 'T12:00:00').toISOString().slice(0, 10) : '',
+                            placeholder: 'YYYY-MM-DD',
+                            submitLabel: 'Save',
+                            onSubmit: (raw) => {
+                              if (raw && /^\d{4}-\d{2}-\d{2}$/.test(raw.trim())) {
+                                onEditGoal?.(selectedGoal.id, { _projectDeadline: raw.trim() });
+                              }
+                            },
+                          });
                         }}
                         className="px-2 py-0.5 rounded bg-amber-100 text-amber-700 font-sans text-[10px] font-medium hover:bg-amber-200 transition-colors"
                       >
@@ -931,7 +1322,7 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
               onClick={() => setViewMode('garden')}
               className={`font-serif text-xl transition-colors rounded-lg px-2 py-1 -ml-1 ${viewMode === 'garden' ? 'text-stone-800 font-semibold bg-stone-100' : 'text-stone-500 hover:text-stone-700 hover:bg-stone-50'}`}
             >
-              My Garden
+              Growing
             </button>
             <span className="text-stone-300 font-sans">|</span>
             <button
@@ -939,25 +1330,33 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
               onClick={() => setViewMode('greenhouse')}
               className={`font-serif text-xl transition-colors rounded-lg px-2 py-1 ${viewMode === 'greenhouse' ? 'text-stone-800 font-semibold bg-stone-100' : 'text-stone-500 hover:text-stone-700 hover:bg-stone-50'}`}
             >
-              The Greenhouse
+              Completed
             </button>
           </div>
-          <p className="font-sans text-sm text-stone-500 mt-0.5">
+          <p className="mt-0.5 font-sans text-sm text-stone-500">{gardenSummaryText}</p>
+          <p className="hidden font-sans text-sm text-stone-500 mt-0.5">
             {viewMode === 'garden'
               ? (allGoals.length === 0
                 ? 'Plant your first seed to begin.'
                 : `${growingCount} growing · ${harvestedCount} ${harvestedCount === 1 ? 'harvest' : 'harvests'}`)
               : (goals.length === 0
-                ? 'No harvests yet. Complete goals to see them here.'
-                : `${goals.length} ${goals.length === 1 ? 'harvest' : 'harvests'} on display`)}
+                ? 'Nothing completed yet. Finished goals will appear here.'
+                : `${goals.length} completed ${goals.length === 1 ? 'goal' : 'goals'} on display`)}
           </p>
         </div>
         <div className="flex items-center gap-3">
+          <p className="font-sans text-xs text-stone-500">
+            {viewMode !== 'garden'
+              ? 'Completed goals stay simple here so you can reflect without editing.'
+              : gardenMode === 'manage'
+                ? 'Manage mode is open below for planting, watering, and layout changes.'
+                : 'Explore mode keeps the garden calm. Switch to Manage when you want tools.'}
+          </p>
           {fertilizerCount > 0 && (
             <button
               type="button"
               onClick={() => setFertilizeMode((prev) => !prev)}
-              className={`flex items-center gap-2 px-4 py-3 rounded-xl font-sans text-sm font-medium transition-all focus:outline-none focus:ring-2 focus:ring-moss-500/50 focus:ring-offset-2 ${
+              className={`hidden flex items-center gap-2 px-4 py-3 rounded-xl font-sans text-sm font-medium transition-all focus:outline-none focus:ring-2 focus:ring-moss-500/50 focus:ring-offset-2 ${
                 fertilizeMode
                   ? 'bg-amber-100 border-2 border-amber-400 text-amber-900 shadow-md'
                   : 'bg-stone-100 border border-stone-200 text-stone-700 hover:bg-stone-200'
@@ -969,7 +1368,7 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
             </button>
           )}
           {fertilizeMode && (
-            <span className="font-sans text-xs text-amber-700 font-medium">Click a growing plant to fertilize</span>
+            <span className="hidden font-sans text-xs text-amber-700 font-medium">Click a growing plant to fertilize</span>
           )}
         </div>
       </div>

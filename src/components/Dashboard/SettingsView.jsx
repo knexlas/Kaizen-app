@@ -1,9 +1,18 @@
 import { useState, useEffect, useRef } from 'react';
 import { useGarden } from '../../context/GardenContext';
+import { useDialog } from '../../context/DialogContext';
 import { localISODate } from '../../services/dateUtils';
 import SpiritProgression from './SpiritProgression';
 import { testMochiConnection } from '../../services/geminiService';
 import { setTourSeen } from '../../services/onboardingStateService';
+import {
+  ONBOARDING_USE_CASE_OPTIONS,
+  ONBOARDING_ROLE_OPTIONS,
+  ONBOARDING_PRIORITY_OPTIONS,
+  MAX_PRIORITIES,
+} from '../../constants/onboardingPreferences';
+import { getPlannerPreset, PLANNER_PRESET_OPTIONS } from '../../constants/plannerPresets';
+import { getGamificationIntensity, GAMIFICATION_INTENSITY_OPTIONS, GAMIFICATION_INTENSITY_LEVELS } from '../../constants/gamificationIntensity';
 
 const SCHEDULING_DEFAULTS = {
   dayStart: '08:00',
@@ -30,6 +39,7 @@ const DAY_STARTS_AT_OPTIONS = [
 ];
 
 export default function SettingsView({ onReplayTour }) {
+  const { showConfirm } = useDialog();
   const {
     userSettings = {},
     setUserSettings,
@@ -60,7 +70,16 @@ export default function SettingsView({ onReplayTour }) {
   const [importError, setImportError] = useState(null);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [testingMochi, setTestingMochi] = useState(false);
+  const [prefsSaved, setPrefsSaved] = useState(false);
+  const [onboardingUseCase, setOnboardingUseCase] = useState(userSettings.onboardingUseCase ?? '');
+  const [onboardingRole, setOnboardingRole] = useState(userSettings.onboardingRole ?? '');
+  const [onboardingPriorities, setOnboardingPriorities] = useState(Array.isArray(userSettings.onboardingPriorities) ? userSettings.onboardingPriorities : []);
+  const [plannerPreset, setPlannerPreset] = useState(userSettings.plannerPreset ?? '');
+  const [gamificationIntensity, setGamificationIntensity] = useState(userSettings.gamificationIntensity ?? '');
   const fileInputRef = useRef(null);
+
+  const effectivePlannerPreset = plannerPreset || getPlannerPreset(userSettings);
+  const effectiveGamificationIntensity = gamificationIntensity || getGamificationIntensity(userSettings);
 
   const handleTestMochi = async () => {
     setTestingMochi(true);
@@ -84,6 +103,35 @@ export default function SettingsView({ onReplayTour }) {
     setWorkHoursEnd(userSettings.workHours?.end ?? SCHEDULING_DEFAULTS.workHours.end);
     setGardenGraphicsMode(userSettings.gardenGraphicsMode ?? 'auto');
   }, [userSettings.userName, userSettings.defaultWeekStart, userSettings.dayStart, userSettings.dayEnd, userSettings.dayStartsAt, userSettings.isWorkScheduler, userSettings.workHours, userSettings.gardenGraphicsMode]);
+
+  useEffect(() => {
+    setOnboardingUseCase(userSettings.onboardingUseCase ?? '');
+    setOnboardingRole(userSettings.onboardingRole ?? '');
+    setOnboardingPriorities(Array.isArray(userSettings.onboardingPriorities) ? userSettings.onboardingPriorities : []);
+    setPlannerPreset(userSettings.plannerPreset ?? '');
+    setGamificationIntensity(userSettings.gamificationIntensity ?? '');
+  }, [userSettings.onboardingUseCase, userSettings.onboardingRole, userSettings.onboardingPriorities, userSettings.plannerPreset, userSettings.gamificationIntensity]);
+
+  const togglePriority = (id) => {
+    setOnboardingPriorities((prev) => {
+      if (prev.includes(id)) return prev.filter((p) => p !== id);
+      if (prev.length >= MAX_PRIORITIES) return prev;
+      return [...prev, id];
+    });
+  };
+
+  const handleSavePreferences = () => {
+    updateUserSettings({
+      onboardingUseCase: onboardingUseCase || undefined,
+      onboardingRole: onboardingRole || undefined,
+      onboardingPriorities: onboardingPriorities.length > 0 ? onboardingPriorities : undefined,
+      plannerPreset: plannerPreset || undefined,
+      gamificationIntensity: gamificationIntensity || undefined,
+    });
+    setPrefsSaved(true);
+    const t = setTimeout(() => setPrefsSaved(false), 2000);
+    return () => clearTimeout(t);
+  };
 
   const handleSave = () => {
     setUserSettings?.({
@@ -148,8 +196,8 @@ export default function SettingsView({ onReplayTour }) {
           return;
         }
         const message = 'Import will replace your current goals, logs, and settings with the file contents. Continue?';
-        if (!window.confirm(message)) return;
-        importGardenData(data);
+        showConfirm({ message, confirmLabel: 'Import', onConfirm: () => importGardenData(data) });
+        return;
       } catch (err) {
         setImportError('Could not parse JSON. Please choose a valid backup file.');
       }
@@ -163,12 +211,16 @@ export default function SettingsView({ onReplayTour }) {
       setDeleteConfirm(true);
       return;
     }
-    if (!window.confirm('Permanently delete all garden data (goals, logs, settings, decorations)? This cannot be undone.')) {
-      setDeleteConfirm(false);
-      return;
-    }
-    deleteAllData();
-    setDeleteConfirm(false);
+    showConfirm({
+      message: 'Permanently delete all garden data (goals, logs, settings, decorations)? This cannot be undone.',
+      confirmLabel: 'Delete all',
+      cancelLabel: 'Cancel',
+      destructive: true,
+      onConfirm: () => {
+        deleteAllData();
+        setDeleteConfirm(false);
+      },
+    });
   };
 
   return (
@@ -178,7 +230,7 @@ export default function SettingsView({ onReplayTour }) {
       <div className="rounded-xl border border-stone-200 bg-white p-6">
         <h3 className="font-sans text-sm font-medium text-stone-700 mb-2">Mochi (AI)</h3>
         <p className="font-sans text-sm text-stone-500 mb-3">
-          Mochi uses VITE_GEMINI_API_KEY from .env. Restart the dev server after changing .env.
+          Mochi needs an API key to work. Add your key in your environment or config, then use Test connection below.
         </p>
         <button
           type="button"
@@ -190,21 +242,130 @@ export default function SettingsView({ onReplayTour }) {
         </button>
       </div>
 
+      <div className="rounded-xl border border-stone-200 dark:border-stone-600 bg-white dark:bg-stone-800 p-6">
+        <h3 className="font-sans text-sm font-medium text-stone-700 dark:text-stone-300 mb-1">App profile</h3>
+        <p className="font-sans text-xs text-stone-500 dark:text-stone-400 mb-2">
+          Change how the app is set up for you—what appears first on your home screen and in the planner. Your projects, tasks, and history stay exactly as they are. Nothing is deleted or reset.
+        </p>
+        <p className="font-sans text-xs text-stone-500 dark:text-stone-400 mb-4 italic">
+          Updates apply to defaults and layout only. You can change these anytime.
+        </p>
+        <div className="space-y-4">
+          <div>
+            <label className="block font-sans text-xs font-medium text-stone-600 dark:text-stone-400 mb-1">Primary use case</label>
+            <p className="font-sans text-[11px] text-stone-500 dark:text-stone-400 mb-1">What you mainly use the app for</p>
+            <select
+              value={onboardingUseCase}
+              onChange={(e) => setOnboardingUseCase(e.target.value)}
+              className="w-full py-2 px-3 rounded-lg border border-stone-200 dark:border-stone-600 bg-white dark:bg-stone-700 font-sans text-stone-900 dark:text-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
+            >
+              <option value="">—</option>
+              {ONBOARDING_USE_CASE_OPTIONS.map((opt) => (
+                <option key={opt.id} value={opt.id}>{opt.label}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block font-sans text-xs font-medium text-stone-600 dark:text-stone-400 mb-1">Role type</label>
+            <p className="font-sans text-[11px] text-stone-500 dark:text-stone-400 mb-1">Which best describes you</p>
+            <select
+              value={onboardingRole}
+              onChange={(e) => setOnboardingRole(e.target.value)}
+              className="w-full py-2 px-3 rounded-lg border border-stone-200 dark:border-stone-600 bg-white dark:bg-stone-700 font-sans text-stone-900 dark:text-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
+            >
+              <option value="">—</option>
+              {ONBOARDING_ROLE_OPTIONS.map((opt) => (
+                <option key={opt.id} value={opt.id}>{opt.label}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block font-sans text-xs font-medium text-stone-600 dark:text-stone-400 mb-1">Top goals</label>
+            <p className="font-sans text-[11px] text-stone-500 dark:text-stone-400 mb-2">What you want the app to help with most (pick up to {MAX_PRIORITIES})</p>
+            <ul className="space-y-1.5">
+              {ONBOARDING_PRIORITY_OPTIONS.map((opt) => {
+                const selected = onboardingPriorities.includes(opt.id);
+                const disabled = !selected && onboardingPriorities.length >= MAX_PRIORITIES;
+                return (
+                  <li key={opt.id}>
+                    <label className={`flex items-center gap-2 py-2 px-3 rounded-lg cursor-pointer border transition-colors ${
+                      selected ? 'border-moss-400 dark:border-moss-600 bg-moss-50 dark:bg-moss-900/20' : disabled ? 'border-stone-100 dark:border-stone-700 opacity-60' : 'border-stone-200 dark:border-stone-600 hover:bg-stone-50 dark:hover:bg-stone-700/50'
+                    }`}>
+                      <input
+                        type="checkbox"
+                        checked={selected}
+                        onChange={() => !disabled && togglePriority(opt.id)}
+                        disabled={disabled}
+                        className="rounded border-stone-300 text-moss-500 focus:ring-moss-500/50"
+                      />
+                      <span className="font-sans text-sm text-stone-700 dark:text-stone-300">{opt.label}</span>
+                    </label>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+          <div>
+            <label className="block font-sans text-xs font-medium text-stone-600 dark:text-stone-400 mb-1">Planner &amp; dashboard preset</label>
+            <p className="font-sans text-[11px] text-stone-500 dark:text-stone-400 mb-1">How your home screen and Projects view are arranged</p>
+            <select
+              value={plannerPreset}
+              onChange={(e) => setPlannerPreset(e.target.value)}
+              className="w-full py-2 px-3 rounded-lg border border-stone-200 dark:border-stone-600 bg-white dark:bg-stone-700 font-sans text-stone-900 dark:text-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
+            >
+              <option value="">Auto (from use case &amp; role above)</option>
+              {PLANNER_PRESET_OPTIONS.map((opt) => (
+                <option key={opt.id} value={opt.id}>{opt.label}</option>
+              ))}
+            </select>
+            <p className="font-sans text-xs text-stone-500 dark:text-stone-400 mt-1">
+              Current: {(PLANNER_PRESET_OPTIONS.find((o) => o.id === effectivePlannerPreset)?.label ?? effectivePlannerPreset) || 'Auto'}
+            </p>
+          </div>
+          <div>
+            <label className="block font-sans text-xs font-medium text-stone-600 dark:text-stone-400 mb-1">App tone</label>
+            <p className="font-sans text-[11px] text-stone-500 dark:text-stone-400 mb-1">How much celebration and guidance you see (minimal to playful)</p>
+            <select
+              value={gamificationIntensity || GAMIFICATION_INTENSITY_LEVELS.BALANCED}
+              onChange={(e) => setGamificationIntensity(e.target.value)}
+              className="w-full py-2 px-3 rounded-lg border border-stone-200 dark:border-stone-600 bg-white dark:bg-stone-700 font-sans text-stone-900 dark:text-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
+            >
+              {GAMIFICATION_INTENSITY_OPTIONS.map((opt) => (
+                <option key={opt.id} value={opt.id}>{opt.label}</option>
+              ))}
+            </select>
+            <p className="font-sans text-xs text-stone-500 dark:text-stone-400 mt-1">
+              {GAMIFICATION_INTENSITY_OPTIONS.find((o) => o.id === (effectiveGamificationIntensity || GAMIFICATION_INTENSITY_LEVELS.BALANCED))?.description}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={handleSavePreferences}
+            className="px-4 py-2 rounded-lg font-sans text-sm font-medium bg-moss-600 text-white hover:bg-moss-700 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
+          >
+            {prefsSaved ? 'Saved' : 'Save profile'}
+          </button>
+          {prefsSaved && (
+            <p className="font-sans text-xs text-moss-600 dark:text-moss-400 mt-2">Your profile is updated. Home and planner will reflect this next time you open them—no data has been changed.</p>
+          )}
+        </div>
+      </div>
+
       {typeof onReplayTour === 'function' && (
-        <div className="rounded-xl border border-stone-200 bg-white p-6">
-          <h3 className="font-sans text-sm font-medium text-stone-700 mb-2">Tour</h3>
-          <p className="font-sans text-sm text-stone-500 mb-3">See the Spirit guide tour again.</p>
+        <div className="rounded-xl border border-stone-200 dark:border-stone-600 bg-white dark:bg-stone-800 p-6">
+          <h3 className="font-sans text-sm font-medium text-stone-700 dark:text-stone-300 mb-2">Tour</h3>
+          <p className="font-sans text-sm text-stone-500 dark:text-stone-400 mb-3">See the Spirit guide tour again.</p>
           <button
             type="button"
             onClick={onReplayTour}
-            className="px-4 py-2 rounded-lg font-sans text-sm font-medium border border-stone-200 text-stone-700 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
+            className="px-4 py-2 rounded-lg font-sans text-sm font-medium border border-stone-200 dark:border-stone-600 text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-700 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
           >
             Replay Tour
           </button>
         </div>
       )}
 
-      <div className="rounded-xl border border-stone-200 bg-white p-6 space-y-6">
+      <div className="rounded-xl border border-stone-200 dark:border-stone-600 bg-white dark:bg-stone-800 p-6 space-y-6">
         <div>
           <label htmlFor="settings-username" className="block font-sans text-sm font-medium text-stone-600 mb-1">
             Name

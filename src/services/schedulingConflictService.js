@@ -4,6 +4,8 @@
  * Minute resolution: events at 10:05 block 10:05–11:05 correctly.
  */
 
+import { localISODate } from './dateUtils';
+
 /** Convert minutes since midnight (0–1439) to canonical "HH:MM". */
 export function minutesToCanonicalSlotKey(mins) {
   if (mins == null || mins < 0 || mins >= 24 * 60) return null;
@@ -74,14 +76,14 @@ export function planKeyToHour(key) {
   return Math.floor(mins / 60);
 }
 
-/** Get duration in minutes for an assignment. Default 60. */
+/** Get duration in minutes for an assignment. Default 60. Handles single assignment only. */
 export function getDurationMinutesFromPlanAssignment(assignment) {
   if (!assignment || typeof assignment !== 'object') return 60;
   if (typeof assignment.duration === 'number') return Math.max(1, Math.min(480, assignment.duration));
   return 60;
 }
 
-/** Set of integer hours (0–23) that are occupied by existing plan entries (duration-aware, minute-precise). */
+/** Set of integer hours (0–23) that are occupied by existing plan entries (duration-aware, minute-precise). Handles array values (multiple assignments per slot). */
 export function getOccupiedHours(plan) {
   const occupied = new Set();
   if (!plan || typeof plan !== 'object') return occupied;
@@ -89,12 +91,16 @@ export function getOccupiedHours(plan) {
     if (key === 'anytime') continue;
     const startMins = slotKeyToMinutesSinceMidnight(key);
     if (startMins == null) continue;
-    const durationMinutes = getDurationMinutesFromPlanAssignment(value);
-    const endMins = startMins + durationMinutes;
-    const startHour = Math.floor(startMins / 60);
-    const endHour = Math.floor((endMins - 1) / 60);
-    for (let h = startHour; h <= endHour; h++) {
-      if (h >= 0 && h <= 23) occupied.add(h);
+    const list = Array.isArray(value) ? value : [value];
+    for (const assignment of list) {
+      if (assignment == null) continue;
+      const durationMinutes = getDurationMinutesFromPlanAssignment(assignment);
+      const endMins = startMins + durationMinutes;
+      const startHour = Math.floor(startMins / 60);
+      const endHour = Math.floor((endMins - 1) / 60);
+      for (let h = startHour; h <= endHour; h++) {
+        if (h >= 0 && h <= 23) occupied.add(h);
+      }
     }
   }
   return occupied;
@@ -162,4 +168,66 @@ export function findNextAvailableStart(plan, fromSlot, durationMinutes, endHour 
     if (!result.conflict) return key;
   }
   return null;
+}
+
+/** Calendar event to minutes-since-midnight blocks for a given date. Events with start/end (Date or ISO). */
+function getCalendarBlocksForDate(dateStr, calendarEvents) {
+  if (!dateStr || !Array.isArray(calendarEvents)) return [];
+  const blocks = [];
+  for (const e of calendarEvents) {
+    const start = e.start ? (e.start instanceof Date ? e.start : new Date(e.start)) : null;
+    const end = e.end ? (e.end instanceof Date ? e.end : new Date(e.end)) : null;
+    if (!start || !end || Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) continue;
+    const eventStartDate = localISODate(start);
+    const eventEndDate = localISODate(end);
+    if (dateStr < eventStartDate || dateStr > eventEndDate) continue;
+    let startMins = 0;
+    let endMins = 24 * 60;
+    if (eventStartDate === dateStr) startMins = start.getHours() * 60 + start.getMinutes();
+    if (eventEndDate === dateStr) endMins = end.getHours() * 60 + end.getMinutes();
+    if (startMins >= endMins) continue;
+    blocks.push({
+      startMins,
+      endMins,
+      title: e.title ?? e.summary ?? 'Calendar event',
+    });
+  }
+  return blocks;
+}
+
+/** Build a plan-like object that includes calendar blocks as occupied slots for conflict checking. */
+function mergeCalendarBlocksIntoPlan(plan, calendarBlocks) {
+  const merged = { ...(plan && typeof plan === 'object' ? plan : {}) };
+  for (const b of calendarBlocks) {
+    const key = minutesToCanonicalSlotKey(b.startMins);
+    if (!key) continue;
+    const duration = Math.max(1, b.endMins - b.startMins);
+    const existing = merged[key];
+    const blockAssignment = { duration, title: b.title, type: 'event' };
+    if (existing !== undefined) {
+      merged[key] = Array.isArray(existing) ? [...existing, blockAssignment] : [existing, blockAssignment];
+    } else {
+      merged[key] = blockAssignment;
+    }
+  }
+  return merged;
+}
+
+/**
+ * Check placement conflict including calendar events for that day. Use when scheduling into a date with Google/Outlook/ICS events.
+ * calendarEvents: array of { start, end, title? } (ISO or Date) for the week; we filter to dateStr.
+ */
+export function checkPlacementConflictWithCalendar(plan, calendarEvents, dateStr, startSlot, durationMinutes) {
+  const blocks = getCalendarBlocksForDate(dateStr, calendarEvents ?? []);
+  const merged = mergeCalendarBlocksIntoPlan(plan, blocks);
+  return checkPlacementConflict(merged, startSlot, durationMinutes);
+}
+
+/**
+ * Find next available start on a day considering plan and calendar events. Returns canonical "HH:MM" or null.
+ */
+export function findNextAvailableStartWithCalendar(plan, calendarEvents, dateStr, fromSlot, durationMinutes, endHour = 23) {
+  const blocks = getCalendarBlocksForDate(dateStr, calendarEvents ?? []);
+  const merged = mergeCalendarBlocksIntoPlan(plan, blocks);
+  return findNextAvailableStart(merged, fromSlot, durationMinutes, endHour);
 }

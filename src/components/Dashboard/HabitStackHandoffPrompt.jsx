@@ -27,10 +27,10 @@ export default function HabitStackHandoffPrompt({
       >
         <div className="px-4 py-4 rounded-xl border border-moss-200 bg-white shadow-xl">
           <h3 id="habit-stack-handoff-title" className="font-serif text-stone-900 text-lg mb-1">
-            Great job finishing {routineName || 'that'}! 🔗
+            Linked task
           </h3>
           <p id="habit-stack-handoff-desc" className="font-sans text-sm text-stone-600 mb-4">
-            Your Habit Stack says it&apos;s time for <strong className="text-stone-800">{linkedTaskTitle ?? 'your linked task'}</strong>. Start a 5-minute timer now?
+            <strong className="text-stone-800">{linkedTaskTitle ?? 'Your linked task'}</strong>. Start 5 min now?
           </p>
           <div className="flex gap-2 justify-end">
             <button

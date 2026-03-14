@@ -10,13 +10,13 @@ import {
   getAssignmentsForSlot,
 } from '../services/planAssignmentUtils';
 
-/** Monday–Sunday date strings (YYYY-MM-DD) for the current week. */
-function getWeekDates() {
-  const today = new Date();
-  const day = today.getDay();
+/** Monday–Sunday date strings (YYYY-MM-DD) for the week. If weekStartDate omitted, uses current week. */
+function getWeekDates(weekStartDate = null) {
+  const ref = weekStartDate ? (weekStartDate instanceof Date ? weekStartDate : new Date(weekStartDate + 'T12:00:00')) : new Date();
+  const day = ref.getDay();
   const diff = day === 0 ? -6 : 1 - day;
-  const monday = new Date(today);
-  monday.setDate(today.getDate() + diff);
+  const monday = new Date(ref);
+  monday.setDate(ref.getDate() + diff);
   return Array.from({ length: 7 }, (_, i) => {
     const d = new Date(monday);
     d.setDate(monday.getDate() + i);
@@ -84,3 +84,34 @@ export function getPlannedHoursByScope(weekAssignments, goals, scope = 'week') {
 
   return { totalMinutes, byGoal };
 }
+
+/**
+ * Planned minutes per day for the given date strings. For capacity UI (planned vs available per day).
+ * @param {Object} weekAssignments
+ * @param {Array} goals
+ * @param {string[]|null} dateStrings - If provided, use these dates; otherwise use current week (Mon–Sun).
+ * @returns {{ [dateStr]: number }}
+ */
+export function getPlannedMinutesByDay(weekAssignments, goals, dateStrings = null) {
+  const dates = Array.isArray(dateStrings) && dateStrings.length > 0 ? dateStrings : getWeekDates();
+  const out = {};
+  const safeGoals = Array.isArray(goals) ? goals : [];
+  for (const dateStr of dates) {
+    const dayPlan = weekAssignments?.[dateStr];
+    if (!dayPlan || typeof dayPlan !== 'object') {
+      out[dateStr] = 0;
+      continue;
+    }
+    let total = 0;
+    for (const hourKey of Object.keys(dayPlan)) {
+      const assignments = getAssignmentsForSlot(dayPlan, hourKey);
+      for (const a of assignments) {
+        const minutes = getDurationMinutesFromAssignment(a, safeGoals, 15);
+        total += minutes;
+      }
+    }
+    out[dateStr] = total;
+  }
+  return out;
+}
+

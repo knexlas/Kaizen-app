@@ -111,12 +111,11 @@ export default function WeeklyMap({ weeklyPlan, selectedDate, onSelectDate, week
             }}
             aria-label="Auto-plan week: distribute tasks across upcoming days"
           >
-            <span aria-hidden>{autoPlanWeekLoading ? '…' : '✨'}</span>
-            <span>{autoPlanWeekLoading ? 'Planning…' : 'Auto-Plan Week'}</span>
+            <span>{autoPlanWeekLoading ? 'Planning…' : 'Distribute across week'}</span>
           </button>
         </div>
       )}
-      <h2 className="font-serif text-stone-800 text-lg mb-6">Weekly Terrain</h2>
+      <h2 className="font-serif text-stone-800 text-lg mb-6">This week</h2>
       <div className="grid grid-cols-7 gap-2 md:gap-4 overflow-hidden min-w-0">
         {dayData.map((day) => {
           const WeatherIcon =

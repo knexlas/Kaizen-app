@@ -89,7 +89,7 @@ export default function PlanMonthPanel({
     <motion.div className="space-y-6 px-1" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, ease: 'easeOut' }}>
       {isGeneratingMonthPlan ? (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="rounded-xl border border-stone-200 dark:border-stone-600 bg-white dark:bg-slate-800/80 p-4">
-          <p className="font-sans text-sm font-medium text-stone-700 dark:text-stone-300 mb-2">Shaping your month...</p>
+          <p className="font-sans text-sm font-medium text-stone-700 dark:text-stone-300 mb-2">Generating month plan…</p>
           <PlannerSkeleton lines={4} />
         </motion.div>
       ) : null}
@@ -102,7 +102,7 @@ export default function PlanMonthPanel({
         </div>
         <div className="p-3 min-h-[60px]">
           {unscheduledMonthTasks.length === 0 ? (
-            <PremiumEmptyState className="py-2" message="Nothing here yet. Promote from Vault or add goals." />
+            <PremiumEmptyState className="py-2" message="Nothing here yet. Move items from Someday or add goals." />
           ) : (
             <ul className="space-y-2">
               {unscheduledMonthTasks.map((task) => (
@@ -113,7 +113,7 @@ export default function PlanMonthPanel({
                       onClick={() => setStagingTaskStatus((prev) => ({ ...prev, [task.id]: 'someday' }))}
                       className="px-2 py-1 text-xs"
                     >
-                      Back to Vault
+                      Back to Someday
                     </SecondaryPlannerAction>
                     <PrimaryPlannerAction onClick={() => setPlannerViewMode('week')} className="px-3 py-1.5 text-xs">
                       Open Week Planner
@@ -126,13 +126,13 @@ export default function PlanMonthPanel({
         </div>
       </motion.section>
 
-      <motion.section className="rounded-xl border border-stone-200 dark:border-stone-600 bg-stone-50/50 dark:bg-stone-800/50 overflow-hidden" aria-label="Someday vault" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2, delay: 0.06 }}>
+      <motion.section className="rounded-xl border border-stone-200 dark:border-stone-600 bg-stone-50/50 dark:bg-stone-800/50 overflow-hidden" aria-label="Someday" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2, delay: 0.06 }}>
         <div className="px-4 py-3 border-b border-stone-200 dark:border-stone-600">
-          <PremiumSectionHeader title="Someday / Vault" description="Ideas and tasks not yet committed to this month." />
+          <PremiumSectionHeader title="Someday" description="Ideas and tasks not yet committed to this month." />
         </div>
         <div className="p-3 min-h-[60px]">
           {vaultTasks.length === 0 ? (
-            <PremiumEmptyState className="py-2" message="Vault is empty. New subtasks and narrative tasks land here by default." />
+            <PremiumEmptyState className="py-2" message="Nothing scheduled for later yet. New subtasks and ideas land here by default." />
           ) : (
             <ul className="space-y-2">
               {vaultTasks.map((task) => (
@@ -202,11 +202,9 @@ export default function PlanMonthPanel({
           goals={goals ?? []}
           onDayClick={setPlannerPlanDayDateStr}
           monthlyRoadmap={monthlyRoadmap}
-          onPlanMonth={handlePlanMonth}
+          onPlanMonth={undefined}
           planningMonth={isGeneratingMonthPlan}
           calendarEvents={weeklyEvents ?? []}
-          planMonthLabel="Shape with Mochi"
-          planMonthBusyLabel="... Shaping month"
         />
       </motion.section>
     </motion.div>

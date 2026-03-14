@@ -1,6 +1,7 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { useGarden } from '../../context/GardenContext';
 import { localISODate } from '../../services/dateUtils';
+import { getBestNextStepForGoal } from '../../services/nextStepService';
 import { getAssignmentsForHour } from './TimeSlicer';
 
 const SNOOZE_MS = 30 * 60 * 1000;
@@ -72,41 +73,25 @@ export function useTinyStepSuggestions({
     const used = new Set();
     const planItems = lowEnergy ? todayPlanItems.filter((item) => isLowActivationGoal(item.goal)) : todayPlanItems;
 
-    // 0) Active project: first uncompleted subtask from the current phase (or first uncompleted phase)
+    // 0) Active project: best next step (action-phrased, 5–20 min) per unified next-step rules
     const projectGoals = (goals || []).filter((g) => g._projectGoal === true);
     for (const goal of projectGoals) {
       if (lowEnergy && !isLowActivationGoal(goal)) continue;
-      const phases = goal.milestones || [];
-      const totalWeeks = Math.max(1, Number(goal._projectTotalWeeks) || 14);
-      const currentWeek = getCurrentWeekIndex(goal._projectDeadline, totalWeeks);
+      const best = getBestNextStepForGoal(goal);
+      if (!best || best.blocked) continue;
 
-      let activePhase = null;
-      const phaseInRange = phases.find((p) => {
-        const { start, end } = parseWeekRange(p.weekRange, totalWeeks);
-        return currentWeek >= start && currentWeek <= end;
-      });
-      if (phaseInRange) {
-        activePhase = phaseInRange;
-      } else {
-        activePhase = phases.find((p) => !p.completed) || phases[0] || null;
-      }
-      if (!activePhase) continue;
-
-      const subtasks = (goal.subtasks || []).filter((st) => st.phaseId === activePhase.id);
-      const firstIncomplete = subtasks.find((st) => (st.completedHours ?? 0) < (st.estimatedHours || 1));
-      if (!firstIncomplete) continue;
-
-      const id = `project-${goal.id}-${firstIncomplete.id}`;
+      const id = `project-${goal.id}-${best.subtaskId ?? 'starter'}`;
       if (used.has(goal.id) || used.has(id)) continue;
       used.add(goal.id);
       used.add(id);
       out.unshift({
         id,
         source: 'project',
-        title: firstIncomplete.title || 'Project task',
+        title: best.title,
         goalId: goal.id,
         goal,
-        subtaskId: firstIncomplete.id,
+        subtaskId: best.subtaskId,
+        suggestedMinutes: best.suggestedMinutes,
       });
       break; // one high-priority project suggestion at the top
     }
@@ -141,7 +126,7 @@ export function useTinyStepSuggestions({
       });
     }
 
-    // 3) Recent activity: last logged goal not already in plan (up to 1)
+    // 3) Recent activity: last logged goal not already in plan (up to 1); use best next step if available
     const recentGoalIds = [...(logs || [])]
       .reverse()
       .map((l) => l.goalId)
@@ -154,12 +139,16 @@ export function useTinyStepSuggestions({
       const id = `recent-${goalId}`;
       if (isSnoozed(id)) continue;
       used.add(goalId);
+      const best = getBestNextStepForGoal(goal);
+      const title = best && !best.blocked ? best.title : (goal.title || 'Task');
       out.push({
         id,
         source: 'recent',
-        title: goal.title || 'Task',
+        title,
         goalId: goal.id,
         goal,
+        subtaskId: best?.subtaskId ?? null,
+        suggestedMinutes: best?.suggestedMinutes ?? null,
       });
     }
 

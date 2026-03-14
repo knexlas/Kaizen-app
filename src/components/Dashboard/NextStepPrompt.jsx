@@ -21,10 +21,11 @@ export default function NextStepPrompt({ open, completedTitle, nextStep, onAddTo
       >
         <div className="px-4 py-4 rounded-xl border border-moss-200 bg-white shadow-xl">
           <h3 id="next-step-title" className="font-serif text-stone-900 text-lg mb-1">
-            Great work on {completedTitle || 'that'}! 🌟
+            Next step
           </h3>
           <p id="next-step-desc" className="font-sans text-sm text-stone-600 mb-4">
-            The next step for this milestone is <strong className="text-stone-800">{nextStep?.title ?? '—'}</strong>.
+            <strong className="text-stone-800">{nextStep?.title ?? '—'}</strong>
+            {nextStep?.suggestedMinutes ? ` (~${nextStep.suggestedMinutes} min)` : ''}. Add to this week?
           </p>
           <div className="flex gap-2 justify-end">
             <button
