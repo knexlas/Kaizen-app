@@ -3,8 +3,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useGarden } from '../../context/GardenContext';
 import { getSettings } from '../../services/userSettings';
 import { shouldReduceMotion } from '../../services/motion';
+import { getGamificationConfig } from '../../constants/gamificationIntensity';
 
-// --- Japanese tea cup SVG ---
 function TeaCup() {
   return (
     <svg width="100" height="88" viewBox="0 0 100 88" fill="none" className="overflow-visible">
@@ -19,30 +19,6 @@ function TeaCup() {
   );
 }
 
-// --- 3 steam lines: rise and fade (y: -20, opacity: 0); optional reduced motion ---
-function Steam({ reduceMotion = false }) {
-  const line = (d, delay = 0) => (
-    <motion.path
-      key={d}
-      d={d}
-      stroke="#C4B8A8"
-      strokeWidth="1.5"
-      fill="none"
-      strokeLinecap="round"
-      initial={{ opacity: reduceMotion ? 0.3 : 0.5, y: 0 }}
-      animate={{ opacity: 0, y: reduceMotion ? -8 : -20 }}
-      transition={reduceMotion ? { duration: 1.5, repeat: Infinity, ease: 'easeOut', delay } : { duration: 2.5, repeat: Infinity, ease: 'easeOut', delay }}
-    />
-  );
-  return (
-    <g className="absolute" style={{ top: 0, left: '50%', transform: 'translateX(-50%)' }}>
-      {line('M48 16 Q50 8 52 16', 0)}
-      {line('M50 14 Q52 4 54 14', 0.4)}
-      {line('M46 18 Q48 10 50 18', 0.8)}
-    </g>
-  );
-}
-
 const RATING_OPTIONS = [
   { id: 'withered', label: 'Drained', emoji: '🥀', border: 'border-slate-200', hover: 'hover:bg-slate-50' },
   { id: 'sustained', label: 'Neutral', emoji: '🍃', border: 'border-moss-200', hover: 'hover:bg-moss-50' },
@@ -50,24 +26,25 @@ const RATING_OPTIONS = [
 ];
 
 const EMBER_PARTICLE_COUNT = 8;
-
 const reducedTransition = { duration: 0.15 };
 const noTransition = { duration: 0 };
 
 export default function TeaCeremony({ task, completedTask, subtasks = [], onComplete }) {
   const resolvedTask = task ?? completedTask;
-  const { earnEmbers } = useGarden();
+  const { earnEmbers, userSettings } = useGarden();
   const [rating, setRating] = useState(null);
   const [note, setNote] = useState('');
   const [subtaskId, setSubtaskId] = useState('');
-  const [phase, setPhase] = useState('reflection'); // 'reflection' | 'success'
+  const [phase, setPhase] = useState('reflection');
   const [embersEarned, setEmbersEarned] = useState(0);
   const reduceMotion = useMemo(() => shouldReduceMotion(getSettings()), []);
+  const gamificationConfig = useMemo(() => getGamificationConfig(userSettings ?? {}), [userSettings]);
 
   const durationMinutes = resolvedTask?.timeSpentMinutes ?? 25;
+  const showFocusCurrency = gamificationConfig.showFocusSuccessCurrency;
 
   const handleFinish = () => {
-    const embers = Math.max(1, Math.floor(durationMinutes)); // 1 Ember per minute
+    const embers = Math.max(1, Math.floor(durationMinutes));
     earnEmbers(embers);
     setEmbersEarned(embers);
     setPhase('success');
@@ -81,17 +58,16 @@ export default function TeaCeremony({ task, completedTask, subtasks = [], onComp
       minutes: durationMinutes,
     };
 
-    // Close and notify parent after success animation
     setTimeout(() => onComplete?.(log), 2800);
   };
 
-  // Success screen: "You gathered [X] Embers 🔥" + embers flying into counter (or minimal when reduce motion)
   if (phase === 'success') {
     const successTransition = reduceMotion ? reducedTransition : { duration: 0.3 };
     const counterTransition = reduceMotion ? noTransition : { delay: 0.2, type: 'spring', stiffness: 200 };
     const counterInitial = reduceMotion ? { scale: 1, opacity: 1 } : { scale: 0.8, opacity: 0 };
     const numberTransition = reduceMotion ? noTransition : { delay: 0.1 };
     const numberInitial = reduceMotion ? { opacity: 1, y: 0 } : { opacity: 0, y: -10 };
+
     return (
       <motion.div
         key="tea-success"
@@ -103,70 +79,77 @@ export default function TeaCeremony({ task, completedTask, subtasks = [], onComp
         aria-modal="true"
         aria-label="Session complete"
       >
-        <p className="font-serif text-xl md:text-2xl text-stone-800 text-center mb-2">
-          You gathered <span className="font-semibold text-amber-700">{embersEarned}</span> Embers 🔥
+        <p className="font-serif text-2xl md:text-3xl text-stone-800 text-center mb-2">
+          Session complete
         </p>
-        <div className="relative flex items-center justify-center mt-4">
-          <motion.div
-            className="flex items-center gap-1.5 rounded-full bg-amber-50 border-2 border-amber-200 px-6 py-3"
-            initial={counterInitial}
-            animate={{ scale: 1, opacity: 1 }}
-            transition={counterTransition}
-          >
-            <motion.span
-              className="text-2xl"
-              key={embersEarned}
-              initial={reduceMotion ? {} : { scale: 1.5 }}
-              animate={{ scale: 1 }}
-              transition={reduceMotion ? noTransition : { duration: 0.3 }}
+        <p className="font-sans text-sm text-stone-600 text-center mb-6">
+          {durationMinutes} min logged.
+        </p>
+
+        {showFocusCurrency && (
+          <div className="relative flex items-center justify-center mt-2">
+            <motion.div
+              className="flex items-center gap-1.5 rounded-full bg-amber-50 border border-amber-200 px-5 py-2.5"
+              initial={counterInitial}
+              animate={{ scale: 1, opacity: 1 }}
+              transition={counterTransition}
             >
-              🔥
-            </motion.span>
-            <motion.span
-              className="font-sans text-xl font-semibold text-amber-800 tabular-nums"
-              key={embersEarned}
-              initial={numberInitial}
-              animate={{ opacity: 1, y: 0 }}
-              transition={numberTransition}
-            >
-              +{embersEarned}
-            </motion.span>
-          </motion.div>
-          {!reduceMotion && (
-            <div className="absolute inset-0 pointer-events-none flex items-center justify-center" aria-hidden>
-              {Array.from({ length: EMBER_PARTICLE_COUNT }).map((_, i) => (
-                <motion.span
-                  key={i}
-                  className="absolute text-xl"
-                  initial={{
-                    x: (i - EMBER_PARTICLE_COUNT / 2) * 24,
-                    y: 20 + (i % 3) * 16,
-                    opacity: 1,
-                    scale: 1,
-                  }}
-                  animate={{
-                    x: 0,
-                    y: 0,
-                    opacity: 0,
-                    scale: 0.4,
-                  }}
-                  transition={{
-                    duration: 1,
-                    delay: 0.3 + i * 0.06,
-                    ease: 'easeIn',
-                  }}
-                >
-                  🔥
-                </motion.span>
-              ))}
-            </div>
-          )}
-        </div>
+              <motion.span
+                className="text-lg"
+                key={embersEarned}
+                initial={reduceMotion ? {} : { scale: 1.3 }}
+                animate={{ scale: 1 }}
+                transition={reduceMotion ? noTransition : { duration: 0.3 }}
+              >
+                🔥
+              </motion.span>
+              <motion.span
+                className="font-sans text-base font-semibold text-amber-800 tabular-nums"
+                key={`embers-${embersEarned}`}
+                initial={numberInitial}
+                animate={{ opacity: 1, y: 0 }}
+                transition={numberTransition}
+              >
+                +{embersEarned} embers
+              </motion.span>
+            </motion.div>
+            {!reduceMotion && (
+              <div className="absolute inset-0 pointer-events-none flex items-center justify-center" aria-hidden>
+                {Array.from({ length: EMBER_PARTICLE_COUNT }).map((_, i) => (
+                  <motion.span
+                    key={i}
+                    className="absolute text-xl"
+                    initial={{
+                      x: (i - EMBER_PARTICLE_COUNT / 2) * 24,
+                      y: 20 + (i % 3) * 16,
+                      opacity: 1,
+                      scale: 1,
+                    }}
+                    animate={{
+                      x: 0,
+                      y: 0,
+                      opacity: 0,
+                      scale: 0.4,
+                    }}
+                    transition={{
+                      duration: 1,
+                      delay: 0.3 + i * 0.06,
+                      ease: 'easeIn',
+                    }}
+                  >
+                    🔥
+                  </motion.span>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </motion.div>
     );
   }
 
   const openTransition = reduceMotion ? reducedTransition : { duration: 0.3 };
+
   return (
     <AnimatePresence mode="wait">
       <motion.div
@@ -180,7 +163,6 @@ export default function TeaCeremony({ task, completedTask, subtasks = [], onComp
         aria-modal="true"
         aria-label="Post-session reflection"
       >
-        {/* Center: Cup + Steam */}
         <motion.div
           className="relative flex justify-center mb-8"
           initial={reduceMotion ? {} : { opacity: 0, y: 12 }}
@@ -226,7 +208,6 @@ export default function TeaCeremony({ task, completedTask, subtasks = [], onComp
           </div>
         </motion.div>
 
-        {/* Text */}
         <motion.h2
           className="font-serif text-2xl md:text-3xl text-stone-800 text-center mb-2"
           initial={{ opacity: 0 }}
@@ -242,7 +223,7 @@ export default function TeaCeremony({ task, completedTask, subtasks = [], onComp
           transition={{ delay: 0.2, duration: 0.4 }}
         >
           {durationMinutes} min logged
-          {subtasks?.length > 0 && subtaskId ? ` to ${subtasks.find((s) => s.id === subtaskId)?.title ?? 'task'}` : ''}.
+          {subtasks?.length > 0 && subtaskId ? ` for ${subtasks.find((s) => s.id === subtaskId)?.title ?? 'this task'}` : ''}.
         </motion.p>
         <motion.p
           className="font-serif text-lg text-stone-800/80 text-center mb-10"
@@ -253,7 +234,6 @@ export default function TeaCeremony({ task, completedTask, subtasks = [], onComp
           How did it feel?
         </motion.p>
 
-        {/* Rating cards (horizontal) */}
         <motion.div
           className="grid grid-cols-3 gap-4 w-full max-w-xl mb-8"
           initial={{ opacity: 0, y: 10 }}
@@ -277,7 +257,6 @@ export default function TeaCeremony({ task, completedTask, subtasks = [], onComp
           ))}
         </motion.div>
 
-        {/* Apply to vine? (when goal has subtasks) */}
         {subtasks?.length > 0 && (
           <motion.div
             className="w-full max-w-md mb-4"
@@ -285,16 +264,16 @@ export default function TeaCeremony({ task, completedTask, subtasks = [], onComp
             animate={{ opacity: 1 }}
             transition={{ delay: 0.45, duration: 0.4 }}
           >
-            <label htmlFor="tea-vine" className="block font-serif text-stone-800 text-sm mb-2">
-              Apply this time to a vine?
+            <label htmlFor="tea-subtask" className="block font-serif text-stone-800 text-sm mb-2">
+              Apply this time to a subtask?
             </label>
             <select
-              id="tea-vine"
+              id="tea-subtask"
               value={subtaskId}
               onChange={(e) => setSubtaskId(e.target.value)}
               className="w-full px-4 py-3 rounded-lg border border-stone-200 bg-white font-sans text-stone-800 focus:outline-none focus:ring-2 focus:ring-moss-500/40 focus:border-moss-500 transition-colors"
             >
-              <option value="">No vine</option>
+              <option value="">No subtask</option>
               {subtasks.map((st) => (
                 <option key={st.id} value={st.id}>
                   {st.title}
@@ -304,7 +283,6 @@ export default function TeaCeremony({ task, completedTask, subtasks = [], onComp
           </motion.div>
         )}
 
-        {/* Optional insight */}
         <motion.div
           className="w-full max-w-md mb-6"
           initial={{ opacity: 0 }}
@@ -312,7 +290,7 @@ export default function TeaCeremony({ task, completedTask, subtasks = [], onComp
           transition={{ delay: 0.5, duration: 0.4 }}
         >
           <label htmlFor="tea-lesson" className="block font-serif text-stone-800 text-sm mb-2">
-            One lesson for next time…
+            One note for next time
           </label>
           <input
             id="tea-lesson"
@@ -324,7 +302,6 @@ export default function TeaCeremony({ task, completedTask, subtasks = [], onComp
           />
         </motion.div>
 
-        {/* Sip & Finish */}
         <motion.button
           type="button"
           onClick={handleFinish}
@@ -333,7 +310,7 @@ export default function TeaCeremony({ task, completedTask, subtasks = [], onComp
           transition={{ delay: 0.6, duration: 0.4 }}
           className="px-6 py-3 font-serif text-stone-800 bg-stone-200/80 border border-stone-300 rounded-full hover:bg-stone-300/80 focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors"
         >
-          Sip &amp; Finish
+          Finish session
         </motion.button>
       </motion.div>
     </AnimatePresence>

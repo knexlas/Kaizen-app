@@ -153,6 +153,8 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
     setIsArchitectMode(false);
   }, [viewMode, setActiveTool, setIsArchitectMode]);
 
+  const [fertilizeMode, setFertilizeMode] = useState(false);
+
   useEffect(() => {
     if (gardenMode === 'manage') return;
     setActiveTool(null);
@@ -171,8 +173,6 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
     }
     setViewingGoal(null);
   }, []);
-
-  const [fertilizeMode, setFertilizeMode] = useState(false);
 
   const goals = useMemo(() => {
     if (viewMode === 'garden') {

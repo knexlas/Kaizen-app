@@ -1,91 +1,23 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
-const HOURS = Array.from(
-  { length: 23 - 6 + 1 },
-  (_, i) => `${String(6 + i).padStart(2, '0')}:00`
-);
-
-/** Parse time string like "9am", "2pm", "09:00", "14:00" into HH:00 in range 06:00–23:00. */
-function parseTimeString(str) {
-  if (!str || typeof str !== 'string') return null;
-  const trimmed = str.trim().toLowerCase();
-  const amPm = trimmed.match(/^(\d{1,2})\s*(am|pm)?$/);
-  if (amPm) {
-    let hour = parseInt(amPm[1], 10);
-    const period = amPm[2];
-    if (period === 'pm') hour = hour === 12 ? 12 : hour + 12;
-    else if (period === 'am') hour = hour === 12 ? 0 : hour;
-    const h = Math.max(6, Math.min(23, hour));
-    return `${String(h).padStart(2, '0')}:00`;
-  }
-  const colon = trimmed.match(/^(\d{1,2}):(\d{2})$/);
-  if (colon) {
-    const hour = parseInt(colon[1], 10);
-    if (hour >= 6 && hour <= 23) return `${String(hour).padStart(2, '0')}:00`;
-  }
-  return null;
-}
-
-/** Find best-matching goal by title (case-insensitive includes). */
-function findGoalByTitle(goals, query) {
-  if (!goals?.length || !query?.trim()) return null;
-  const q = query.trim().toLowerCase();
-  const exact = goals.find((g) => g.title?.toLowerCase() === q);
-  if (exact) return exact;
-  const starts = goals.find((g) => g.title?.toLowerCase().startsWith(q));
-  if (starts) return starts;
-  return goals.find((g) => g.title?.toLowerCase().includes(q)) ?? null;
-}
-
-/**
- * Simple natural-language parser:
- * - "spirit" / "mirror" → { type: 'spirit' }
- * - "Goal Gym" / "goal Gym" → { type: 'goal', title: 'Gym' }
- * - "Trade 9am" / "Trade 09:00" → { type: 'plant', goalQuery: 'Trade', timeStr: '9am' }
- */
-function parseCommand(input) {
-  const raw = (input || '').trim();
-  if (!raw) return null;
-
-  const spiritMatch = /^(spirit|mirror)$/i.test(raw);
-  if (spiritMatch) return { type: 'spirit' };
-
-  const goalMatch = raw.match(/^goal\s+(.+)$/i);
-  if (goalMatch) {
-    return { type: 'goal', title: goalMatch[1].trim() };
-  }
-
-  const parts = raw.split(/\s+/);
-  if (parts.length >= 2) {
-    const last = parts[parts.length - 1];
-    const time = parseTimeString(last);
-    if (time) {
-      const goalQuery = parts.slice(0, -1).join(' ');
-      return { type: 'plant', goalQuery, time };
-    }
-  }
-
-  return null;
-}
-
-const CHEAT_SHEET = [
-  { example: 'Trade 9am', hint: '[Task] [Time]' },
-  { example: 'Goal Gym', hint: 'Goal [Name]' },
-  { example: 'Spirit', hint: 'Customize companion' },
+const EXAMPLES = [
+  'email Lisa tomorrow',
+  'idea for D&D map',
+  'gym 3x this week',
+  'book dentist',
+  'plan launch project for leave app',
 ];
 
 export default function CommandPalette({
   open,
   onClose,
   onOpen,
-  goals = [],
-  assignments = {},
-  onAssignmentsChange,
-  onOpenGoalCreator,
   onOpenSpiritBuilder,
+  onCapture,
 }) {
   const [query, setQuery] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const inputRef = useRef(null);
 
   useEffect(() => {
@@ -104,35 +36,27 @@ export default function CommandPalette({
     return () => document.removeEventListener('keydown', handleGlobalKey);
   }, [open, onOpen]);
 
-  const handleSubmit = useCallback(() => {
-    const cmd = parseCommand(query);
-    if (!cmd) {
-      setQuery('');
+  const handleSubmit = useCallback(async () => {
+    const raw = query.trim();
+    if (!raw) {
       onClose?.();
       return;
     }
-    if (cmd.type === 'spirit') {
+    if (/^(spirit|mirror)$/i.test(raw)) {
       onOpenSpiritBuilder?.();
       setQuery('');
       onClose?.();
       return;
     }
-    if (cmd.type === 'goal') {
-      onOpenGoalCreator?.(cmd.title);
+    setIsSubmitting(true);
+    try {
+      await onCapture?.(raw);
       setQuery('');
       onClose?.();
-      return;
+    } finally {
+      setIsSubmitting(false);
     }
-    if (cmd.type === 'plant') {
-      const goal = findGoalByTitle(goals, cmd.goalQuery);
-      if (goal && cmd.time) {
-        const next = { ...assignments, [cmd.time]: goal.id };
-        onAssignmentsChange?.(next);
-        setQuery('');
-        onClose?.();
-      }
-    }
-  }, [query, goals, assignments, onAssignmentsChange, onOpenGoalCreator, onClose]);
+  }, [query, onCapture, onClose, onOpenSpiritBuilder]);
 
   const handleKeyDown = useCallback(
     (e) => {
@@ -152,18 +76,10 @@ export default function CommandPalette({
   useEffect(() => {
     if (open) {
       setQuery('');
+      setIsSubmitting(false);
       requestAnimationFrame(() => inputRef.current?.focus());
     }
   }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    const down = (e) => {
-      if (e.key === 'Escape') onClose?.();
-    };
-    document.addEventListener('keydown', down);
-    return () => document.removeEventListener('keydown', down);
-  }, [open, onClose]);
 
   return (
     <AnimatePresence>
@@ -177,7 +93,7 @@ export default function CommandPalette({
           onClick={onClose}
           role="dialog"
           aria-modal="true"
-          aria-label="Command palette"
+          aria-label="Universal capture"
         >
           <motion.div
             initial={{ opacity: 0, scale: 0.98, y: -8 }}
@@ -185,7 +101,7 @@ export default function CommandPalette({
             exit={{ opacity: 0, scale: 0.98, y: -8 }}
             transition={{ duration: 0.2, ease: 'easeOut' }}
             onClick={(e) => e.stopPropagation()}
-            className="relative w-full max-w-md rounded-2xl border border-stone-200 bg-stone-50/95 shadow-2xl overflow-hidden"
+            className="relative w-full max-w-xl rounded-2xl border border-stone-200 bg-stone-50/95 shadow-2xl overflow-hidden"
           >
             <button
               type="button"
@@ -193,32 +109,53 @@ export default function CommandPalette({
               aria-label="Close"
               className="absolute top-3 right-3 z-10 w-8 h-8 flex items-center justify-center rounded-lg text-stone-400 hover:text-stone-600 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
             >
-              ×
+              x
             </button>
-            <div className="p-4">
+            <div className="p-5 space-y-4">
+              <div className="space-y-1">
+                <h2 className="font-serif text-2xl text-stone-800">Capture anything</h2>
+                <p className="font-sans text-sm text-stone-500">
+                  Tasks, ideas, habits, projects, and scheduled items all start here.
+                </p>
+              </div>
               <input
                 ref={inputRef}
                 type="text"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Type a command…"
-                className="w-full py-3 px-4 rounded-xl bg-white border-2 border-stone-200 text-stone-900 font-sans text-base placeholder-stone-400 focus:outline-none focus:border-moss-500 focus:ring-2 focus:ring-moss-500/20 transition-colors"
-                aria-label="Command input"
+                placeholder="Dump it here..."
+                className="w-full py-3.5 px-4 rounded-xl bg-white border-2 border-stone-200 text-stone-900 font-sans text-base placeholder-stone-400 focus:outline-none focus:border-moss-500 focus:ring-2 focus:ring-moss-500/20 transition-colors"
+                aria-label="Capture input"
               />
-            </div>
-            <div className="px-4 pb-4 pt-0">
-              <p className="font-sans text-xs text-stone-500 mb-2">Examples</p>
-              <div className="flex flex-wrap gap-3">
-                {CHEAT_SHEET.map(({ example, hint }) => (
-                  <span
+              <div className="flex flex-wrap gap-2">
+                {EXAMPLES.map((example) => (
+                  <button
                     key={example}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-stone-100 text-stone-600 font-sans text-xs"
+                    type="button"
+                    onClick={() => setQuery(example)}
+                    className="px-3 py-1.5 rounded-full border border-stone-200 bg-white font-sans text-xs text-stone-600 hover:border-stone-300 hover:bg-stone-100"
                   >
-                    <kbd className="font-mono text-stone-700">{example}</kbd>
-                    <span className="text-stone-400">{hint}</span>
-                  </span>
+                    {example}
+                  </button>
                 ))}
+              </div>
+              <div className="flex items-center justify-between gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={handleSubmit}
+                  disabled={isSubmitting || !query.trim()}
+                  className="px-4 py-2.5 rounded-xl font-sans text-sm font-semibold bg-moss-600 text-white hover:bg-moss-700 disabled:opacity-60"
+                >
+                  {isSubmitting ? 'Capturing...' : 'Capture'}
+                </button>
+                <button
+                  type="button"
+                  onClick={onOpenSpiritBuilder}
+                  className="font-sans text-sm text-stone-500 hover:text-stone-700"
+                >
+                  Open spirit builder
+                </button>
               </div>
             </div>
           </motion.div>

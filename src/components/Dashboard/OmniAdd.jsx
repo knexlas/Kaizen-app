@@ -3,11 +3,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { parseOmniAddInput } from '../../services/geminiService';
 import { getTaskDictionaryEntry } from '../../services/energyDictionaryService';
 import { useGarden } from '../../context/GardenContext';
-import { useReward } from '../../context/RewardContext';
-import { normalizeTaskCapture } from '../../services/taskCaptureService';
-import { toCanonicalSlotKey } from '../../services/schedulingConflictService';
+import { normalizeTaskCapture, overrideCaptureClassification } from '../../services/taskCaptureService';
 
-/** Recurrence options for Rhythms. Value stored in task.recurrence. */
 const RECURRENCE_OPTIONS = [
   { value: 'none', label: 'Does not repeat' },
   { value: 'daily', label: 'Daily' },
@@ -16,22 +13,52 @@ const RECURRENCE_OPTIONS = [
   { value: 'custom', label: 'Custom' },
 ];
 
-/** Energy cost for tasks: 0 = Zero-Spark, 1–3 = Light/Medium/Heavy. Stored on goal/task as energyCost. */
 const ENERGY_COST_OPTIONS = [
-  { value: 0, label: '0 ⚡ Freebie', title: 'Zero-Spark / Freebie' },
-  { value: 1, label: '1 Light', title: 'Light effort' },
-  { value: 2, label: '2 Medium', title: 'Medium effort' },
-  { value: 3, label: '3 Heavy', title: 'Heavy effort' },
+  { value: 0, label: '0' },
+  { value: 1, label: '1' },
+  { value: 2, label: '2' },
+  { value: 3, label: '3' },
 ];
 
-const CHIPS = [
-  { id: 'goal', label: 'New Goal', icon: '🎯' },
-  { id: 'schedule', label: 'Schedule Event', icon: '📅' },
-  { id: 'note', label: 'Brain Dump / Note', icon: '📝' },
+const CAPTURE_OPTIONS = [
+  { id: 'task', label: 'Task' },
+  { id: 'habit', label: 'Habit' },
+  { id: 'project', label: 'Project' },
+  { id: 'note', label: 'Note' },
+  { id: 'someday', label: 'Later' },
+  { id: 'calendar_event', label: 'Event' },
 ];
 
 const DEBOUNCE_MS = 400;
 const MIN_TITLE_LENGTH_FOR_LOOKUP = 2;
+
+function getCaptureSummary(capture) {
+  switch (capture?.captureKind) {
+    case 'project':
+      return 'This looks like a project and should go to Project Planner.';
+    case 'habit':
+      return 'This looks like a habit or recurring practice.';
+    case 'calendar_event':
+      return 'This looks like a scheduled event.';
+    case 'scheduled_item':
+      return 'This looks like a task with a time or date.';
+    case 'someday':
+      return 'This looks like something to keep for later.';
+    case 'note':
+      return 'This looks like a note or idea for the inbox.';
+    case 'task':
+    default:
+      return 'This looks like a task you can act on.';
+  }
+}
+
+function buildRecurrencePayload(recurrence) {
+  if (!recurrence || recurrence === 'none') return undefined;
+  if (recurrence === 'weekly') return { type: 'weekly', days: [] };
+  if (recurrence === 'monthly') return { type: 'monthly' };
+  if (recurrence === 'custom') return { type: 'custom' };
+  return { type: 'daily' };
+}
 
 export default function OmniAdd({
   onOpenGoalCreator,
@@ -39,42 +66,35 @@ export default function OmniAdd({
   onOpenBrainDump,
   onParsedRoute,
 }) {
-  const { googleUser, loadDayPlan, saveDayPlanForDate } = useGarden();
-  const { pushReward } = useReward();
+  const { googleUser } = useGarden();
   const uid = googleUser?.uid;
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState('');
   const [isParsing, setIsParsing] = useState(false);
-  /** True when energy slider was auto-set from Task Dictionary (show "Based on your history"). */
+  const [draftCapture, setDraftCapture] = useState(null);
+  const [showDetails, setShowDetails] = useState(false);
   const [learnedFromHistory, setLearnedFromHistory] = useState(false);
-  /** Fixed/Mandatory (lock) vs Flexible (wave). Work/synced events default to Fixed. */
   const [isFixed, setIsFixed] = useState(false);
-  /** Work vs Personal context tag. */
   const [context, setContext] = useState('personal');
-  /** Repeat / Rhythm: none | daily | weekly | monthly | custom. Shown in dropdown behind cycle icon. */
   const [recurrence, setRecurrence] = useState('none');
-  const [recurrenceDropdownOpen, setRecurrenceDropdownOpen] = useState(false);
-  /** Energy cost 0 (Freebie), 1 (Light), 2 (Medium), 3 (Heavy). Default 1. */
   const [energyCost, setEnergyCost] = useState(1);
   const inputRef = useRef(null);
-  const recurrenceRef = useRef(null);
 
   useEffect(() => {
-    if (open) {
-      setInput('');
-      setIsFixed(false);
-      setContext('personal');
-      setRecurrence('none');
-      setRecurrenceDropdownOpen(false);
-      setEnergyCost(1);
-      setLearnedFromHistory(false);
-      requestAnimationFrame(() => inputRef.current?.focus());
-    }
+    if (!open) return;
+    setInput('');
+    setDraftCapture(null);
+    setShowDetails(false);
+    setIsFixed(false);
+    setContext('personal');
+    setRecurrence('none');
+    setEnergyCost(1);
+    setLearnedFromHistory(false);
+    requestAnimationFrame(() => inputRef.current?.focus());
   }, [open]);
 
-  /** Debounced Task Dictionary lookup: when user types a task name, snap energy to learned cost if any. */
   useEffect(() => {
-    if (!uid || !open) return;
+    if (!open) return;
     const trimmed = input.trim();
     if (trimmed.length < MIN_TITLE_LENGTH_FOR_LOOKUP) {
       setLearnedFromHistory(false);
@@ -93,40 +113,18 @@ export default function OmniAdd({
         .catch(() => setLearnedFromHistory(false));
     }, DEBOUNCE_MS);
     return () => clearTimeout(t);
-  }, [uid, open, input]);
-
-  useEffect(() => {
-    function handleClickOutside(e) {
-      if (recurrenceRef.current && !recurrenceRef.current.contains(e.target)) setRecurrenceDropdownOpen(false);
-    }
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
+  }, [open, input, uid]);
 
   const close = () => setOpen(false);
 
-  const handleChipClick = (id) => {
-    close();
-    if (id === 'goal') onOpenGoalCreator?.();
-    else if (id === 'schedule') onOpenScheduleEvent?.();
-    else if (id === 'note') onOpenBrainDump?.();
-  };
+  const buildManualPayload = () => ({
+    isFixed,
+    context,
+    recurrence: buildRecurrencePayload(recurrence),
+    energyCost: energyCost >= 0 && energyCost <= 3 ? energyCost : 1,
+  });
 
-  const formatScheduledForToast = (scheduledDateStr, scheduledTimeStr) => {
-    try {
-      const [y, m, d] = scheduledDateStr.split('-').map(Number);
-      const [h, min] = scheduledTimeStr.split(':').map(Number);
-      const dte = new Date(y, m - 1, d, h, min);
-      const datePart = dte.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
-      const timePart = dte.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-      return `${datePart} at ${timePart}`;
-    } catch {
-      return `${scheduledDateStr} ${scheduledTimeStr}`;
-    }
-  };
-
-  const handleSubmit = async (e) => {
-    e?.preventDefault?.();
+  const handleAnalyze = async () => {
     const trimmed = input.trim();
     if (!trimmed) {
       close();
@@ -135,95 +133,57 @@ export default function OmniAdd({
     setIsParsing(true);
     try {
       const result = await parseOmniAddInput(trimmed);
-      const isCalendar = result?.type === 'calendar_event';
-      const recurrencePayload = recurrence && recurrence !== 'none' ? (recurrence === 'weekly' ? { type: 'weekly', days: [] } : recurrence === 'monthly' ? { type: 'monthly' } : recurrence === 'custom' ? { type: 'custom' } : { type: 'daily' }) : undefined;
-      const merged = {
-        ...result,
-        isFixed: isCalendar ? true : isFixed,
-        context: isCalendar ? 'work' : context,
-        recurrence: recurrencePayload,
-        energyCost: energyCost >= 0 && energyCost <= 3 ? energyCost : 1,
-      };
-      const capture = normalizeTaskCapture(merged, trimmed);
-
-      if (capture.scheduledDate && typeof loadDayPlan === 'function' && typeof saveDayPlanForDate === 'function') {
-        try {
-          const slotKey = capture.scheduledTime ? toCanonicalSlotKey(capture.scheduledTime) : (capture.startTime ? toCanonicalSlotKey(new Date(capture.startTime).getHours() + new Date(capture.startTime).getMinutes() / 60) : null);
-          if (!slotKey) {
-            if (onParsedRoute) onParsedRoute(capture);
-          } else {
-            let durationMinutes = 60;
-            let startTimeISO;
-            let endTimeISO;
-            if (capture.startTime && capture.endTime) {
-              const start = new Date(capture.startTime).getTime();
-              const end = new Date(capture.endTime).getTime();
-              if (Number.isFinite(start) && Number.isFinite(end) && end > start) {
-                durationMinutes = Math.max(1, Math.min(480, Math.round((end - start) / (60 * 1000))));
-              }
-              startTimeISO = capture.startTime;
-              endTimeISO = capture.endTime;
-            } else if (capture.startTime) {
-              const start = new Date(capture.startTime);
-              const end = new Date(start.getTime() + durationMinutes * 60 * 1000);
-              startTimeISO = start.toISOString();
-              endTimeISO = end.toISOString();
-            }
-            const current = (await loadDayPlan(capture.scheduledDate)) ?? {};
-            const next = { ...(typeof current === 'object' && current ? current : {}) };
-            const assignment = {
-              type: 'event',
-              title: capture.title || trimmed,
-              duration: durationMinutes,
-              fixed: true,
-              isFixed: true,
-              source: 'local',
-              ...(startTimeISO && { startTime: startTimeISO }),
-              ...(endTimeISO && { endTime: endTimeISO }),
-            };
-            const existing = next[slotKey];
-            if (existing == null) next[slotKey] = assignment;
-            else next[slotKey] = [...(Array.isArray(existing) ? existing : [existing]), assignment];
-            await saveDayPlanForDate(capture.scheduledDate, next);
-            const label = formatScheduledForToast(capture.scheduledDate, capture.scheduledTime || '09:00');
-            pushReward?.({ message: `Task captured and scheduled for ${label}.`, tone: 'moss', icon: '📅', durationMs: 3000 });
-            setInput('');
-            close();
-          }
-        } catch (err) {
-          console.warn('OmniAdd direct schedule failed', err);
-          pushReward?.({ message: 'Could not schedule automatically. Opening planner.', tone: 'slate', icon: '⚠️', sound: null });
-          if (onParsedRoute) onParsedRoute(capture);
-        }
-      } else {
-        if (onParsedRoute) onParsedRoute(capture);
-      }
-    } catch (err) {
-      if (onParsedRoute) {
-        const recurrencePayload = recurrence && recurrence !== 'none' ? (recurrence === 'weekly' ? { type: 'weekly', days: [] } : recurrence === 'monthly' ? { type: 'monthly' } : recurrence === 'custom' ? { type: 'custom' } : { type: 'daily' }) : undefined;
-        onParsedRoute(normalizeTaskCapture({ type: 'goal', title: trimmed, isFixed, context, recurrence: recurrencePayload, energyCost: energyCost >= 0 && energyCost <= 3 ? energyCost : 1 }, trimmed));
-      }
+      const capture = normalizeTaskCapture({ ...(result || {}), ...buildManualPayload() }, trimmed);
+      setDraftCapture(capture);
+    } catch {
+      setDraftCapture(normalizeTaskCapture({ title: trimmed, ...buildManualPayload() }, trimmed));
     } finally {
       setIsParsing(false);
-      setInput('');
-      close();
     }
   };
 
-  const handleKeyDown = (e) => {
+  const handleConfirm = async () => {
+    if (!draftCapture) {
+      await handleAnalyze();
+      return;
+    }
+    await onParsedRoute?.(draftCapture);
+    setInput('');
+    setDraftCapture(null);
+    close();
+  };
+
+  const handleKeyDown = async (e) => {
     if (e.key === 'Escape') {
       e.preventDefault();
       close();
+      return;
     }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      handleSubmit(e);
+      if (draftCapture) await handleConfirm();
+      else await handleAnalyze();
     }
+  };
+
+  const handleOverride = (kind) => {
+    if (!draftCapture) return;
+    const nextKind = kind === 'task' && draftCapture.scheduledDate ? 'scheduled_item' : kind;
+    setDraftCapture(overrideCaptureClassification(draftCapture, nextKind));
+  };
+
+  const handleSendToInbox = async () => {
+    const fallback = draftCapture
+      ? overrideCaptureClassification(draftCapture, 'note')
+      : normalizeTaskCapture({ title: input.trim(), ...buildManualPayload() }, input.trim());
+    await onParsedRoute?.(fallback);
+    setInput('');
+    setDraftCapture(null);
+    close();
   };
 
   return (
     <>
-      {/* Floating + button — center bottom */}
       <motion.button
         type="button"
         onClick={() => setOpen(true)}
@@ -234,7 +194,7 @@ export default function OmniAdd({
         }}
         whileHover={{ scale: 1.06 }}
         whileTap={{ scale: 0.96 }}
-        aria-label="Add something"
+        aria-label="Capture something"
       >
         +
       </motion.button>
@@ -250,7 +210,7 @@ export default function OmniAdd({
             onClick={close}
             role="dialog"
             aria-modal="true"
-            aria-label="What's on your mind?"
+            aria-label="Capture"
           >
             <motion.div
               initial={{ opacity: 0, scale: 0.96, y: 8 }}
@@ -258,158 +218,278 @@ export default function OmniAdd({
               exit={{ opacity: 0, scale: 0.96, y: 8 }}
               transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
               onClick={(e) => e.stopPropagation()}
-              className="relative w-full max-w-md rounded-2xl bg-stone-50 border border-stone-200/90 shadow-2xl overflow-hidden"
+              className="relative w-full max-w-lg rounded-2xl bg-stone-50 border border-stone-200/90 shadow-2xl overflow-hidden"
               style={{
                 boxShadow: '0 24px 48px -12px rgba(0,0,0,0.25), 0 0 0 1px rgba(0,0,0,0.04)',
               }}
             >
-              <form onSubmit={handleSubmit} className="p-5">
-                <label htmlFor="omni-add-input" className="sr-only">
-                  What's on your mind?
-                </label>
-                <input
-                  id="omni-add-input"
-                  ref={inputRef}
-                  type="text"
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  placeholder="What's on your mind?"
-                  disabled={isParsing}
-                  className="w-full py-4 px-4 rounded-xl border-2 border-stone-200 bg-white text-stone-900 font-sans text-lg placeholder-stone-400 focus:outline-none focus:border-moss-500 focus:ring-2 focus:ring-moss-500/20 transition-colors disabled:opacity-60"
-                />
-                <p className="mt-2 font-sans text-xs text-stone-400 text-center">
-                  Press Enter to let Mochi route it, or pick one below.
-                </p>
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (draftCapture) handleConfirm();
+                  else handleAnalyze();
+                }}
+                className="p-5"
+              >
+                <div className="space-y-2">
+                  <label htmlFor="omni-add-input" className="font-sans text-sm font-medium text-stone-700">
+                    Dump it here. I will sort it.
+                  </label>
+                  <input
+                    id="omni-add-input"
+                    ref={inputRef}
+                    type="text"
+                    value={input}
+                    onChange={(e) => {
+                      setInput(e.target.value);
+                      setDraftCapture(null);
+                    }}
+                    onKeyDown={handleKeyDown}
+                    placeholder="email Lisa tomorrow, gym 3x this week, idea for D&D map..."
+                    disabled={isParsing}
+                    className="w-full py-4 px-4 rounded-xl border-2 border-stone-200 bg-white text-stone-900 font-sans text-lg placeholder-stone-400 focus:outline-none focus:border-moss-500 focus:ring-2 focus:ring-moss-500/20 transition-colors disabled:opacity-60"
+                  />
+                  <p className="font-sans text-xs text-stone-500">
+                    Press Enter to classify it. Most captures only need one confirmation.
+                  </p>
+                </div>
 
-                  <div className="mt-4 space-y-3">
-                  <div className="flex items-center justify-center gap-2 flex-wrap">
-                    <span className="font-sans text-xs text-stone-500 mr-1">Energy:</span>
-                    {ENERGY_COST_OPTIONS.map((opt) => (
+                {draftCapture ? (
+                  <div className="mt-5 rounded-2xl border border-moss-200 bg-moss-50/70 p-4 space-y-4">
+                    <div className="space-y-1">
+                      <p className="font-sans text-xs font-semibold uppercase tracking-[0.18em] text-moss-700">
+                        {draftCapture.captureKind === 'calendar_event' ? 'Scheduled event' : `Looks like a ${draftCapture.captureKind.replace('_', ' ')}`}
+                      </p>
+                      <p className="font-sans text-sm text-stone-700">{getCaptureSummary(draftCapture)}</p>
+                      {draftCapture.isAmbiguous && (
+                        <p className="font-sans text-xs text-stone-500">
+                          This one is a little fuzzy, so inbox is the safe fallback.
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      {CAPTURE_OPTIONS
+                        .filter((option) => draftCapture.scheduledDate || option.id !== 'calendar_event')
+                        .map((option) => {
+                          const selectedKind = draftCapture.captureKind === 'scheduled_item' && option.id === 'task'
+                            ? 'task'
+                            : draftCapture.captureKind;
+                          return (
+                            <button
+                              key={option.id}
+                              type="button"
+                              onClick={() => handleOverride(option.id)}
+                              className={`px-3 py-1.5 rounded-full font-sans text-xs font-medium border transition-colors ${
+                                selectedKind === option.id
+                                  ? 'bg-moss-600 border-moss-600 text-white'
+                                  : 'bg-white border-stone-200 text-stone-600 hover:border-stone-300'
+                              }`}
+                            >
+                              {option.label}
+                            </button>
+                          );
+                        })}
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
                       <button
-                        key={opt.value}
-                        type="button"
-                        onClick={() => { setEnergyCost(opt.value); setLearnedFromHistory(false); }}
-                        className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg font-sans text-xs font-medium border transition-colors ${energyCost === opt.value ? 'bg-amber-50 border-amber-300 text-amber-800' : 'bg-stone-50 border-stone-200 text-stone-500 hover:border-stone-300'}`}
-                        aria-pressed={energyCost === opt.value}
-                        aria-label={`${opt.label} (${opt.value})`}
-                        title={opt.title}
+                        type="submit"
+                        disabled={isParsing}
+                        className="px-4 py-2.5 rounded-xl font-sans text-sm font-semibold bg-moss-600 text-white hover:bg-moss-700 disabled:opacity-60"
                       >
-                        <span aria-hidden>⚡</span> {opt.value} {opt.label}
+                        {draftCapture.confirmationLabel}
                       </button>
-                    ))}
-                    {learnedFromHistory && (
-                      <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-moss-50 border border-moss-200 text-moss-700 font-sans text-xs" title="Based on your past feedback">
-                        <span aria-hidden>🧠</span> Based on your history
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex items-center justify-center gap-2">
-                    <span className="font-sans text-xs text-stone-500 mr-1">Type:</span>
-                    <button
-                      type="button"
-                      onClick={() => setIsFixed(true)}
-                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-sans text-xs font-medium border transition-colors ${isFixed ? 'bg-amber-50 border-amber-300 text-amber-800' : 'bg-stone-50 border-stone-200 text-stone-500 hover:border-stone-300'}`}
-                      aria-pressed={isFixed}
-                      aria-label="Fixed / Mandatory"
-                    >
-                      <span aria-hidden>🔒</span> Fixed
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setIsFixed(false)}
-                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-sans text-xs font-medium border transition-colors ${!isFixed ? 'bg-sky-50 border-sky-300 text-sky-800' : 'bg-stone-50 border-stone-200 text-stone-500 hover:border-stone-300'}`}
-                      aria-pressed={!isFixed}
-                      aria-label="Flexible"
-                    >
-                      <span aria-hidden>〰️</span> Flexible
-                    </button>
-                  </div>
-                  <div className="flex items-center justify-center gap-2">
-                    <span className="font-sans text-xs text-stone-500 mr-1">Context:</span>
-                    <button
-                      type="button"
-                      onClick={() => setContext('work')}
-                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-sans text-xs font-medium border transition-colors ${context === 'work' ? 'bg-stone-700 border-stone-600 text-white' : 'bg-stone-50 border-stone-200 text-stone-500 hover:border-stone-300'}`}
-                      aria-pressed={context === 'work'}
-                      aria-label="Work"
-                    >
-                      Work
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setContext('personal')}
-                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-sans text-xs font-medium border transition-colors ${context === 'personal' ? 'bg-moss-100 border-moss-300 text-moss-800' : 'bg-stone-50 border-stone-200 text-stone-500 hover:border-stone-300'}`}
-                      aria-pressed={context === 'personal'}
-                      aria-label="Personal"
-                    >
-                      Personal
-                    </button>
-                  </div>
-                  <div className="flex items-center justify-center gap-2">
-                    <span className="font-sans text-xs text-stone-500">Repeat:</span>
-                    <div className="relative inline-block" ref={recurrenceRef}>
-                      <button
-                        type="button"
-                        onClick={() => setRecurrenceDropdownOpen((o) => !o)}
-                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-sans text-xs font-medium border transition-colors min-h-[32px] ${recurrence !== 'none' ? 'bg-violet-50 border-violet-300 text-violet-800' : 'bg-stone-50 border-stone-200 text-stone-500 hover:border-stone-300'}`}
-                        aria-expanded={recurrenceDropdownOpen}
-                        aria-haspopup="listbox"
-                        aria-label="Repeat / Rhythm"
-                      >
-                        <span aria-hidden className="shrink-0" title="Repeat">
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M17 1l4 4-4 4" />
-                            <path d="M3 11V9a4 4 0 014-4h14" />
-                            <path d="M7 23l-4-4 4-4" />
-                            <path d="M21 13v2a4 4 0 01-4 4H3" />
-                          </svg>
-                        </span>
-                        <span className="max-w-[100px] truncate">
-                          {RECURRENCE_OPTIONS.find((o) => o.value === recurrence)?.label ?? 'Does not repeat'}
-                        </span>
-                      </button>
-                      {recurrenceDropdownOpen && (
-                        <div
-                          className="absolute left-0 top-full z-50 mt-1 py-1 min-w-[160px] rounded-lg bg-white border border-stone-200 shadow-lg max-h-[220px] overflow-y-auto"
-                          role="listbox"
-                          aria-label="Repeat options"
+                      {draftCapture.captureKind !== 'note' && draftCapture.captureKind !== 'someday' && (
+                        <button
+                          type="button"
+                          onClick={handleSendToInbox}
+                          className="px-4 py-2.5 rounded-xl font-sans text-sm font-medium border border-stone-200 bg-white text-stone-700 hover:bg-stone-100"
                         >
+                          Save to inbox
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setDraftCapture(null)}
+                        className="px-4 py-2.5 rounded-xl font-sans text-sm font-medium text-stone-500 hover:text-stone-700"
+                      >
+                        Reparse
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-4 flex flex-wrap gap-2 text-xs font-sans text-stone-500">
+                    <span className="px-2.5 py-1 rounded-full bg-stone-100 border border-stone-200">task</span>
+                    <span className="px-2.5 py-1 rounded-full bg-stone-100 border border-stone-200">habit</span>
+                    <span className="px-2.5 py-1 rounded-full bg-stone-100 border border-stone-200">project</span>
+                    <span className="px-2.5 py-1 rounded-full bg-stone-100 border border-stone-200">scheduled item</span>
+                    <span className="px-2.5 py-1 rounded-full bg-stone-100 border border-stone-200">note</span>
+                    <span className="px-2.5 py-1 rounded-full bg-stone-100 border border-stone-200">later</span>
+                  </div>
+                )}
+
+                <div className="mt-5 border-t border-stone-200 pt-4">
+                  <button
+                    type="button"
+                    onClick={() => setShowDetails((prev) => !prev)}
+                    className="font-sans text-sm font-medium text-stone-600 hover:text-stone-800"
+                  >
+                    {showDetails ? 'Hide details' : 'Refine details'}
+                  </button>
+
+                  {showDetails && (
+                    <div className="mt-4 space-y-4">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-sans text-xs text-stone-500">Energy</span>
+                        {ENERGY_COST_OPTIONS.map((opt) => (
+                          <button
+                            key={opt.value}
+                            type="button"
+                            onClick={() => {
+                              setEnergyCost(opt.value);
+                              setLearnedFromHistory(false);
+                              setDraftCapture(null);
+                            }}
+                            className={`px-2.5 py-1.5 rounded-lg font-sans text-xs font-medium border transition-colors ${
+                              energyCost === opt.value
+                                ? 'bg-amber-50 border-amber-300 text-amber-800'
+                                : 'bg-white border-stone-200 text-stone-500 hover:border-stone-300'
+                            }`}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                        {learnedFromHistory && (
+                          <span className="px-2 py-1 rounded-md bg-moss-50 border border-moss-200 text-moss-700 font-sans text-xs">
+                            Learned from history
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-sans text-xs text-stone-500">Type</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsFixed(true);
+                            setDraftCapture(null);
+                          }}
+                          className={`px-3 py-1.5 rounded-lg font-sans text-xs font-medium border transition-colors ${
+                            isFixed ? 'bg-amber-50 border-amber-300 text-amber-800' : 'bg-white border-stone-200 text-stone-500 hover:border-stone-300'
+                          }`}
+                        >
+                          Fixed
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsFixed(false);
+                            setDraftCapture(null);
+                          }}
+                          className={`px-3 py-1.5 rounded-lg font-sans text-xs font-medium border transition-colors ${
+                            !isFixed ? 'bg-sky-50 border-sky-300 text-sky-800' : 'bg-white border-stone-200 text-stone-500 hover:border-stone-300'
+                          }`}
+                        >
+                          Flexible
+                        </button>
+                      </div>
+
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-sans text-xs text-stone-500">Context</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setContext('work');
+                            setDraftCapture(null);
+                          }}
+                          className={`px-3 py-1.5 rounded-lg font-sans text-xs font-medium border transition-colors ${
+                            context === 'work' ? 'bg-stone-700 border-stone-600 text-white' : 'bg-white border-stone-200 text-stone-500 hover:border-stone-300'
+                          }`}
+                        >
+                          Work
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setContext('personal');
+                            setDraftCapture(null);
+                          }}
+                          className={`px-3 py-1.5 rounded-lg font-sans text-xs font-medium border transition-colors ${
+                            context === 'personal' ? 'bg-moss-100 border-moss-300 text-moss-800' : 'bg-white border-stone-200 text-stone-500 hover:border-stone-300'
+                          }`}
+                        >
+                          Personal
+                        </button>
+                      </div>
+
+                      <div className="space-y-2">
+                        <span className="font-sans text-xs text-stone-500 block">Repeat</span>
+                        <div className="flex flex-wrap gap-2">
                           {RECURRENCE_OPTIONS.map((opt) => (
                             <button
                               key={opt.value}
                               type="button"
-                              role="option"
-                              aria-selected={recurrence === opt.value}
-                              onClick={() => { setRecurrence(opt.value); setRecurrenceDropdownOpen(false); }}
-                              className={`w-full text-left px-4 py-2 font-sans text-sm hover:bg-stone-100 focus:bg-stone-100 focus:outline-none ${recurrence === opt.value ? 'text-moss-700 bg-moss-50' : 'text-stone-700'}`}
+                              onClick={() => {
+                                setRecurrence(opt.value);
+                                setDraftCapture(null);
+                              }}
+                              className={`px-3 py-1.5 rounded-lg font-sans text-xs font-medium border transition-colors ${
+                                recurrence === opt.value
+                                  ? 'bg-violet-50 border-violet-300 text-violet-800'
+                                  : 'bg-white border-stone-200 text-stone-500 hover:border-stone-300'
+                              }`}
                             >
                               {opt.label}
                             </button>
                           ))}
                         </div>
-                      )}
+                      </div>
                     </div>
-                  </div>
+                  )}
                 </div>
 
-                <div className="mt-5 flex flex-wrap justify-center gap-2">
-                  {CHIPS.map((chip) => (
+                <div className="mt-5 flex items-center justify-between gap-3 border-t border-stone-200 pt-4">
+                  <div className="font-sans text-xs text-stone-500">
+                    Need a structured flow instead?
+                  </div>
+                  <div className="flex flex-wrap gap-2 justify-end">
                     <button
-                      key={chip.id}
                       type="button"
-                      onClick={() => handleChipClick(chip.id)}
-                      className="inline-flex items-center gap-2 px-4 py-2.5 rounded-full font-sans text-sm font-medium text-stone-700 bg-stone-100 border border-stone-200 hover:bg-moss-50 hover:border-moss-200 hover:text-moss-800 focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors"
+                      onClick={() => {
+                        close();
+                        onOpenGoalCreator?.(input.trim());
+                      }}
+                      className="font-sans text-xs font-medium text-stone-600 hover:text-stone-800"
                     >
-                      <span aria-hidden>{chip.icon}</span>
-                      <span>{chip.label}</span>
+                      Goal creator
                     </button>
-                  ))}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        close();
+                        onOpenScheduleEvent?.(input.trim());
+                      }}
+                      className="font-sans text-xs font-medium text-stone-600 hover:text-stone-800"
+                    >
+                      Schedule event
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        close();
+                        onOpenBrainDump?.();
+                      }}
+                      className="font-sans text-xs font-medium text-stone-600 hover:text-stone-800"
+                    >
+                      Inbox
+                    </button>
+                  </div>
                 </div>
 
                 {isParsing && (
                   <p className="mt-4 font-sans text-sm text-moss-600 text-center" role="status">
-                    Mochi is reading…
+                    Sorting your capture...
                   </p>
                 )}
               </form>
@@ -420,7 +500,7 @@ export default function OmniAdd({
                 aria-label="Close"
                 className="absolute top-3 right-3 w-8 h-8 flex items-center justify-center rounded-lg text-stone-400 hover:text-stone-600 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
               >
-                ×
+                x
               </button>
             </motion.div>
           </motion.div>

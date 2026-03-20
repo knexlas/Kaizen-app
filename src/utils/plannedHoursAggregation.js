@@ -115,3 +115,17 @@ export function getPlannedMinutesByDay(weekAssignments, goals, dateStrings = nul
   return out;
 }
 
+/**
+ * Planned minutes grouped by JS weekday (0=Sun..6=Sat) for the supplied dates or current week.
+ * Useful for lightweight weekday load heuristics.
+ */
+export function getPlannedMinutesByWeekday(weekAssignments, goals, dateStrings = null) {
+  const byDay = { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 };
+  const daily = getPlannedMinutesByDay(weekAssignments, goals, dateStrings);
+  Object.entries(daily).forEach(([dateStr, minutes]) => {
+    const d = new Date(`${dateStr}T12:00:00`);
+    if (Number.isNaN(d.getTime())) return;
+    byDay[d.getDay()] = (byDay[d.getDay()] || 0) + (Number(minutes) || 0);
+  });
+  return byDay;
+}

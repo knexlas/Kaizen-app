@@ -36,7 +36,7 @@ import { buildProjectGoalFromPlan } from '../../utils/projectGoalFromPlan';
 
 const MOBILE_BREAKPOINT = 640;
 
-export default function CompostHeap({ open, onClose, onPlant, onPrism, onViewInPlanner }) {
+export default function CompostHeap({ open, onClose, onPlant, onPrism, onViewInPlanner, onOpenProjectPlannerForDocumentPlan }) {
   const { compost = [], addToCompost, removeFromCompost, goals = [], addSubtask, addGoal } = useGarden();
   const { pushReward } = useReward();
   const [activeTab, setActiveTab] = useState('ideas'); // 'ideas' | 'projects'
@@ -228,9 +228,20 @@ export default function CompostHeap({ open, onClose, onPlant, onPrism, onViewInP
       }
       if (!plan || !Array.isArray(plan.phases) || plan.phases.length === 0) throw new Error('Mochi could not generate a plan from this document.');
       const projectTitle = (plan.title && String(plan.title).trim()) ? String(plan.title).trim().slice(0, 200) : (plan.summary || file.name || 'Project').trim().slice(0, 200) || 'Project from document';
+      const projectDeadline = docDeadline && String(docDeadline).trim() ? String(docDeadline).trim() : null;
+      if (typeof onOpenProjectPlannerForDocumentPlan === 'function') {
+        onOpenProjectPlannerForDocumentPlan({
+          plan,
+          title: projectTitle,
+          deadline: projectDeadline,
+          description: contextParam,
+        });
+        onClose?.();
+        return;
+      }
       const newProject = buildProjectGoalFromPlan(plan, {
         titleOverride: projectTitle,
-        deadline: docDeadline && String(docDeadline).trim() ? String(docDeadline).trim() : null,
+        deadline: projectDeadline,
       });
       addGoal(newProject);
       setPlannedProjectResult(plan);

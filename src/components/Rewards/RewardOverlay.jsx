@@ -19,15 +19,24 @@ export default function RewardOverlay() {
 
   useEffect(() => {
     if (!top) return;
-    const ms = top.vibePayload ? VIBE_DURATION_MS : gamificationConfig.rewardDurationMs;
+    const ms = top.vibePayload ? VIBE_DURATION_MS : (top.durationMs ?? gamificationConfig.rewardDurationMs);
     const t = setTimeout(() => removeTop(), ms);
     return () => clearTimeout(t);
-  }, [top?.id, top?.vibePayload, gamificationConfig.rewardDurationMs, removeTop]);
+  }, [top?.id, top?.vibePayload, top?.durationMs, gamificationConfig.rewardDurationMs, removeTop]);
 
   if (!top) return null;
 
   const toneClass = TONE_CLASSES[top.tone] ?? TONE_CLASSES.moss;
   const hasVibe = top.vibePayload && typeof top.onVibe === 'function';
+  const shouldShowBonusDetails = Boolean(
+    top.variableBonus
+    && (top.variableBonus.embers > 0 || top.variableBonus.waterDrops > 0)
+    && (top.showVariableBonus ?? (top.surface === 'delight' || gamificationConfig.showRewardBonusDetails))
+  );
+  const shouldShowGrowthLine = Boolean(
+    top.growthLine
+    && (top.showGrowthLine ?? (top.surface === 'delight' || gamificationConfig.showRewardGrowthLine))
+  );
 
   const handleVibe = (vibe) => {
     top.onVibe?.(vibe);
@@ -45,14 +54,14 @@ export default function RewardOverlay() {
           <span className="mr-2 shrink-0" aria-hidden>{top.icon}</span>
           <span className="flex-1 min-w-0">{top.message}</span>
         </div>
-        {(top.variableBonus && (top.variableBonus.embers > 0 || top.variableBonus.waterDrops > 0)) && (
+        {shouldShowBonusDetails && (
           <p className="mt-1.5 text-xs opacity-90" aria-hidden>
             {top.variableBonus.embers > 0 && `+${top.variableBonus.embers} Ember${top.variableBonus.embers !== 1 ? 's' : ''}`}
             {top.variableBonus.embers > 0 && top.variableBonus.waterDrops > 0 && ' · '}
             {top.variableBonus.waterDrops > 0 && `+${top.variableBonus.waterDrops} Water`}
           </p>
         )}
-        {top.growthLine && (
+        {shouldShowGrowthLine && (
           <p className="mt-1 text-xs opacity-90" aria-hidden>{top.growthLine}</p>
         )}
         {hasVibe && (
@@ -63,7 +72,7 @@ export default function RewardOverlay() {
               className="flex-1 py-1.5 px-2 rounded-lg font-sans text-xs font-medium bg-white/60 hover:bg-white/90 border border-current/20 transition-colors"
               aria-label="Energized"
             >
-              🔋 Energized
+              Energized
             </button>
             <button
               type="button"
@@ -71,7 +80,7 @@ export default function RewardOverlay() {
               className="flex-1 py-1.5 px-2 rounded-lg font-sans text-xs font-medium bg-white/60 hover:bg-white/90 border border-current/20 transition-colors"
               aria-label="Drained"
             >
-              🪫 Drained
+              Drained
             </button>
           </div>
         )}

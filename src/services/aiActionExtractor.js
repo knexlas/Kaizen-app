@@ -6,6 +6,19 @@
 const MAX_TITLE_LEN = 60;
 const FALLBACK_TITLE = 'Tiny next step';
 
+export const OPERATOR_ACTION_LIBRARY = {
+  LIGHTEN_TODAY: 'Lighten today',
+  PROTECT_FOCUS_BLOCK: 'Protect focus block',
+  REBALANCE_WEEK: 'Rebalance this week',
+  MOVE_LOW_ENERGY_LATER: 'Move low-energy tasks later',
+  PULL_FORWARD_TASK: 'Pull one task forward',
+  BREAK_NEXT_3_STEPS: 'Break into next 3 steps',
+  NOTE_TO_PLAN: 'Turn note into plan',
+  MAKE_EXECUTABLE: 'Make task executable',
+  MINIMUM_VIABLE_DAY: 'Offer minimum viable day',
+  START_FOCUS_5: 'Start 5-min focus',
+};
+
 /** Strip leading/trailing emojis and normalize whitespace */
 function normalize(s) {
   if (typeof s !== 'string') return '';
@@ -60,4 +73,51 @@ export function splitIntoSteps(text, maxSteps = 3) {
   }
   const sentences = text.split(/[.!?]+/).map((s) => normalize(s)).filter(Boolean);
   return sentences.slice(0, maxSteps).filter(Boolean);
+}
+
+export function extractOperatorActions(text) {
+  const source = typeof text === 'string' ? text.toLowerCase() : '';
+  const { title } = extractActionCandidate(text);
+  const actionIds = [];
+
+  const add = (id) => {
+    if (!actionIds.includes(id)) actionIds.push(id);
+  };
+
+  if (/overload|too much|too full|lighten|breathing room/.test(source)) {
+    add('LIGHTEN_TODAY');
+    add('MINIMUM_VIABLE_DAY');
+  }
+  if (/focus block|deep work|protect focus|focus window/.test(source)) {
+    add('PROTECT_FOCUS_BLOCK');
+  }
+  if (/rebalance|week|over capacity|overplanned/.test(source)) {
+    add('REBALANCE_WEEK');
+  }
+  if (/low energy|later today|move later|push later/.test(source)) {
+    add('MOVE_LOW_ENERGY_LATER');
+  }
+  if (/pull forward|earlier|start first|bring forward/.test(source)) {
+    add('PULL_FORWARD_TASK');
+  }
+  if (/next 3|next three|blocked|no next action|break.*step/.test(source)) {
+    add('BREAK_NEXT_3_STEPS');
+  }
+  if (/note|idea|capture|draft plan|turn .* plan/.test(source)) {
+    add('NOTE_TO_PLAN');
+  }
+  if (/vague|executable|concrete|clarify/.test(source)) {
+    add('MAKE_EXECUTABLE');
+  }
+
+  if (actionIds.length === 0) {
+    add('START_FOCUS_5');
+    add('MAKE_EXECUTABLE');
+  }
+
+  return actionIds.slice(0, 4).map((id) => ({
+    id,
+    label: OPERATOR_ACTION_LIBRARY[id] ?? id,
+    payload: { title },
+  }));
 }

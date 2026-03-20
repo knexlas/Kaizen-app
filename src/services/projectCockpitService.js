@@ -8,6 +8,8 @@
 
 import { localISODate, weekdayIndexMon0, daysUntilDeadline } from './dateUtils';
 import { getPlannedHoursByScope } from '../utils/plannedHoursAggregation';
+import { getAssignmentsForSlot } from './planAssignmentUtils';
+import { getRecommendationForTaskType } from './insightsReflectionService';
 import {
   getActiveProjects,
   getNextStepForProject,
@@ -389,4 +391,129 @@ export function getWeekCapacitySummary(weekAssignments, goals, userSettings, log
     completedTotalMinutes: completedTotalMins,
     billableCompleted,
   };
+}
+
+function formatHourLabel(hour) {
+  const suffix = hour >= 12 ? 'pm' : 'am';
+  const normalized = hour % 12 === 0 ? 12 : hour % 12;
+  return `${normalized}${suffix}`;
+}
+
+export function getBestFocusWindow(dayPlan, calendarEvents = [], userSettings = null, learnedEnergyProfile = null) {
+  const learnedFocus = getRecommendationForTaskType(learnedEnergyProfile, 'deep_work');
+  if (learnedEnergyProfile?.focusWindow && learnedFocus?.label) {
+    return {
+      ...learnedEnergyProfile.focusWindow,
+      source: 'behavioral',
+    };
+  }
+  const startHour = parseTimeToHour(userSettings?.dayStart ?? '08:00');
+  const endHour = parseTimeToHour(userSettings?.dayEnd ?? '22:00');
+  const busyHours = new Set();
+
+  Object.keys(dayPlan ?? {}).forEach((slotKey) => {
+    if (slotKey === 'anytime') return;
+    if (getAssignmentsForSlot(dayPlan, slotKey).length === 0) return;
+    const hour = parseTimeToHour(slotKey);
+    busyHours.add(hour);
+  });
+
+  (calendarEvents ?? []).forEach((event) => {
+    const start = event?.start ? new Date(event.start) : null;
+    const end = event?.end ? new Date(event.end) : null;
+    if (!start || Number.isNaN(start.getTime())) return;
+    const endHourValue = end && !Number.isNaN(end.getTime()) ? Math.max(start.getHours() + 1, end.getHours()) : start.getHours() + 1;
+    for (let hour = start.getHours(); hour < endHourValue; hour += 1) {
+      busyHours.add(hour);
+    }
+  });
+
+  let best = null;
+  let currentStart = null;
+  for (let hour = startHour; hour <= endHour; hour += 1) {
+    const isBusy = hour === endHour || busyHours.has(hour);
+    if (!isBusy && currentStart == null) currentStart = hour;
+    if (isBusy && currentStart != null) {
+      const duration = hour - currentStart;
+      if (duration > 0 && (!best || duration > best.duration)) {
+        best = { startHour: currentStart, endHour: hour, duration };
+      }
+      currentStart = null;
+    }
+  }
+
+  if (!best) return null;
+  return {
+    ...best,
+    label: `${formatHourLabel(best.startHour)}-${formatHourLabel(best.endHour)}`,
+  };
+}
+
+export function getAssistantOperatorSignals({
+  dayPlan = {},
+  goals = [],
+  logs = [],
+  weekAssignments = {},
+  userSettings = null,
+  dailyEnergy = null,
+  compostCount = 0,
+  calendarEvents = [],
+  learnedEnergyProfile = null,
+} = {}) {
+  const weekCapacityHours = getWeekCapacityHours(userSettings);
+  const plannedTotalMinutes = getPlannedHoursByScope(weekAssignments ?? {}, goals ?? [], 'week').totalMinutes;
+  const needsAttention = getNeedsAttention(goals ?? [], logs ?? [], weekAssignments ?? {}, weekCapacityHours, plannedTotalMinutes);
+  const focusWindow = getBestFocusWindow(dayPlan, calendarEvents, userSettings, learnedEnergyProfile);
+  const signals = [];
+
+  if (typeof dailyEnergy === 'number' && dailyEnergy <= 4 && Object.keys(dayPlan ?? {}).length > 4) {
+    signals.push({
+      id: 'overloaded-energy',
+      tone: 'amber',
+      message: 'You planned too much for your current energy.',
+      actionId: 'MINIMUM_VIABLE_DAY',
+    });
+  }
+
+  if (focusWindow?.duration >= 2) {
+    signals.push({
+      id: 'focus-window',
+      tone: 'moss',
+      message: focusWindow.source === 'behavioral'
+        ? `${focusWindow.explanation ?? `You usually focus best around ${focusWindow.label}.`}`
+        : `Your best deep-work window is probably ${focusWindow.label}.`,
+      actionId: 'PROTECT_FOCUS_BLOCK',
+    });
+  }
+
+  if ((needsAttention.noNextStep?.length ?? 0) > 0) {
+    const blocked = needsAttention.noNextStep[0];
+    signals.push({
+      id: 'blocked-project',
+      tone: 'stone',
+      message: `${blocked.label} is blocked because it has no next action.`,
+      actionId: 'BREAK_NEXT_3_STEPS',
+      goalId: blocked.goal?.id ?? null,
+    });
+  }
+
+  if (compostCount >= 7) {
+    signals.push({
+      id: 'uncategorized-captures',
+      tone: 'stone',
+      message: `You have ${compostCount} uncategorized captures. Want me to sort one into a draft plan?`,
+      actionId: 'NOTE_TO_PLAN',
+    });
+  }
+
+  if (signals.length === 0 && weekCapacityHours > 0 && (plannedTotalMinutes / 60) > weekCapacityHours) {
+    signals.push({
+      id: 'week-overload',
+      tone: 'amber',
+      message: 'This week is over capacity. A rebalance would make it more realistic.',
+      actionId: 'REBALANCE_WEEK',
+    });
+  }
+
+  return signals.slice(0, 3);
 }

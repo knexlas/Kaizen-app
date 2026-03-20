@@ -26,13 +26,13 @@ const SPIRIT_COLOR_CLASSES = {
 export function getSpiritAdvice(context = {}) {
   const { weather, isOverloaded, justFinishedSession } = context;
   if (justFinishedSession) {
-    return 'Rest your eyes. The tea is warm.';
+    return 'Take a short reset before the next thing.';
   }
   if (isOverloaded) {
-    return 'You are carrying many stones. Is your pack too heavy?';
+    return 'Today looks heavy. Reduce one thing before you continue.';
   }
   if (weather === 'storm') {
-    return 'The terrain is rocky today. Move with intention.';
+    return 'Today may take more effort. Keep the plan simple.';
   }
   return null;
 }
@@ -58,17 +58,17 @@ export function getPlanReaction(spoonCountOrModifier, planSummary) {
 
   if (mod <= -2) {
     if (isHeavy) {
-      return "I see heavy stones in your path. I have moved the biggest ones to the side for today.";
+      return 'Today looked heavy for your current capacity, so the plan was lightened.';
     }
-    return "The path is gentle today. Rest when you need it.";
+    return 'Lower-capacity day. Keep it gentle.';
   }
   if (mod >= 1) {
     if (isLight) {
-      return "You are glowing today! I've added a challenge to your afternoon.";
+      return 'You have room for one stretch task later today.';
     }
-    return "Your path has many steps today. You have the energy for it.";
+    return 'Higher-capacity day. Start with the most important task.';
   }
-  return "The path is clear. One step at a time.";
+  return 'Capacity looks steady. Start with one clear task.';
 }
 
 /** Animated dots for "thinking" state. Exported for SpiritChat. */

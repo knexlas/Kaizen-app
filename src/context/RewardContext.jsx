@@ -6,7 +6,7 @@ import { getSettings } from '../services/userSettings';
  * milestone/unlock) goes through pushReward → RewardOverlay. Use this instead of local toasts
  * or GlobalToast so users get one consistent, calm feedback pattern.
  *
- * Reward shape: { message, tone?, icon?, durationMs?, variableBonus?, growthLine?, vibePayload?, onVibe? }
+ * Reward shape: { message, tone?, icon?, durationMs?, variableBonus?, growthLine?, vibePayload?, onVibe?, showVariableBonus?, showGrowthLine?, surface? }
  * - message: primary text (action confirmation or reward description).
  * - tone: 'moss' (success), 'slate' (neutral/error), 'amber' (celebration).
  * - variableBonus: { embers?, waterDrops? } shown as "+N Embers · +N Water".
@@ -36,6 +36,9 @@ export function RewardProvider({ children }) {
       onVibe: typeof reward.onVibe === 'function' ? reward.onVibe : null,
       variableBonus: reward.variableBonus ?? null,
       growthLine: reward.growthLine ?? null,
+      showVariableBonus: typeof reward.showVariableBonus === 'boolean' ? reward.showVariableBonus : null,
+      showGrowthLine: typeof reward.showGrowthLine === 'boolean' ? reward.showGrowthLine : null,
+      surface: reward.surface ?? 'utility',
     };
     setQueue((prev) => {
       const next = [...prev, entry].slice(-MAX_QUEUE);

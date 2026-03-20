@@ -6,6 +6,8 @@
 
 import { localISODate } from './dateUtils';
 import { autoFillWeek as plannerEngineAutoFillWeek } from './plannerEngine';
+import { inferTaskTimingType } from './energyDictionaryService';
+import { getTimingFitScore } from './insightsReflectionService';
 
 const DEFAULT_HOUR_START = 6;
 const DEFAULT_HOUR_END = 23;
@@ -421,6 +423,20 @@ function getActivationEnergy(goal) {
   return Math.max(1, Math.min(4, Number(n) || 1));
 }
 
+function sortEntriesByLearnedTiming(entries, learnedEnergyProfile) {
+  if (!learnedEnergyProfile || !Array.isArray(entries)) return entries;
+  return [...entries].sort((a, b) => {
+    const aHour = timeToMinutes(a.hour ?? a.start ?? '00:00') / 60;
+    const bHour = timeToMinutes(b.hour ?? b.start ?? '00:00') / 60;
+    const aTaskType = inferTaskTimingType(a.goal ?? a.value ?? a);
+    const bTaskType = inferTaskTimingType(b.goal ?? b.value ?? b);
+    const aScore = getTimingFitScore(learnedEnergyProfile, aTaskType, aHour);
+    const bScore = getTimingFitScore(learnedEnergyProfile, bTaskType, bHour);
+    if (aScore !== bScore) return bScore - aScore;
+    return String(a.hour ?? a.start ?? '').localeCompare(String(b.hour ?? b.start ?? ''));
+  });
+}
+
 /**
  * Neurodivergent-friendly prioritization: return exactly 3 suggested tasks (goals) — North Star, Quick Win, Care.
  * Filters to incomplete goals/subtasks only.
@@ -650,6 +666,7 @@ export function generateDailyPlan(goals, maxSlotsOrModifier = 0, calendarEvents 
   const opts = { weekStartDate: getDefaultWeekStart(), startHour: DEFAULT_HOUR_START, endHour: DEFAULT_HOUR_END, ...options };
   const stormBufferRaw = Number(opts.stormBufferMinutes);
   const stormBufferMinutes = Math.max(0, Number.isFinite(stormBufferRaw) ? stormBufferRaw : 30);
+  const learnedEnergyProfile = opts.learnedEnergyProfile ?? null;
 
   let futureHours;
   if (Array.isArray(calendarEvents) && calendarEvents.length > 0) {
@@ -770,7 +787,7 @@ export function generateDailyPlan(goals, maxSlotsOrModifier = 0, calendarEvents 
       workSpent += c;
     }
     const oneNourishment = nourishmentEntries.length > 0 ? [nourishmentEntries[0]] : [];
-    candidateEntries = [...workTake, ...oneNourishment].sort((a, b) => a.hour.localeCompare(b.hour));
+    candidateEntries = sortEntriesByLearnedTiming([...workTake, ...oneNourishment], learnedEnergyProfile);
   } else if (modifier >= 1) {
     // High Energy: interleave work with nourishment every 4 work slots; then cap by spoon budget
     const interleaved = [];
@@ -793,10 +810,10 @@ export function generateDailyPlan(goals, maxSlotsOrModifier = 0, calendarEvents 
         workInRow = 0;
       } else break;
     }
-    candidateEntries = interleaved;
+    candidateEntries = sortEntriesByLearnedTiming(interleaved, learnedEnergyProfile);
   } else {
     // Normal: chronological mix, cap by spoon budget
-    const merged = [...workEntries, ...nourishmentEntries].sort((a, b) => a.hour.localeCompare(b.hour));
+    const merged = sortEntriesByLearnedTiming([...workEntries, ...nourishmentEntries], learnedEnergyProfile);
     let total = 0;
     for (const e of merged) {
       if (total + (e.spoonCost ?? 1) > spoonBudget) break;
@@ -828,19 +845,19 @@ export function generateDailyPlan(goals, maxSlotsOrModifier = 0, calendarEvents 
  * @param {string|number} energyLevel - 'high' | 'low' | 'normal', or spoon count (1–12), or modifier (-2, 0, 1)
  * @returns {Object} assignments - { '09:00': value, ... } compatible with TimeSlicer
  */
-export function autoFillDailyPlan(goals, calendarEvents, energyLevel = 'normal') {
+export function autoFillDailyPlan(goals, calendarEvents, energyLevel = 'normal', options = {}) {
   const todayDayIndex = new Date().getDay();
   const workStart = 9 * 60; // 09:00
   const workEnd = 18 * 60; // 18:00 (6 PM)
 
-  const options = {
+  const planOptions = {
     weekStartDate: getDefaultWeekStart(),
     startHour: 9,
     endHour: 18,
     stormBufferMinutes: 30,
   };
 
-  const openSlots = findAvailableSlots(calendarEvents ?? [], [], options)
+  const openSlots = findAvailableSlots(calendarEvents ?? [], [], planOptions)
     .filter((s) => s.dayIndex === todayDayIndex);
 
   const slotHours = [];
@@ -874,11 +891,15 @@ export function autoFillDailyPlan(goals, calendarEvents, energyLevel = 'normal')
     energyStr === 'low' ||
     (typeof energyLevel === 'number' && energyLevel <= 4);
 
+  const learnedEnergyProfile = options?.learnedEnergyProfile ?? null;
   const sorted = [...eligibleGoals].sort((a, b) => {
     const minsA = Number(a?.estimatedMinutes) || 60;
     const minsB = Number(b?.estimatedMinutes) || 60;
     const adminA = getEnergyType(a) === 'maintenance' ? 1 : 0;
     const adminB = getEnergyType(b) === 'maintenance' ? 1 : 0;
+    const timingA = learnedEnergyProfile ? getTimingFitScore(learnedEnergyProfile, inferTaskTimingType(a), nextHourMins / 60) : 0;
+    const timingB = learnedEnergyProfile ? getTimingFitScore(learnedEnergyProfile, inferTaskTimingType(b), nextHourMins / 60) : 0;
+    if (timingA !== timingB) return timingB - timingA;
     if (isHigh) {
       return minsB - minsA;
     }

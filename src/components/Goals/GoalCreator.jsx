@@ -531,10 +531,10 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
                     <InfoTooltip text="A recurring habit you do on specific days." />
                     {' '}= recurring. <strong className="text-stone-700">Vitality</strong>
                     <InfoTooltip text="A single number you track over time." />
-                    {' '}= tracking. <strong className="text-stone-700">Project</strong> = phases &amp; deadlines.
+                    {' '}= tracking. Projects with phases and deadlines live in Project Planner.
                   </p>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                   <button
                     type="button"
                     onClick={() => setGoalType('kaizen')}
@@ -569,7 +569,7 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
                     <button
                       type="button"
                       onClick={() => { onOpenProjectPlanner?.(); onClose?.(); }}
-                      className="flex flex-col items-start p-5 rounded-2xl border-2 border-stone-200 bg-white hover:border-amber-400 hover:bg-amber-50/50 transition-all text-left focus:outline-none focus:ring-2 focus:ring-moss-500/50"
+                      className="hidden flex flex-col items-start p-5 rounded-2xl border-2 border-stone-200 bg-white hover:border-amber-400 hover:bg-amber-50/50 transition-all text-left focus:outline-none focus:ring-2 focus:ring-moss-500/50"
                     >
                       <span className="text-2xl mb-2" aria-hidden>🌻</span>
                       <span className="font-serif text-stone-900 text-base">Plan a Project</span>
@@ -578,6 +578,18 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
                     </button>
                   )}
                 </div>
+                {planningEntry.showPlanAProjectInGoalCreator && (
+                  <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3">
+                    <p className="font-sans text-sm text-amber-900">Working on something with phases, deadlines, or client work?</p>
+                    <button
+                      type="button"
+                      onClick={() => { onOpenProjectPlanner?.(); onClose?.(); }}
+                      className="mt-2 font-sans text-sm font-medium text-amber-800 hover:text-amber-900 hover:underline focus:outline-none focus:ring-2 focus:ring-amber-400/40 rounded px-1 py-0.5"
+                    >
+                      Open Project Planner
+                    </button>
+                  </div>
+                )}
                 <button
                   type="button"
                   onClick={onClose}

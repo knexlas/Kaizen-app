@@ -83,3 +83,17 @@
 - **Remove or hide:** Pet-for-ember reward, FOCUS_PERSEVERANCE message, confetti-on-harvest by default.
 
 No new features recommended until these changes are in place. All recommendations prioritize freelancer/employee usability and calm, confidence-building motivation over novelty and noisy rewards.
+
+---
+
+## Phase 5 implementation notes
+
+The current default direction now follows a calmer utility-surface rule:
+
+- `Today`, `Planner`, and focus-complete flows lead with plain completion copy.
+- Reward overlays still confirm meaningful actions, but currency and progression details stay hidden by default outside playful mode.
+- `TeaCeremony` now leads with `Session complete` and `X min logged`; ember celebration is secondary and only foregrounded in playful mode.
+- `SpiritProgression` remains available, but is framed as background progress rather than foreground status.
+- Spirit planning reactions and helper lines on work surfaces now prefer direct language over metaphor-heavy copy.
+
+This keeps the Garden identity intact while making work surfaces feel calmer and more premium by default.

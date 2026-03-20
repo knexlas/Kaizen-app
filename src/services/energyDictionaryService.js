@@ -138,3 +138,27 @@ export async function getMostEnergizingTasks(uid, limit = 5) {
     .sort((a, b) => b.timesEnergizing - a.timesEnergizing);
   return list.slice(0, limit);
 }
+
+const ADMIN_TITLE_REGEX = /\b(email|reply|follow up|admin|calendar|book|pay|invoice|review|sort|inbox|groceries|dentist|schedule|renew|update|life admin)\b/i;
+const LOW_ENERGY_TITLE_REGEX = /\b(rest|reset|walk|stretch|water|hydrate|meal prep|tidy|backup|low-energy|recovery|breath|prep)\b/i;
+
+/**
+ * Infer a lightweight task timing category for learned energy recommendations.
+ * @param {object|string|null|undefined} taskLike
+ * @returns {'deep_work'|'admin'|'low_energy'}
+ */
+export function inferTaskTimingType(taskLike) {
+  const title = typeof taskLike === 'string'
+    ? taskLike
+    : taskLike?.title ?? taskLike?.taskTitle ?? taskLike?.subtaskTitle ?? '';
+  const estimatedMinutes = Number(taskLike?.estimatedMinutes ?? taskLike?.minutes ?? 0) || 0;
+  const energyType = taskLike?.energyType;
+  const energyCost = Number(taskLike?.energyCost ?? taskLike?.spoonCost ?? 1);
+
+  if (taskLike?._projectGoal || energyType === 'high-focus' || estimatedMinutes >= 45) return 'deep_work';
+  if (LOW_ENERGY_TITLE_REGEX.test(title) || energyType === 'restorative' || energyCost <= 1 || estimatedMinutes <= 15 || taskLike?.type === 'routine') {
+    return 'low_energy';
+  }
+  if (ADMIN_TITLE_REGEX.test(title) || energyType === 'maintenance') return 'admin';
+  return estimatedMinutes >= 30 ? 'deep_work' : 'admin';
+}

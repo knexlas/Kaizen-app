@@ -7,48 +7,42 @@ import { useDialog } from '../../context/DialogContext';
 import { useEnergy } from '../../context/EnergyContext';
 import WoodenSpoon from '../WoodenSpoon';
 import { buildReward } from '../../services/dopamineEngine';
-import { getSettings } from '../../services/userSettings';
 import { pickStarterTask } from '../../services/startAssist';
 import { localISODate, diffDays, weekdayIndexMon0, jsDayFromMon0, getWeekId, daysUntilDeadline } from '../../services/dateUtils';
 import StartNowModal from '../StartAssist/StartNowModal';
 import GentleRestartModal from '../Onboarding/GentleRestartModal';
-import GuidedEmptyState from '../EmptyStates/GuidedEmptyState';
 import AccessibilitySettingsModal from '../Settings/AccessibilitySettingsModal';
 import GoalCreator from '../Goals/GoalCreator';
 import ProjectPlanner from '../Projects/ProjectPlanner';
 import HorizonsGantt from '../Horizons/HorizonsGantt';
 import GoalEditor from '../Goals/GoalEditor';
 import TimeSlicer, { HOURS, MAX_SLOTS_BY_WEATHER, getAssignmentsForHour } from './TimeSlicer';
-import CompassWidget, { getCurrentSlotKey } from './CompassWidget';
+import { getCurrentSlotKey } from './CompassWidget';
 import CommandPalette from './CommandPalette';
 import OmniAdd from './OmniAdd';
 import WeeklyMap from './WeeklyMap';
 import MochiSpiritWithDialogue, { DefaultSpiritSvg, getSpiritGreeting, getPlanReaction } from './MochiSpirit';
 import SpiritChat from './SpiritChat';
 import CompostHeap from './CompostHeap';
-import NextTinyStep, { isAssignmentFixed, useTinyStepSuggestions } from './NextTinyStep';
-import { generateSpiritInsight, generateMorningBriefing, generateWeeklyPlan, generateMonthlyPlan, generateMonthlyPlanTasks, rebalanceMonthQuota, generateHabitSynergy } from '../../services/geminiService';
+import { draftPlanFromNote, generateNextThreeSteps, rewriteTaskAsExecutable } from '../../domains/planning/services/planningAiService';
+import { generateSpiritInsight, generateMorningBriefing, generateHabitSynergy } from '../../domains/assistant/services/spiritAssistantService';
+import { generateWeeklyPlan, generateMonthlyPlan, generateMonthlyPlanTasks, rebalanceMonthQuota, parseOmniAddInput } from '../../services/geminiService';
 import { importICSFile, downloadICS, CALENDAR_PROVIDERS } from '../../services/calendarSyncService';
 import { fetchOutlookEvents } from '../../services/microsoftCalendarService';
 import { getStoredBriefing, setStoredBriefing } from '../../services/spiritBriefingStorage';
 import { getNextTaskInSequence } from '../../services/nextStepService';
+import { inferTaskTimingType } from '../../services/energyDictionaryService';
+import { getRecommendationForTaskType } from '../../services/insightsReflectionService';
 import { toCanonicalSlotKey, minutesToCanonicalSlotKey } from '../../services/schedulingConflictService';
 import { createIntervention, getCurrentIntervention, removeFromQueue, HELPER_INTERVENTION_TYPES, shouldShowIntervention, recordHelperShown } from '../../services/helperInterventionService';
 import { RECOVERY_COPY, NEGLECTED_PROJECT_COPY } from '../../services/recoveryCopyService';
 import { getActiveProjects, getProjectHealthState, getNeglectedProjects } from '../../services/projectSupportService';
 import {
-  getWeekDateStrings,
-  getLoggedMinutesThisWeekByGoal,
-  getRecommendedTaskForToday,
-  getNeedsAttention,
-  getWeekCapacitySummary,
-  getWeekCapacityHours,
+  getAssistantOperatorSignals,
 } from '../../services/projectCockpitService';
 import { getPlannedHoursByScope } from '../../utils/plannedHoursAggregation';
-import { getDashboardProfile, getDashboardSectionOrder, getDashboardSectionOrderWithPriorities, getDashboardPrimaryHeading } from '../../constants/dashboardProfile';
-import { getHelperTone } from '../../constants/plannerPresets';
-import { getCopyForTone } from '../../constants/helperCopy';
 import NextStepPrompt from './NextStepPrompt';
+import { useTinyStepSuggestions, isAssignmentFixed } from './NextTinyStep';
 import HabitStackHandoffPrompt from './HabitStackHandoffPrompt';
 import MorningCheckIn from './MorningCheckIn';
 import EveningWindDown from './EveningWindDown';
@@ -69,14 +63,18 @@ import PlanDayPanel from './PlanDayPanel';
 import PlanMonthPanel from './PlanMonthPanel';
 import PlanWeekPanel from './PlanWeekPanel';
 import DailyPlanRitual from './DailyPlanRitual';
+import AiActionChips from '../Spirit/AiActionChips';
 import { getGoalSupportDomain, resolveSupportSuggestions, getActiveSupportDomainForWeek, getWeeklyPrompt, getSuggestionTemplate, createFromSupportSuggestion } from '../../services/domainSupportService';
 import { fetchGoogleEvents, createGoogleEvent } from '../../services/googleCalendarService';
 import { getTourSeen, setTourSeen, consumeTriggerTourFlag } from '../../services/onboardingStateService';
 import { findAvailableSlots, generateLiquidSchedule, generateSolidSchedule, getDefaultWeekStart, getStormWarnings, getStormImpactForDay, timeToMinutes, minutesToTime, generateDailyPlan, materializeWeeklyPlan, getSpoonCost, hourFromTimeStr, suggestLoadLightening, autoFillWeek } from '../../services/schedulerService';
 import { normalizeTaskCapture, toPlanAssignmentFromTask } from '../../services/taskCaptureService';
-import { startFocusCommand, planReliefCommand } from '../../services/coreCommands';
-import { getPlannerTabPresetConfig, getPlanningEntryConfig } from '../../constants/plannerPresets';
+import { buildGoalFromCapture, buildGoalFromDraftPlan, minimumViableDayCommand, moveLowEnergyTasksLaterCommand, planReliefCommand, protectFocusBlockCommand, pullTaskForwardCommand, startFocusCommand } from '../../services/coreCommands';
+import { getPlannerTabPresetConfig } from '../../constants/plannerPresets';
 import { getGamificationIntensity, getGamificationConfig, shouldShowHelperForIntensity } from '../../constants/gamificationIntensity';
+import { getRitualForToday } from './GardenDashboard.shared';
+import { usePlanningSnapshot } from '../../domains/planning/hooks/usePlanningSnapshot';
+import { useLearnedEnergyProfile } from '../../domains/vitality/hooks/useLearnedEnergyProfile';
 
 const GardenWalk = lazy(() => import('../Garden/GardenWalk'));
 const JournalView = lazy(() => import('./JournalView'));
@@ -128,11 +126,6 @@ function getWeather(events) {
   return { weather: 'sun', forecast: 'Sunny' };
 }
 
-/** dayIndex: JS getDay() convention (0=Sun..6=Sat). Goals store ritual.days in this convention. */
-function getRitualForToday(goal, dayIndex) {
-  return goal?.rituals?.find((r) => Array.isArray(r.days) && r.days.includes(dayIndex));
-}
-
 /** Catches errors in expanded schedule so the app doesn't crash. */
 class ScheduleErrorBoundary extends Component {
   state = { error: null };
@@ -175,7 +168,7 @@ function GardenDashboard() {
   const { pushReward, lastGardenImpact, clearLastGardenImpact } = useReward();
   const { showConfirm } = useDialog();
   const { darkMode: themeDarkMode, setDarkModeOverride } = useTheme();
-  const { dailyEnergy, setEnergyLevel } = useEnergy();
+  const { dailyEnergy, setEnergyLevel, behaviorHistory, recordFocusBehavior, recordCheckInBehavior } = useEnergy();
   const [showEnergyMenu, setShowEnergyMenu] = useState(false);
   const isDark = themeDarkMode || eveningMode === 'night-owl';
 
@@ -279,6 +272,7 @@ function GardenDashboard() {
   const showSpiritMirror = activeModal === 'mirror';
   const [showProjectPlanner, setShowProjectPlanner] = useState(false);
   const [projectPlannerPrefill, setProjectPlannerPrefill] = useState({ prefillTitle: '', prefillParentGoalId: '' });
+  const [projectPlannerImportedPlan, setProjectPlannerImportedPlan] = useState(null);
   const [projectPlannerFocusGoalId, setProjectPlannerFocusGoalId] = useState(null);
   const [horizonsView, setHorizonsView] = useState('planning'); // 'planning' | 'metrics'
   const [plannerPlanDayDateStr, setPlannerPlanDayDateStr] = useState(null); // day chosen in Planner to open PlanDayDrawer
@@ -338,7 +332,6 @@ function GardenDashboard() {
   const [hasSeenTour, setHasSeenTour] = useState(() => getTourSeen());
   const [useShortTourSteps, setUseShortTourSteps] = useState(false);
   const [showSpiritOrigins, setShowSpiritOrigins] = useState(false);
-  const [nowShowDetails, setNowShowDetails] = useState(false);
   const [plannerShowSecondary, setPlannerShowSecondary] = useState(false);
   const [dismissedCurrentTaskStripKey, setDismissedCurrentTaskStripKey] = useState(null);
   const plannerPresetDefaultsAppliedRef = useRef(false);
@@ -681,6 +674,35 @@ function GardenDashboard() {
   const [plannerActionBusy, setPlannerActionBusy] = useState(null); // 'day' | 'week' | 'month' | null
   const [plannerChipBusy, setPlannerChipBusy] = useState(null); // 'protect' | 'reschedule' | 'split' | null
   const [plannerUndoOffer, setPlannerUndoOffer] = useState(null); // { label, changes: [{ dateStr, previous }] }
+  const [assistantActionBusy, setAssistantActionBusy] = useState(null);
+  const {
+    planningEntry,
+    weekDateStrings,
+    loggedByGoalThisWeek,
+    weekCapacityHours,
+    plannedTotalMinutes,
+    recommendedToday,
+    needsAttention,
+    weekCapacity,
+  } = usePlanningSnapshot({
+    userSettings,
+    logs,
+    goals,
+    weekAssignments,
+    today,
+  });
+  const {
+    learnedEnergyProfile,
+    learnedFocusRecommendation,
+    learnedAdminRecommendation,
+    learnedLowEnergyRecommendation,
+  } = useLearnedEnergyProfile({
+    logs,
+    goals,
+    weekAssignments,
+    behaviorHistory,
+    userSettings,
+  });
   const plannerViewMeta = useMemo(() => {
     if (plannerViewMode === 'day') {
       return {
@@ -699,7 +721,7 @@ function GardenDashboard() {
     return {
       title: 'Plan your week',
       description: 'Place work into days first, then open a day only when you need more detail.',
-      primaryActionLabel: autoFillLoading || plannerActionBusy === 'week' ? 'Planning...' : 'Suggest my week',
+      primaryActionLabel: autoFillLoading || plannerActionBusy === 'week' ? 'Planning...' : 'Plan this week',
     };
   }, [plannerViewMode, plannerActionBusy, autoFillLoading, isGeneratingMonthPlan]);
 
@@ -785,17 +807,17 @@ function GardenDashboard() {
           ? Math.max(1, dailySpoonCount)
           : 6;
       const eventsForPlan = Array.isArray(weeklyEvents) ? weeklyEvents : [];
-      const plan = generateDailyPlan(goals ?? [], slotCount, eventsForPlan, { stormBufferMinutes: 30, startHour, endHour });
+      const plan = generateDailyPlan(goals ?? [], slotCount, eventsForPlan, { stormBufferMinutes: 30, startHour, endHour, learnedEnergyProfile });
       await saveDayPlanForDate(today, plan ?? {});
       setPlannerDayExpanded(true);
-      pushReward?.({ message: 'Suggested a day plan.', tone: 'moss', icon: 'S', durationMs: 2200 });
+      pushReward?.({ message: learnedFocusRecommendation?.explanation ? `Suggested a day plan. ${learnedFocusRecommendation.explanation}` : 'Suggested a day plan.', tone: 'moss', icon: 'S', durationMs: 2600 });
     } catch (e) {
       console.warn('Suggest today plan failed', e);
       pushReward?.({ message: 'Could not suggest a day plan. Try again.', tone: 'slate', icon: '!', sound: null });
     } finally {
       setPlannerActionBusy(null);
     }
-  }, [today, saveDayPlanForDate, userSettings?.dayStart, userSettings?.dayEnd, dailySpoonCount, weeklyEvents, goals, pushReward]);
+  }, [today, saveDayPlanForDate, userSettings?.dayStart, userSettings?.dayEnd, dailySpoonCount, weeklyEvents, goals, pushReward, learnedEnergyProfile, learnedFocusRecommendation]);
 
   const handleOpenDailyPlanRitual = useCallback(async () => {
     if (!today || typeof loadDayPlan !== 'function') return;
@@ -885,8 +907,8 @@ function GardenDashboard() {
     setPlannerChipBusy('protect');
     setPlannerUndoOffer(null);
     try {
-      const startHour = hourFromTimeStr(userSettings?.dayStart, 9);
-      const endHour = hourFromTimeStr(userSettings?.dayEnd, 22);
+      const startHour = learnedEnergyProfile?.focusWindow?.startHour ?? hourFromTimeStr(userSettings?.dayStart, 9);
+      const endHour = learnedEnergyProfile?.focusWindow?.endHour ?? hourFromTimeStr(userSettings?.dayEnd, 22);
       const dates = plannerViewMode === 'day' && today ? [today] : plannerWeekDates;
       const focusGoal = (weeklyNorthStarId && (goals ?? []).find((g) => g.id === weeklyNorthStarId))
         || (goals ?? []).find((g) => g?.id && g.type !== 'routine')
@@ -909,7 +931,8 @@ function GardenDashboard() {
         };
         offerPlannerUndo('Protected focus block', [{ dateStr, previous: day }]);
         await saveDayPlanForDate(dateStr, next);
-        pushReward?.({ message: `Protected focus at ${slot}.`, tone: 'moss', icon: 'S', durationMs: 2200 });
+        const why = learnedEnergyProfile?.focusWindow?.explanation;
+        pushReward?.({ message: why ? `Protected focus at ${slot}. ${why}` : `Protected focus at ${slot}.`, tone: 'moss', icon: 'S', durationMs: 2600 });
         return;
       }
       pushReward?.({ message: 'No free slot available in this horizon.', tone: 'slate', icon: '!', sound: null });
@@ -919,7 +942,7 @@ function GardenDashboard() {
     } finally {
       setPlannerChipBusy(null);
     }
-  }, [loadDayPlan, saveDayPlanForDate, userSettings?.dayStart, userSettings?.dayEnd, plannerViewMode, today, plannerWeekDates, weeklyNorthStarId, goals, findFirstFreeHourKey, pushReward, offerPlannerUndo]);
+  }, [loadDayPlan, saveDayPlanForDate, userSettings?.dayStart, userSettings?.dayEnd, plannerViewMode, today, plannerWeekDates, weeklyNorthStarId, goals, findFirstFreeHourKey, pushReward, offerPlannerUndo, learnedEnergyProfile]);
 
   const handlePlannerChipRescheduleOne = useCallback(async () => {
     if (typeof loadDayPlan !== 'function' || typeof saveDayPlanForDate !== 'function') return;
@@ -1152,16 +1175,140 @@ function GardenDashboard() {
     setCommandPaletteOpen(false);
   }, []);
 
-  const handleOmniAddParsedRoute = useCallback((result) => {
-    if (!result || !result.title) return;
-    const capture = normalizeTaskCapture(result);
-    if (capture.type === 'calendar_event') {
-      setScheduleEventPrefill({ title: capture.title, startTime: capture.startTime, endTime: capture.endTime });
-      setShowScheduleEventModal(true);
-    } else {
-      openGoalCreatorFromCapture(capture);
-    }
-  }, [openGoalCreatorFromCapture]);
+  const addCaptureAssignmentToDayPlan = useCallback(
+    async (capture, assignment) => {
+      if (!capture?.scheduledDate || !assignment || typeof loadDayPlan !== 'function' || typeof saveDayPlanForDate !== 'function') {
+        return false;
+      }
+      const current = (await loadDayPlan(capture.scheduledDate)) ?? {};
+      const next = { ...(typeof current === 'object' && current ? current : {}) };
+      if (capture.scheduledTime) {
+        const slotKey = toCanonicalSlotKey(capture.scheduledTime);
+        const existing = next[slotKey];
+        if (existing == null) next[slotKey] = assignment;
+        else next[slotKey] = [...(Array.isArray(existing) ? existing : [existing]), assignment];
+      } else {
+        next.anytime = Array.isArray(next.anytime) ? [...next.anytime, assignment] : [assignment];
+      }
+      await saveDayPlanForDate(capture.scheduledDate, next);
+      return true;
+    },
+    [loadDayPlan, saveDayPlanForDate]
+  );
+
+  const routeNormalizedCapture = useCallback(
+    async (result) => {
+      if (!result || !result.title) return;
+      const capture = normalizeTaskCapture(result, result?.rawText ?? result?.title);
+
+      if (capture.route === 'compost') {
+        await addToCompost(capture.rawText || capture.title);
+        return;
+      }
+
+      if (capture.route === 'project_planner') {
+        setProjectPlannerPrefill({ prefillTitle: capture.title, prefillParentGoalId: '' });
+        setProjectPlannerImportedPlan(null);
+        setProjectPlannerFocusGoalId(null);
+        setShowProjectPlanner(true);
+        return;
+      }
+
+      if (capture.route === 'schedule_event') {
+        const durationMinutes = (() => {
+          if (!capture.startTime || !capture.endTime) return 60;
+          const start = new Date(capture.startTime).getTime();
+          const end = new Date(capture.endTime).getTime();
+          if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return 60;
+          return Math.max(15, Math.min(480, Math.round((end - start) / (60 * 1000))));
+        })();
+
+        if (capture.scheduledDate && capture.scheduledTime) {
+          const saved = await addCaptureAssignmentToDayPlan(capture, {
+            type: 'event',
+            title: capture.title,
+            duration: durationMinutes,
+            fixed: true,
+            isFixed: true,
+            source: 'local',
+            ...(capture.startTime ? { startTime: capture.startTime } : {}),
+            ...(capture.endTime ? { endTime: capture.endTime } : {}),
+          });
+          if (saved) {
+            pushReward?.({ message: 'Event captured and placed on your day.', tone: 'moss', icon: '📅', durationMs: 2600 });
+            return;
+          }
+        }
+
+        setScheduleEventPrefill({ title: capture.title, startTime: capture.startTime, endTime: capture.endTime });
+        if (capture.scheduledDate) setScheduleEventDate(capture.scheduledDate);
+        if (capture.scheduledTime) setScheduleEventTime(capture.scheduledTime);
+        setShowScheduleEventModal(true);
+        return;
+      }
+
+      const goal = buildGoalFromCapture({
+        title: capture.title,
+        captureKind: capture.captureKind,
+        energyCost: capture.energyCost,
+        isFixed: capture.isFixed,
+        context: capture.context,
+        recurrence: capture.recurrence,
+      });
+      addGoal(goal);
+
+      const firstSubtaskId = Array.isArray(goal.subtasks) ? goal.subtasks[0]?.id : null;
+      if (firstSubtaskId && capture.captureKind !== 'habit' && !(capture.captureKind === 'scheduled_item' && capture.scheduledDate)) {
+        setStagingTaskStatus((prev) => ({ ...prev, [firstSubtaskId]: 'active' }));
+      }
+
+      let placedInPlan = false;
+      if (capture.scheduledDate) {
+        placedInPlan = await addCaptureAssignmentToDayPlan(capture, {
+          goalId: goal.id,
+          title: capture.title,
+          type: goal.type,
+          duration: goal.estimatedMinutes ?? 30,
+          ...(firstSubtaskId ? { subtaskId: firstSubtaskId } : {}),
+          ...(capture.isFixed || capture.scheduledTime ? { fixed: true } : {}),
+        });
+      }
+
+      pushReward?.({
+        message: capture.captureKind === 'habit'
+          ? 'Habit captured.'
+          : capture.captureKind === 'scheduled_item'
+            ? (placedInPlan ? 'Task captured and placed in your plan.' : 'Task captured.')
+            : 'Task captured.',
+        tone: 'moss',
+        icon: capture.captureKind === 'habit' ? '🌱' : '✓',
+        durationMs: 2400,
+      });
+    },
+    [addCaptureAssignmentToDayPlan, addGoal, addToCompost, pushReward, setStagingTaskStatus]
+  );
+
+  const handleOmniAddParsedRoute = useCallback(
+    async (result) => {
+      await routeNormalizedCapture(result);
+    },
+    [routeNormalizedCapture]
+  );
+
+  const handleCaptureFromPalette = useCallback(
+    async (rawText) => {
+      const trimmed = String(rawText || '').trim();
+      if (!trimmed) return;
+      try {
+        const parsed = await parseOmniAddInput(trimmed);
+        await routeNormalizedCapture({ ...(parsed || {}), title: parsed?.title ?? trimmed, rawText: trimmed });
+      } catch {
+        await routeNormalizedCapture({ title: trimmed, rawText: trimmed });
+      }
+      setCommandPaletteOpen(false);
+    },
+    [routeNormalizedCapture]
+  );
 
   const EVENT_DURATION_OPTIONS = [15, 30, 45, 60, 90, 120];
   const clampEventMinutes = useCallback((n) => {
@@ -1710,66 +1857,6 @@ function GardenDashboard() {
     [goals, todayDayIndex]
   );
 
-  /** Dashboard profile and cockpit data for profile-adapted Today tab. */
-  const dashboardProfile = getDashboardProfile(userSettings);
-  const dashboardSectionOrder = useMemo(
-    () => getDashboardSectionOrderWithPriorities(dashboardProfile, userSettings?.onboardingPriorities ?? []),
-    [dashboardProfile, userSettings?.onboardingPriorities]
-  );
-  const dashboardPrimaryHeading = getDashboardPrimaryHeading(dashboardProfile);
-  const todaySectionOrder = useMemo(
-    () => dashboardSectionOrder.filter((id) => id !== 'your_day' && id !== 'continuity_summary'),
-    [dashboardSectionOrder]
-  );
-  const nowAlwaysVisibleSectionIds = useMemo(() => {
-    const ids = new Set();
-    if (dashboardProfile === 'freelancer') ids.add('projects_strip');
-    if (dashboardProfile === 'employee') ids.add('calendar_deadlines');
-    if (dashboardProfile === 'habit_focused') ids.add('routines_today');
-    if (dashboardProfile === 'mixed') {
-      ids.add('projects_strip');
-      ids.add('routines_today');
-    }
-    if (isOverloaded) ids.add('recovery');
-    return ids;
-  }, [dashboardProfile, isOverloaded]);
-  const helperTone = useMemo(() => getHelperTone(userSettings ?? {}), [userSettings]);
-  const planningEntry = useMemo(() => getPlanningEntryConfig(userSettings ?? {}), [userSettings]);
-  const weekDateStrings = useMemo(() => getWeekDateStrings(), []);
-  const loggedByGoalThisWeek = useMemo(
-    () => getLoggedMinutesThisWeekByGoal(logs ?? [], weekDateStrings),
-    [logs, weekDateStrings]
-  );
-  const weekCapacityHours = useMemo(() => getWeekCapacityHours(userSettings), [userSettings]);
-  const plannedTotalMinutes = useMemo(
-    () => getPlannedHoursByScope(weekAssignments ?? {}, goals ?? [], 'week').totalMinutes,
-    [weekAssignments, goals]
-  );
-  const recommendedToday = useMemo(
-    () => getRecommendedTaskForToday(goals ?? [], weekAssignments ?? {}, today, { logs, userSettings }),
-    [goals, weekAssignments, today, logs, userSettings]
-  );
-  const needsAttention = useMemo(
-    () => getNeedsAttention(goals ?? [], logs ?? [], weekAssignments ?? {}, weekCapacityHours, plannedTotalMinutes),
-    [goals, logs, weekAssignments, weekCapacityHours, plannedTotalMinutes]
-  );
-  const weekCapacity = useMemo(
-    () => getWeekCapacitySummary(weekAssignments ?? {}, goals ?? [], userSettings, loggedByGoalThisWeek),
-    [weekAssignments, goals, userSettings, loggedByGoalThisWeek]
-  );
-  const activeProjects = useMemo(() => getActiveProjects(goals ?? []), [goals]);
-  const blockedProjectsCount = useMemo(() => {
-    const context = { goals: goals ?? [], logs: logs ?? [], weekAssignments: weekAssignments ?? {} };
-    return (activeProjects ?? []).filter((g) => getProjectHealthState(g, context) === 'stuck').length;
-  }, [activeProjects, goals, logs, weekAssignments]);
-  const upcomingDeadlines = useMemo(() => {
-    const withDeadline = (goals ?? []).filter((g) => g._projectDeadline);
-    return withDeadline
-      .map((g) => ({ goal: g, date: g._projectDeadline }))
-      .sort((a, b) => (a.date || '').localeCompare(b.date || ''))
-      .slice(0, 5);
-  }, [goals]);
-
   /** Today's planned tasks from assignments (unique goals) for Start Assist. */
   const todayTaskEntries = useMemo(() => {
     const seen = new Set();
@@ -2026,6 +2113,767 @@ function GardenDashboard() {
     };
   }, [currentFocusItem, nextUpItems]);
 
+  const todayEnergyStatus = useMemo(() => {
+    if (needsMorningCheckIn) {
+      return {
+        label: 'Check in first',
+        detail: 'Set your energy before you shape the rest of the day.',
+      };
+    }
+    const spoons = typeof todaySpoonCount === 'number' ? todaySpoonCount : null;
+    let label = 'Medium capacity today';
+    if (spoons === 0) label = 'Recovery day';
+    else if (spoons != null && spoons <= 2) label = 'Low capacity today';
+    else if (spoons != null && spoons <= 4) label = 'Light capacity today';
+    else if (spoons != null && spoons >= 8) label = 'High capacity today';
+
+    const detailParts = [];
+    if (typeof dailyEnergy === 'number' && Number.isFinite(dailyEnergy)) {
+      detailParts.push(`Energy ${dailyEnergy}/10`);
+    }
+    if (spoons != null) {
+      detailParts.push(`${spoons} spoon${spoons === 1 ? '' : 's'}`);
+    }
+    if (isOverloaded) {
+      detailParts.push('The plan is asking for too much');
+    } else if (typeof maxSlots === 'number') {
+      detailParts.push(`Realistic load ${maxSlots}`);
+    }
+    if (weather === 'storm') {
+      detailParts.push('Protect margin');
+    }
+
+    return {
+      label,
+      detail: detailParts.join(' | '),
+    };
+  }, [needsMorningCheckIn, todaySpoonCount, dailyEnergy, isOverloaded, maxSlots, weather]);
+
+  const todayPrimaryTask = useMemo(() => {
+    if (currentFocusItem?.source === 'calendar') {
+      return {
+        title: currentFocusItem.title,
+        detail: 'A calendar block is already live now.',
+        context: 'Current block',
+        ctaLabel: 'See day map',
+        onClick: () => document.getElementById('tour-timeline')?.scrollIntoView({ behavior: 'smooth' }),
+      };
+    }
+    if (currentFocusItem?.goal) {
+      return {
+        title: currentFocusItem.title ?? currentFocusItem.goal?.title ?? 'First task',
+        detail: currentFocusItem.hour ? `Planned for ${formatHourKey(currentFocusItem.hour)}` : 'Best first move right now.',
+        context: currentFocusItem.hour ? 'Primary task' : 'Start here',
+        ctaLabel: 'Start first task',
+        onClick: () => handleStartNowStart(
+          { goal: currentFocusItem.goal, goalId: currentFocusItem.goalId, subtaskId: currentFocusItem.subtaskId },
+          5
+        ),
+        goalId: currentFocusItem.goalId,
+        subtaskId: currentFocusItem.subtaskId,
+        estimatedMinutes: currentFocusItem.goal?.estimatedMinutes ?? 30,
+      };
+    }
+    if (recommendedToday?.goal && recommendedToday?.nextStep) {
+      return {
+        title: recommendedToday.nextStep.title ?? recommendedToday.goal.title ?? 'First task',
+        detail: recommendedToday.reason ?? 'Best first move right now.',
+        context: 'Recommended',
+        ctaLabel: 'Start first task',
+        onClick: () => runStartFocus({
+          goal: recommendedToday.goal,
+          minutes: recommendedToday.nextStep.suggestedMinutes ?? 15,
+          subtaskId: recommendedToday.nextStep.subtaskId ?? null,
+        }),
+        goalId: recommendedToday.goal.id,
+        subtaskId: recommendedToday.nextStep.subtaskId ?? null,
+        estimatedMinutes: recommendedToday.nextStep.suggestedMinutes ?? recommendedToday.goal?.estimatedMinutes ?? 30,
+      };
+    }
+    if (nextUpItems[0]?.goal) {
+      return {
+        title: nextUpItems[0].title ?? nextUpItems[0].goal?.title ?? 'First task',
+        detail: nextUpItems[0].hour ? `Planned for ${formatHourKey(nextUpItems[0].hour)}` : 'Best first move right now.',
+        context: 'Next up',
+        ctaLabel: 'Start first task',
+        onClick: () => handleStartNowStart(nextUpItems[0], 5),
+        goalId: nextUpItems[0].goalId,
+        subtaskId: nextUpItems[0].subtaskId ?? null,
+        estimatedMinutes: nextUpItems[0].estimatedMinutes ?? 30,
+      };
+    }
+    return null;
+  }, [currentFocusItem, recommendedToday, nextUpItems, handleStartNowStart, runStartFocus]);
+
+  const todayTimingGuidance = useMemo(() => {
+    if (needsMorningCheckIn) return null;
+    const primaryType = inferTaskTimingType(todayPrimaryTask ?? currentFocusItem ?? {});
+    const primaryRecommendation = getRecommendationForTaskType(learnedEnergyProfile, primaryType);
+    return {
+      primaryLine: primaryRecommendation?.explanation ?? learnedFocusRecommendation?.explanation ?? null,
+      avoidLine: learnedEnergyProfile?.weakWindow?.explanation ?? null,
+      recoveryLine: (todaySpoonCount ?? 0) <= 3
+        ? (learnedLowEnergyRecommendation?.explanation ?? learnedAdminRecommendation?.explanation ?? null)
+        : null,
+    };
+  }, [
+    needsMorningCheckIn,
+    todayPrimaryTask,
+    currentFocusItem,
+    learnedEnergyProfile,
+    learnedFocusRecommendation,
+    learnedAdminRecommendation,
+    learnedLowEnergyRecommendation,
+    todaySpoonCount,
+  ]);
+
+  const todayMustDoLane = useMemo(() => {
+    const primary = todayPrimaryTask
+      ? {
+          ...todayPrimaryTask,
+          laneLabel: 'Primary',
+        }
+      : null;
+    const usedTitles = new Set(primary?.title ? [primary.title] : []);
+    const support = [];
+
+    const addSupportItem = (candidate, laneLabel = 'Support') => {
+      const title = candidate?.title ?? candidate?.goal?.title ?? candidate?.ritualTitle ?? null;
+      if (!title || usedTitles.has(title) || support.length >= 2) return;
+      usedTitles.add(title);
+      support.push({
+        title,
+        detail: candidate?.hour
+          ? `Planned for ${formatHourKey(candidate.hour)}`
+          : candidate?.detail ?? 'Keep this small and defined.',
+        estimatedMinutes: candidate?.estimatedMinutes ?? candidate?.goal?.estimatedMinutes ?? 20,
+        laneLabel,
+      });
+    };
+
+    nextUpItems.forEach((item) => addSupportItem(item));
+    todayRitualItems.forEach(({ goal, ritualTitle }) => addSupportItem({ goal, title: ritualTitle || goal?.title, detail: 'Keep this light.' }, 'Support'));
+
+    const quickWinCandidate = [
+      ...todayRitualItems.map(({ goal, ritualTitle }) => ({
+        goal,
+        goalId: goal?.id,
+        subtaskId: null,
+        title: ritualTitle || goal?.title,
+        estimatedMinutes: goal?.estimatedMinutes ?? 15,
+      })),
+      ...goalBank.map((goal) => ({
+        goal,
+        goalId: goal?.id,
+        subtaskId: null,
+        title: goal?.title,
+        estimatedMinutes: goal?.estimatedMinutes ?? 15,
+      })),
+    ].find((item) => item.title && !usedTitles.has(item.title) && (item.estimatedMinutes ?? 15) <= 20);
+
+    const quickWin = quickWinCandidate
+      ? {
+          ...quickWinCandidate,
+          laneLabel: 'Quick win',
+          detail: 'Use this if you need an easy reset or a fast win.',
+          onClick: () => handleStartNowStart(quickWinCandidate, 5),
+        }
+      : null;
+
+    return {
+      primary,
+      support: support.slice(0, 2),
+      quickWin,
+    };
+  }, [todayPrimaryTask, nextUpItems, todayRitualItems, goalBank, handleStartNowStart]);
+
+  const todayMapBlocks = useMemo(() => {
+    const personalCandidate = todayRitualItems.find(({ ritualTitle, goal }) => {
+      const title = ritualTitle || goal?.title;
+      return title && title !== todayMustDoLane.primary?.title;
+    });
+
+    const blocks = [
+      {
+        label: 'Focus block',
+        detail: todayMustDoLane.primary?.title ?? 'One defined task before you widen the day.',
+      },
+      {
+        label: 'Admin block',
+        detail: todayMustDoLane.support[0]?.title ?? todayMustDoLane.quickWin?.title ?? 'Keep small tasks contained in one short block.',
+      },
+      {
+        label: 'Reset block',
+        detail:
+          isOverloaded || (todaySpoonCount ?? 0) <= 2 || weather === 'storm'
+            ? 'Protect recovery time and leave slack between blocks.'
+            : 'Keep one short reset block open so the day stays usable.',
+      },
+    ];
+
+    if (personalCandidate) {
+      blocks.push({
+        label: 'Personal block',
+        detail: personalCandidate.ritualTitle || personalCandidate.goal?.title,
+      });
+    }
+
+    return blocks;
+  }, [todayMustDoLane, todayRitualItems, isOverloaded, todaySpoonCount, weather]);
+
+  const handleOpenStartAssist = useCallback(() => {
+    const candidate = pickStarterTask({ todayTasks: todayTaskEntries, learnedEnergyProfile, now });
+    if (candidate) {
+      setStartNowCandidate(candidate?.goal != null ? candidate : { goal: candidate });
+    } else {
+      setStartNowCandidate(null);
+    }
+    setShowStartNowModal(true);
+  }, [todayTaskEntries, learnedEnergyProfile, now]);
+
+  const todayRecoveryItems = useMemo(() => {
+    const items = [];
+
+    if (isOverloaded) {
+      items.push({
+        key: 'overloaded',
+        title: 'Today is overloaded',
+        body: 'Reduce the plan before you add anything else.',
+        actionLabel: plannerActionBusy === 'day' ? 'Lightening...' : 'Lighten today',
+        onClick: handleLightenTodayPlan,
+        tone: 'amber',
+      });
+    }
+
+    if (!needsMorningCheckIn && !todayPrimaryTask && nextUpItems.length === 0) {
+      items.push({
+        key: 'no-next-step',
+        title: 'No clear next step',
+        body: 'Pick one realistic first move before you try to do more.',
+        actionLabel: 'Plan today',
+        onClick: handleOpenDailyPlanRitual,
+        tone: 'stone',
+      });
+    }
+
+    if ((needsAttention?.noNextStep?.length ?? 0) > 0) {
+      items.push({
+        key: 'project-next-step',
+        title: 'Some projects still need a next step',
+        body: `${needsAttention.noNextStep.length} item${needsAttention.noNextStep.length === 1 ? '' : 's'} in Plan still need to be clarified.`,
+        actionLabel: 'Open Plan',
+        onClick: () => setActiveTab('planner'),
+        tone: 'stone',
+      });
+    }
+
+    if (!activeSession && continuitySummary.todaySessions === 0 && now.getHours() >= 11 && (todayPrimaryTask || nextUpItems.length > 0)) {
+      items.push({
+        key: 'delayed-start',
+        title: 'Start smaller than you think',
+        body: 'You do not need to catch up. A five minute start counts.',
+        actionLabel: todayPrimaryTask?.ctaLabel ?? 'Help me start',
+        onClick: todayPrimaryTask?.onClick ?? handleOpenStartAssist,
+        tone: 'stone',
+      });
+    }
+
+    if ((compost?.length ?? 0) >= 6) {
+      items.push({
+        key: 'uncategorized',
+        title: 'Loose capture is piling up',
+        body: `${compost.length} captured item${compost.length === 1 ? '' : 's'} still need sorting.`,
+        actionLabel: 'Review inbox',
+        onClick: () => openModal('compost'),
+        tone: 'stone',
+      });
+    }
+
+    if (currentHelperIntervention?.type === HELPER_INTERVENTION_TYPES.FOCUS_ABANDONED) {
+      items.push({
+        key: 'focus-abandoned',
+        title: 'Momentum dropped',
+        body: 'Restart with a smaller block instead of trying to make up lost time.',
+        actionLabel: 'Help me start',
+        onClick: handleOpenStartAssist,
+        tone: 'stone',
+      });
+    }
+
+    return items.slice(0, 3);
+  }, [
+    isOverloaded,
+    plannerActionBusy,
+    handleLightenTodayPlan,
+    needsMorningCheckIn,
+    todayPrimaryTask,
+    nextUpItems,
+    handleOpenDailyPlanRitual,
+    needsAttention,
+    activeSession,
+    continuitySummary.todaySessions,
+    now,
+    handleOpenStartAssist,
+    compost,
+    openModal,
+    currentHelperIntervention,
+  ]);
+
+  const todayHero = useMemo(() => {
+    const tasksVisible = [
+      todayMustDoLane.primary?.title,
+      ...todayMustDoLane.support.map((item) => item.title),
+    ].filter(Boolean).length;
+
+    const realisticLine = needsMorningCheckIn
+      ? 'Realistic first move: set your energy, then keep the day narrow.'
+      : tasksVisible > 0
+        ? `Realistic today: ${tasksVisible} clear task${tasksVisible === 1 ? '' : 's'} is enough.`
+        : 'Realistic today: start with one task, not a full rebuild of your life.';
+
+    let summary = 'Best move: build a calm day around one clear task.';
+    let recommendation = todayPrimaryTask?.title
+      ? `Start with ${todayPrimaryTask.title}.`
+      : 'Pick one defined task before you add anything else.';
+    let primaryAction = todayPrimaryTask
+      ? { label: todayPrimaryTask.ctaLabel ?? 'Start first task', onClick: todayPrimaryTask.onClick, disabled: false }
+      : { label: 'Plan today', onClick: handleOpenDailyPlanRitual, disabled: false };
+
+    if (needsMorningCheckIn) {
+      summary = 'Best move: set your energy before you commit to the day.';
+      recommendation = 'Once energy is set, keep the first step small and clear.';
+      primaryAction = { label: "Set today's energy", onClick: () => setShowMorningCheckInModal(true), disabled: false };
+    } else if (isOverloaded) {
+      summary = 'Best move: lighten the day before you try to push through it.';
+      recommendation = todayPrimaryTask?.title
+        ? `Keep ${todayPrimaryTask.title} as the anchor and reduce the rest.`
+        : 'Reduce the plan until one task stands out.';
+      primaryAction = { label: plannerActionBusy === 'day' ? 'Lightening...' : 'Lighten today', onClick: handleLightenTodayPlan, disabled: plannerActionBusy === 'day' };
+    }
+
+    let avoidLine = 'Avoid opening five things at once.';
+    if (needsMorningCheckIn) {
+      avoidLine = 'Avoid planning from guesswork. Set energy first.';
+    } else if (isOverloaded) {
+      avoidLine = 'Avoid adding more before the plan fits.';
+    } else if ((todaySpoonCount ?? 0) <= 2) {
+      avoidLine = 'Avoid context switching. Keep the day tiny.';
+    } else if (!todayPrimaryTask) {
+      avoidLine = 'Avoid treating every task like a priority.';
+    }
+
+    if (!needsMorningCheckIn && todayTimingGuidance?.avoidLine) {
+      avoidLine = `${avoidLine} ${todayTimingGuidance.avoidLine}`;
+    }
+
+    return {
+      statusLabel: todayEnergyStatus.label,
+      statusDetail: todayEnergyStatus.detail,
+      summary,
+      recommendation,
+      timingLine: todayTimingGuidance?.primaryLine ?? null,
+      realisticLine,
+      avoidLine,
+      recoveryTimingLine: todayTimingGuidance?.recoveryLine ?? null,
+      primaryAction,
+      secondaryActions: [
+        {
+          label: plannerActionBusy === 'day' ? 'Lightening...' : 'Lighten today',
+          onClick: handleLightenTodayPlan,
+          disabled: plannerActionBusy === 'day',
+        },
+        {
+          label: plannerActionBusy === 'day' ? 'Rebuilding...' : 'Rebuild today with AI',
+          onClick: handleSuggestTodayPlan,
+          disabled: plannerActionBusy === 'day',
+        },
+      ],
+    };
+  }, [
+    todayMustDoLane,
+    needsMorningCheckIn,
+    todayPrimaryTask,
+    handleOpenDailyPlanRitual,
+    isOverloaded,
+    plannerActionBusy,
+    handleLightenTodayPlan,
+    todaySpoonCount,
+    todayEnergyStatus,
+    handleSuggestTodayPlan,
+    todayTimingGuidance,
+  ]);
+
+  const todayProgressFooter = useMemo(() => {
+    const progressLine =
+      continuitySummary.todaySessions === 0
+        ? 'No focus logged yet today.'
+        : `${continuitySummary.todaySessions} focus block${continuitySummary.todaySessions === 1 ? '' : 's'} completed, ${continuitySummary.todayMinutes} minutes logged.`;
+
+    let supportLine = 'One finished task is enough to make today useful.';
+    if (needsMorningCheckIn) {
+      supportLine = 'Check in, choose one task, and let the rest wait.';
+    } else if (continuitySummary.todaySessions > 0) {
+      supportLine = 'You already have momentum. Protect it by keeping the next step small.';
+    } else if (isOverloaded) {
+      supportLine = 'A lighter plan is still a productive plan.';
+    } else if (todayPrimaryTask?.title) {
+      supportLine = `If you finish ${todayPrimaryTask.title}, today is on track.`;
+    }
+
+    return {
+      progressLine,
+      supportLine,
+      gardenLine: lastGardenImpact?.text ? `Garden update: ${lastGardenImpact.text}` : null,
+    };
+  }, [continuitySummary, needsMorningCheckIn, isOverloaded, todayPrimaryTask, lastGardenImpact]);
+
+  const handleAssistantProtectFocusBlock = useCallback(async () => {
+    if (!today || typeof loadDayPlan !== 'function' || typeof saveDayPlanForDate !== 'function') return false;
+    setAssistantActionBusy('PROTECT_FOCUS_BLOCK');
+    try {
+      const focusGoal = (todayPrimaryTask?.goalId && (goals ?? []).find((goal) => goal.id === todayPrimaryTask.goalId))
+        || (weeklyNorthStarId && (goals ?? []).find((goal) => goal.id === weeklyNorthStarId))
+        || (goals ?? []).find((goal) => goal?.id && goal.type !== 'routine')
+        || null;
+      if (!focusGoal) {
+        pushReward?.({ message: 'Add a goal first so I can protect a focus block.', tone: 'slate', icon: '!', sound: null });
+        return true;
+      }
+      const day = (await loadDayPlan(today)) ?? {};
+      const result = protectFocusBlockCommand({
+        dayPlan: day,
+        goal: focusGoal,
+        preferredStartHour: learnedEnergyProfile?.focusWindow?.startHour ?? Math.max(hourFromTimeStr(userSettings?.dayStart, 8), 9),
+        preferredEndHour: learnedEnergyProfile?.focusWindow?.endHour ?? 12,
+        dayEndHour: hourFromTimeStr(userSettings?.dayEnd, 22),
+      });
+      if (!result.changed) {
+        pushReward?.({ message: 'No free focus slot is available today.', tone: 'slate', icon: '!', sound: null });
+        return true;
+      }
+      offerPlannerUndo('Protected focus block', [{ dateStr: today, previous: day }]);
+      await saveDayPlanForDate(today, result.nextPlan);
+      const why = learnedEnergyProfile?.focusWindow?.explanation;
+      pushReward?.({ message: why ? `Protected focus at ${result.slotKey}. ${why}` : `Protected focus at ${result.slotKey}.`, tone: 'moss', icon: 'S', durationMs: 2600 });
+      return true;
+    } catch (error) {
+      console.warn('Assistant protect focus failed', error);
+      pushReward?.({ message: 'Could not protect focus time. Try again.', tone: 'slate', icon: '!', sound: null });
+      return true;
+    } finally {
+      setAssistantActionBusy(null);
+    }
+  }, [today, loadDayPlan, saveDayPlanForDate, todayPrimaryTask, goals, weeklyNorthStarId, userSettings?.dayStart, userSettings?.dayEnd, offerPlannerUndo, pushReward, learnedEnergyProfile]);
+
+  const handleAssistantMoveLowEnergyLater = useCallback(async () => {
+    if (!today || typeof loadDayPlan !== 'function' || typeof saveDayPlanForDate !== 'function') return false;
+    setAssistantActionBusy('MOVE_LOW_ENERGY_LATER');
+    try {
+      const day = (await loadDayPlan(today)) ?? {};
+      const result = moveLowEnergyTasksLaterCommand({
+        dayPlan: day,
+        goals: goals ?? [],
+        lateStartHour: 14,
+        dayEndHour: hourFromTimeStr(userSettings?.dayEnd, 22),
+      });
+      if (!result.changed) {
+        pushReward?.({ message: 'Nothing low-energy needs moving right now.', tone: 'slate', icon: '!', sound: null });
+        return true;
+      }
+      offerPlannerUndo('Moved low-energy task later', [{ dateStr: today, previous: day }]);
+      await saveDayPlanForDate(today, result.nextPlan);
+      pushReward?.({ message: `${result.movedTitle} moved to ${result.destination}.`, tone: 'moss', icon: 'S', durationMs: 2200 });
+      return true;
+    } catch (error) {
+      console.warn('Assistant move low-energy later failed', error);
+      pushReward?.({ message: 'Could not move that task. Try again.', tone: 'slate', icon: '!', sound: null });
+      return true;
+    } finally {
+      setAssistantActionBusy(null);
+    }
+  }, [today, loadDayPlan, saveDayPlanForDate, goals, userSettings?.dayEnd, offerPlannerUndo, pushReward]);
+
+  const handleAssistantPullForward = useCallback(async (payload = {}) => {
+    if (!today || typeof loadDayPlan !== 'function' || typeof saveDayPlanForDate !== 'function') return false;
+    setAssistantActionBusy('PULL_FORWARD_TASK');
+    try {
+      const day = (await loadDayPlan(today)) ?? {};
+      const result = pullTaskForwardCommand({
+        dayPlan: day,
+        goalId: payload?.goalId ?? todayPrimaryTask?.goalId ?? null,
+        targetStartHour: Math.max(hourFromTimeStr(userSettings?.dayStart, 8), 8),
+        targetEndHour: 12,
+      });
+      if (!result.changed) {
+        pushReward?.({ message: 'Nothing useful can be pulled forward right now.', tone: 'slate', icon: '!', sound: null });
+        return true;
+      }
+      offerPlannerUndo('Pulled one task forward', [{ dateStr: today, previous: day }]);
+      await saveDayPlanForDate(today, result.nextPlan);
+      pushReward?.({ message: `${result.movedTitle} moved to ${result.slotKey}.`, tone: 'moss', icon: 'S', durationMs: 2200 });
+      return true;
+    } catch (error) {
+      console.warn('Assistant pull forward failed', error);
+      pushReward?.({ message: 'Could not pull a task forward. Try again.', tone: 'slate', icon: '!', sound: null });
+      return true;
+    } finally {
+      setAssistantActionBusy(null);
+    }
+  }, [today, loadDayPlan, saveDayPlanForDate, todayPrimaryTask, userSettings?.dayStart, offerPlannerUndo, pushReward]);
+
+  const handleAssistantMinimumViableDay = useCallback(async (payload = {}) => {
+    if (!today || typeof loadDayPlan !== 'function' || typeof saveDayPlanForDate !== 'function') return false;
+    setAssistantActionBusy('MINIMUM_VIABLE_DAY');
+    try {
+      const day = (await loadDayPlan(today)) ?? {};
+      const result = minimumViableDayCommand({
+        dayPlan: day,
+        keepGoalId: payload?.goalId ?? todayPrimaryTask?.goalId ?? null,
+        keepCount: 2,
+      });
+      if (!result.changed) {
+        pushReward?.({ message: 'Today is already quite small.', tone: 'moss', icon: 'OK', durationMs: 2200 });
+        return true;
+      }
+      offerPlannerUndo('Minimum viable day', [{ dateStr: today, previous: day }]);
+      await saveDayPlanForDate(today, result.nextPlan);
+      pushReward?.({
+        message: `Minimum viable day ready. Moved ${result.removedItems.length} item${result.removedItems.length === 1 ? '' : 's'} out of the main path.`,
+        tone: 'moss',
+        icon: 'S',
+        durationMs: 2400,
+      });
+      return true;
+    } catch (error) {
+      console.warn('Assistant minimum viable day failed', error);
+      pushReward?.({ message: 'Could not reduce today right now.', tone: 'slate', icon: '!', sound: null });
+      return true;
+    } finally {
+      setAssistantActionBusy(null);
+    }
+  }, [today, loadDayPlan, saveDayPlanForDate, todayPrimaryTask, offerPlannerUndo, pushReward]);
+
+  const handleAssistantRebalanceWeek = useCallback(async () => {
+    if (typeof loadDayPlan !== 'function' || typeof saveDayPlanForDate !== 'function') return false;
+    setAssistantActionBusy('REBALANCE_WEEK');
+    try {
+      const weekStart = getDefaultWeekStart();
+      const previousPlans = await Promise.all(
+        plannerWeekDates.map(async (dateStr) => ({ dateStr, previous: (await loadDayPlan(dateStr)) ?? {} }))
+      );
+      const filled = autoFillWeek(goals ?? [], Array.isArray(weeklyEvents) ? weeklyEvents : [], weekStart);
+      if (!filled || Object.keys(filled).length === 0) {
+        pushReward?.({ message: 'Could not rebalance this week yet.', tone: 'slate', icon: '!', sound: null });
+        return true;
+      }
+      offerPlannerUndo('Rebalanced week', previousPlans);
+      await Promise.all(Object.entries(filled).map(([dateStr, dayAssigns]) => saveDayPlanForDate(dateStr, dayAssigns)));
+      pushReward?.({ message: 'Rebalanced this week around your current work.', tone: 'moss', icon: 'S', durationMs: 2400 });
+      return true;
+    } catch (error) {
+      console.warn('Assistant rebalance week failed', error);
+      pushReward?.({ message: 'Could not rebalance the week. Try again.', tone: 'slate', icon: '!', sound: null });
+      return true;
+    } finally {
+      setAssistantActionBusy(null);
+    }
+  }, [loadDayPlan, saveDayPlanForDate, plannerWeekDates, goals, weeklyEvents, offerPlannerUndo, pushReward]);
+
+  const handleAssistantBreakIntoSteps = useCallback(async (payload = {}) => {
+    setAssistantActionBusy('BREAK_NEXT_3_STEPS');
+    try {
+      const targetGoalId = payload?.goalId
+        ?? todayPrimaryTask?.goalId
+        ?? needsAttention?.noNextStep?.[0]?.goal?.id
+        ?? null;
+      const targetGoal = targetGoalId ? (goals ?? []).find((goal) => goal.id === targetGoalId) : null;
+      const title = targetGoal?.title ?? payload?.title ?? null;
+      if (!title) {
+        pushReward?.({ message: 'Pick a goal first so I can break it into steps.', tone: 'slate', icon: '!', sound: null });
+        return true;
+      }
+      const existing = (targetGoal?.subtasks ?? []).map((subtask) => subtask.title).filter(Boolean);
+      const steps = await generateNextThreeSteps(title, existing);
+      if (!Array.isArray(steps) || steps.length === 0) {
+        pushReward?.({ message: 'I could not generate next steps right now.', tone: 'slate', icon: '!', sound: null });
+        return true;
+      }
+      if (targetGoal?.id) {
+        const existingTitles = new Set(existing.map((step) => step.trim().toLowerCase()));
+        steps.forEach((step) => {
+          if (!existingTitles.has(step.trim().toLowerCase())) {
+            addSubtask(targetGoal.id, { title: step, estimatedHours: 0.25 });
+          }
+        });
+        pushReward?.({ message: `Added the next steps to ${targetGoal.title}.`, tone: 'moss', icon: 'S', durationMs: 2200 });
+      } else {
+        addGoal(buildGoalFromDraftPlan({ title, steps, estimatedMinutes: 45 }));
+        pushReward?.({ message: 'Turned that into a 3-step draft plan.', tone: 'moss', icon: 'S', durationMs: 2200 });
+      }
+      return true;
+    } catch (error) {
+      console.warn('Assistant break into steps failed', error);
+      pushReward?.({ message: 'Could not break that into steps. Try again.', tone: 'slate', icon: '!', sound: null });
+      return true;
+    } finally {
+      setAssistantActionBusy(null);
+    }
+  }, [todayPrimaryTask, needsAttention, goals, generateNextThreeSteps, addSubtask, addGoal, pushReward]);
+
+  const handleAssistantNoteToPlan = useCallback(async (payload = {}) => {
+    setAssistantActionBusy('NOTE_TO_PLAN');
+    try {
+      const noteText = payload?.title ?? compost?.[0]?.text ?? '';
+      if (!noteText) {
+        pushReward?.({ message: 'Capture something first so I can turn it into a plan.', tone: 'slate', icon: '!', sound: null });
+        return true;
+      }
+      const draft = await draftPlanFromNote(noteText);
+      if (!draft?.title) {
+        pushReward?.({ message: 'Could not turn that note into a plan yet.', tone: 'slate', icon: '!', sound: null });
+        return true;
+      }
+      addGoal(buildGoalFromDraftPlan(draft));
+      pushReward?.({ message: `Built a draft plan from "${draft.title}".`, tone: 'moss', icon: 'S', durationMs: 2400 });
+      return true;
+    } catch (error) {
+      console.warn('Assistant note to plan failed', error);
+      pushReward?.({ message: 'Could not build a plan from that note. Try again.', tone: 'slate', icon: '!', sound: null });
+      return true;
+    } finally {
+      setAssistantActionBusy(null);
+    }
+  }, [compost, addGoal, pushReward]);
+
+  const handleAssistantMakeExecutable = useCallback(async (payload = {}) => {
+    setAssistantActionBusy('MAKE_EXECUTABLE');
+    try {
+      const sourceTitle = payload?.title ?? todayPrimaryTask?.title ?? compost?.[0]?.text ?? '';
+      if (!sourceTitle) {
+        pushReward?.({ message: 'Give me a task title first so I can sharpen it.', tone: 'slate', icon: '!', sound: null });
+        return true;
+      }
+      const executableTitle = await rewriteTaskAsExecutable(sourceTitle);
+      if (!executableTitle) {
+        pushReward?.({ message: 'Could not turn that into a clearer action yet.', tone: 'slate', icon: '!', sound: null });
+        return true;
+      }
+      const targetGoalId = payload?.goalId ?? todayPrimaryTask?.goalId ?? null;
+      if (targetGoalId) {
+        addSubtask(targetGoalId, { title: executableTitle, estimatedHours: 0.25 });
+      } else {
+        addGoal(buildGoalFromDraftPlan({ title: executableTitle, steps: [executableTitle], estimatedMinutes: 15, type: 'routine' }));
+      }
+      pushReward?.({ message: `Saved "${executableTitle}" as a concrete next step.`, tone: 'moss', icon: 'S', durationMs: 2200 });
+      return true;
+    } catch (error) {
+      console.warn('Assistant make executable failed', error);
+      pushReward?.({ message: 'Could not sharpen that task right now.', tone: 'slate', icon: '!', sound: null });
+      return true;
+    } finally {
+      setAssistantActionBusy(null);
+    }
+  }, [todayPrimaryTask, compost, addSubtask, addGoal, pushReward]);
+
+  const handleAssistantOperatorAction = useCallback(async (actionId, payload = {}) => {
+    switch (actionId) {
+      case 'LIGHTEN_TODAY':
+        setAssistantActionBusy('LIGHTEN_TODAY');
+        try {
+          await handleLightenTodayPlan();
+          return true;
+        } finally {
+          setAssistantActionBusy(null);
+        }
+      case 'PROTECT_FOCUS_BLOCK':
+        return handleAssistantProtectFocusBlock();
+      case 'REBALANCE_WEEK':
+        return handleAssistantRebalanceWeek();
+      case 'MOVE_LOW_ENERGY_LATER':
+        return handleAssistantMoveLowEnergyLater();
+      case 'PULL_FORWARD_TASK':
+        return handleAssistantPullForward(payload);
+      case 'BREAK_NEXT_3_STEPS':
+        return handleAssistantBreakIntoSteps(payload);
+      case 'NOTE_TO_PLAN':
+        return handleAssistantNoteToPlan(payload);
+      case 'MAKE_EXECUTABLE':
+        return handleAssistantMakeExecutable(payload);
+      case 'MINIMUM_VIABLE_DAY':
+        return handleAssistantMinimumViableDay(payload);
+      case 'START_FOCUS_5':
+        if (todayPrimaryTask?.goalId) {
+          handleStartNowStart({ goal: (goals ?? []).find((goal) => goal.id === todayPrimaryTask.goalId), goalId: todayPrimaryTask.goalId, subtaskId: todayPrimaryTask.subtaskId }, 5);
+          return true;
+        }
+        handleHelpMeStart();
+        return true;
+      default:
+        return false;
+    }
+  }, [
+    handleLightenTodayPlan,
+    handleAssistantProtectFocusBlock,
+    handleAssistantRebalanceWeek,
+    handleAssistantMoveLowEnergyLater,
+    handleAssistantPullForward,
+    handleAssistantBreakIntoSteps,
+    handleAssistantNoteToPlan,
+    handleAssistantMakeExecutable,
+    handleAssistantMinimumViableDay,
+    todayPrimaryTask,
+    handleStartNowStart,
+    goals,
+    handleHelpMeStart,
+  ]);
+
+  const todayAssistantSignals = useMemo(() => getAssistantOperatorSignals({
+    dayPlan: assignments ?? {},
+    goals: goals ?? [],
+    logs: logs ?? [],
+    weekAssignments: weekAssignments ?? {},
+    userSettings,
+    dailyEnergy: dailyEnergy,
+    compostCount: compost?.length ?? 0,
+    calendarEvents: Array.isArray(events) ? events : [],
+    learnedEnergyProfile,
+  }), [assignments, goals, logs, weekAssignments, userSettings, dailyEnergy, compost, events, learnedEnergyProfile]);
+
+  const todayAssistantActions = useMemo(() => {
+    const actions = [];
+    const seen = new Set();
+    const addAction = (id, label, tone = null, payload = {}) => {
+      if (seen.has(id)) return;
+      seen.add(id);
+      actions.push({ id, label, tone, payload });
+    };
+
+    if (isOverloaded) {
+      addAction('MINIMUM_VIABLE_DAY', 'Minimum viable day', 'warn', { goalId: todayPrimaryTask?.goalId ?? null });
+      addAction('LIGHTEN_TODAY', 'Lighten today', 'primary');
+      addAction('MOVE_LOW_ENERGY_LATER', 'Move low-energy tasks later');
+    } else {
+      addAction('PROTECT_FOCUS_BLOCK', 'Protect focus block', 'primary');
+      if (todayPrimaryTask?.goalId) addAction('PULL_FORWARD_TASK', 'Pull one task forward', null, { goalId: todayPrimaryTask.goalId });
+    }
+
+    if (weekCapacity?.overload || todayAssistantSignals.some((signal) => signal.actionId === 'REBALANCE_WEEK')) {
+      addAction('REBALANCE_WEEK', 'Rebalance this week');
+    }
+    if ((needsAttention?.noNextStep?.length ?? 0) > 0) {
+      addAction('BREAK_NEXT_3_STEPS', 'Break blocked goal into 3 steps', null, { goalId: needsAttention.noNextStep[0]?.goal?.id ?? null });
+    }
+    if ((compost?.length ?? 0) > 0) {
+      addAction('NOTE_TO_PLAN', 'Turn note into plan', null, { title: compost[0]?.text ?? '' });
+    }
+    if (todayPrimaryTask?.title) {
+      addAction('MAKE_EXECUTABLE', 'Make task executable', null, { title: todayPrimaryTask.title, goalId: todayPrimaryTask.goalId ?? null });
+      addAction('START_FOCUS_5', 'Start 5-min focus');
+    }
+
+    return actions.slice(0, 6);
+  }, [isOverloaded, todayPrimaryTask, weekCapacity, todayAssistantSignals, needsAttention, compost]);
+
   const LAST_OPEN_DATE_KEY = 'kaizen_last_open_date';
   const GENTLE_RESTART_DISMISSED_KEY = 'kaizen_gentle_restart_dismissed_date';
   const GENTLE_RESTART_LAST_COMPLETED_KEY = 'kaizen_gentle_restart_last_completed';
@@ -2106,10 +2954,6 @@ function GardenDashboard() {
       .catch(() => {});
   }, [hydrated, archiveStalePlanItems, runCriticalMassCheck, pushReward]);
 
-  useEffect(() => {
-    if (activeTab !== 'today') setShowNowSupportingSections(false);
-  }, [activeTab]);
-
   const handleDismissStaleBanner = useCallback(() => setStaleArchivedCount(0), []);
 
   const handleSaveSeed = (goal) => {
@@ -2164,16 +3008,6 @@ function GardenDashboard() {
       subtaskId: null,
     });
   }, [todayRitualItems, goalBank]);
-
-  const handleOpenStartAssist = useCallback(() => {
-    const candidate = pickStarterTask({ todayTasks: todayTaskEntries });
-    if (candidate) {
-      setStartNowCandidate(candidate?.goal != null ? candidate : { goal: candidate });
-    } else {
-      setStartNowCandidate(null);
-    }
-    setShowStartNowModal(true);
-  }, [todayTaskEntries]);
 
   const handleStartNowPickDifferent = useCallback(() => {
     setShowStartNowModal(false);
@@ -2290,6 +3124,14 @@ function GardenDashboard() {
           }
         }
       }
+      recordFocusBehavior('complete', {
+        goalId: taskId,
+        title: goalTitle,
+        taskType: inferTaskTimingType(goals?.find((g) => g.id === taskId) ?? activeSession),
+        planned: Boolean(activeSession?.planContext),
+        minutes: timeSpentMinutes,
+        spoonCount: todaySpoonCount ?? dailySpoonCount,
+      });
       addLog({
         taskId,
         taskTitle: goalTitle,
@@ -2385,6 +3227,14 @@ function GardenDashboard() {
           }
         }
       }
+      recordFocusBehavior('complete', {
+        goalId: taskId,
+        title: goalTitle,
+        taskType: inferTaskTimingType(goals?.find((g) => g.id === taskId) ?? activeSession),
+        planned: Boolean(activeSession?.planContext),
+        minutes: timeSpentMinutes,
+        spoonCount: todaySpoonCount ?? dailySpoonCount,
+      });
       addLog({
         taskId,
         taskTitle: goalTitle,
@@ -2445,6 +3295,7 @@ function GardenDashboard() {
       todaySpoonCount,
       dailySpoonCount,
       runStartFocus,
+      recordFocusBehavior,
     ]
   );
 
@@ -2472,6 +3323,14 @@ function GardenDashboard() {
         }
       }
     }
+    recordFocusBehavior('complete', {
+      goalId: taskId,
+      title: goalTitle,
+      taskType: inferTaskTimingType(goals.find((g) => g.id === taskId) ?? completedTask),
+      planned: Boolean(completedTask?.planContext),
+      minutes: durationMinutes,
+      spoonCount: todaySpoonCount ?? dailySpoonCount,
+    });
     addLog({
       taskId: completedTask?.id ?? log?.taskId,
       taskTitle: goalTitle,
@@ -2594,28 +3453,34 @@ function GardenDashboard() {
     }
   };
 
-  if (showTeaCeremony) {
-    const completedGoal = completedTask?.id ? goals?.find((g) => g.id === completedTask.id) : null;
-    const vineOptions = completedGoal?.subtasks ?? [];
-    return (
-      <TeaCeremony
-        task={completedTask}
-        subtasks={vineOptions}
-        onComplete={handleTeaComplete}
-      />
-    );
-  }
-
-  const handleFocusSessionStart = () => {
+  const handleFocusSessionStart = useCallback(() => {
     const reward = buildReward({ type: 'ACTIVATION_START' });
     if (reward && typeof pushReward === 'function') pushReward(reward);
-  };
+    if (activeSession) {
+      recordFocusBehavior('start', {
+        goalId: activeSession.id,
+        title: activeSession.title,
+        taskType: inferTaskTimingType(activeSession),
+        planned: Boolean(activeSession.planContext),
+        spoonCount: todaySpoonCount ?? dailySpoonCount,
+      });
+    }
+  }, [pushReward, activeSession, recordFocusBehavior, todaySpoonCount, dailySpoonCount]);
 
   const handleFocusExit = useCallback(
     async (outcome) => {
       const taskTitle = activeSession?.title;
       const planContext = activeSession?.planContext;
       const goalId = activeSession?.id;
+      if (activeSession && !outcome?.action) {
+        recordFocusBehavior('abandon', {
+          goalId: activeSession.id,
+          title: activeSession.title,
+          taskType: inferTaskTimingType(activeSession),
+          planned: Boolean(activeSession.planContext),
+          spoonCount: todaySpoonCount ?? dailySpoonCount,
+        });
+      }
       setActiveSession(null);
 
       if (outcome?.action === 'reschedule' && planContext?.dateStr && planContext?.slotKey && goalId && typeof loadDayPlan === 'function' && typeof saveDayPlanForDate === 'function') {
@@ -2651,8 +3516,20 @@ function GardenDashboard() {
         setHelperQueue((prev) => [...prev, createIntervention(HELPER_INTERVENTION_TYPES.FOCUS_ABANDONED, { source: 'focus_exit', taskTitle })]);
       }
     },
-    [activeSession, loadDayPlan, saveDayPlanForDate, pushReward]
+    [activeSession, loadDayPlan, saveDayPlanForDate, pushReward, recordFocusBehavior, todaySpoonCount, dailySpoonCount]
   );
+
+  if (showTeaCeremony) {
+    const completedGoal = completedTask?.id ? goals?.find((g) => g.id === completedTask.id) : null;
+    const vineOptions = completedGoal?.subtasks ?? [];
+    return (
+      <TeaCeremony
+        task={completedTask}
+        subtasks={vineOptions}
+        onComplete={handleTeaComplete}
+      />
+    );
+  }
 
   if (activeSession) {
     const durationSeconds = (activeSession.sessionDurationMinutes ?? 25) * 60;
@@ -2707,6 +3584,7 @@ function GardenDashboard() {
             onComplete={(modifier, energyLevel) => {
               const level = energyLevel ?? modifier ?? 3;
               completeMorningCheckIn(level);
+              recordCheckInBehavior({ spoonCount: level, energyLevel: dailyEnergy, date: new Date() });
               if (typeof compostStaleSeeds === 'function') compostStaleSeeds();
               setShowMorningCheckInModal(false);
               generateMorningBriefing(goals, today).then((items) => {
@@ -2722,7 +3600,7 @@ function GardenDashboard() {
                   const slotCount = level >= 1 && level <= 10 ? level : (level >= 1 && level <= 5 ? (level <= 2 ? 2 + (level - 1) * 2 : level === 3 ? 6 : level === 4 ? 8 : 10) : 6);
                   const startHour = hourFromTimeStr(userSettings?.dayStart, 8);
                   const endHour = hourFromTimeStr(userSettings?.dayEnd, 22);
-                  const plan = generateDailyPlan(goals, slotCount, eventsForPlan, { stormBufferMinutes: 30, startHour, endHour });
+                  const plan = generateDailyPlan(goals, slotCount, eventsForPlan, { stormBufferMinutes: 30, startHour, endHour, learnedEnergyProfile });
                   setAssignments(plan);
                   planSummary = { slotCount: Object.keys(plan).length };
                 }
@@ -3093,269 +3971,237 @@ function GardenDashboard() {
       <main className={`flex-1 w-full min-w-0 px-3 sm:px-4 py-6 sm:py-8 ${activeTab === 'planner' ? 'max-w-[1400px]' : 'max-w-5xl'} mx-auto relative pb-28 sm:pb-24 safe-area-pb`}>
         {activeTab === 'today' && (
           <>
-            {needsMorningCheckIn ? (
-              <div id="guide-morning-checkin" className="flex flex-col items-center justify-center min-h-[50vh] px-4">
-                <TourHighlight step={1} tooltip="Start here! Tell me how much energy you have today.">
-                  <GuidedEmptyState
-                    variant="needEnergy"
-                    onSetSpoons={() => setShowMorningCheckInModal(true)}
-                    lowStim={getSettings().lowStim}
-                    helperTone={helperTone}
-                  />
-                </TourHighlight>
-              </div>
-            ) : (
-              <div className="flex flex-col gap-6 h-full">
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 flex-1 min-h-0">
-                {/* Left: profile-ordered sections (dashboard profile from onboarding/planner preset) */}
-                <div className="lg:col-span-4 flex flex-col gap-4">
-                  {todaySectionOrder.map((sectionId) => {
-                    const isPrimaryHero = ['what_to_work_on_today', 'todays_priorities', 'focus_suggestion', 'what_to_do_now'].includes(sectionId);
-                    if (sectionId === 'deep_work_suggestion' || sectionId === 'check_in_prompt') return null;
-                    if (!isPrimaryHero && !nowAlwaysVisibleSectionIds.has(sectionId)) return null;
-                    const showFreelancerToday = sectionId === 'what_to_work_on_today' && recommendedToday && typeof runStartFocus === 'function';
-                    if (isPrimaryHero) {
-                      const useCockpitHero = showFreelancerToday;
-                      const heading = sectionId === 'what_to_work_on_today' ? 'What to work on today' : sectionId === 'todays_priorities' ? "Today's priorities" : sectionId === 'focus_suggestion' ? 'Focus suggestion' : dashboardPrimaryHeading;
-                      if (useCockpitHero) {
-                        return (
-                          <section key={sectionId} aria-labelledby={`dashboard-${sectionId}`} className="w-full rounded-2xl border border-stone-200/80 bg-white/90 dark:bg-slate-800/90 dark:border-slate-600/50 shadow-lg p-5 flex flex-col gap-4">
-                            <h2 id={`dashboard-${sectionId}`} className="font-sans text-xs font-semibold uppercase tracking-wider text-stone-400 dark:text-stone-500">{heading}</h2>
-                            <p className="font-sans text-sm font-medium text-stone-900 dark:text-stone-100">{recommendedToday.goal.title ?? recommendedToday.goal._projectName ?? 'Project'}: {recommendedToday.nextStep.title}</p>
-                            <p className="font-sans text-xs text-stone-500 dark:text-stone-400 -mt-1">{recommendedToday.reason}</p>
-                            <button type="button" onClick={() => runStartFocus({ goal: recommendedToday.goal, minutes: recommendedToday.nextStep.suggestedMinutes ?? 15, subtaskId: recommendedToday.nextStep.subtaskId ?? null })} className="w-full py-4 bg-gradient-to-r from-indigo-500 to-purple-500 hover:from-indigo-600 hover:to-purple-600 text-white text-lg font-bold rounded-2xl shadow-lg hover:shadow-xl transition-all flex justify-center items-center gap-2 focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:ring-offset-2">
-                              <span aria-hidden>✨</span>
-                              <span>Start focus</span>
-                            </button>
-                            <button type="button" onClick={() => setActiveTab('planner')} className="font-sans text-sm text-stone-500 hover:text-stone-700 dark:text-stone-400 dark:hover:text-stone-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 rounded px-2 py-1 self-center">View today plan</button>
-                          </section>
-                        );
-                      }
-                      if (!nowRecommendation) return null;
-                      return (
-                        <section key={sectionId} aria-labelledby={`dashboard-${sectionId}`} className="w-full rounded-2xl border border-stone-200/80 bg-white/90 dark:bg-slate-800/90 dark:border-slate-600/50 shadow-lg p-5 flex flex-col gap-4">
-                          <h2 id={`dashboard-${sectionId}`} className="font-sans text-xs font-semibold uppercase tracking-wider text-stone-400 dark:text-stone-500">{heading}</h2>
-                          <p className="font-sans text-sm text-stone-500 dark:text-stone-400 -mt-1" aria-live="polite">{nowRecommendation.stateLine}</p>
-                          <button type="button" onClick={nowRecommendation.recommendedPrimary?.onClick} className="w-full py-4 bg-gradient-to-r from-indigo-500 to-purple-500 hover:from-indigo-600 hover:to-purple-600 text-white text-lg font-bold rounded-2xl shadow-lg hover:shadow-xl transition-all flex justify-center items-center gap-2 focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:ring-offset-2 disabled:opacity-70" aria-label={nowRecommendation.recommendedPrimary?.label}>
-                            <span aria-hidden>✨</span>
-                            <span>{nowRecommendation.recommendedPrimary?.label}</span>
-                          </button>
-                          {nowRecommendation.recommendedFallback && (
-                            <button type="button" onClick={nowRecommendation.recommendedFallback.onClick} className="font-sans text-sm text-stone-500 hover:text-stone-700 dark:text-stone-400 dark:hover:text-stone-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 rounded px-2 py-1 self-center">{nowRecommendation.recommendedFallback.label}</button>
-                          )}
-                        </section>
-                      );
-                    }
-                    if (sectionId === 'projects_strip') {
-                      return (
-                        <section key={sectionId} className={`rounded-xl border p-3 ${isDark ? 'border-slate-600/50 bg-slate-800/50' : 'border-stone-200 bg-stone-50/80'}`}>
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <div>
-                              <p className="font-sans text-sm font-medium text-stone-800 dark:text-stone-200">Active projects</p>
-                              <p className="font-sans text-xs text-stone-500 dark:text-stone-400">{activeProjects.length} project{activeProjects.length !== 1 ? 's' : ''}{recommendedToday ? ` · ${recommendedToday.nextStep.title}` : ''}</p>
-                            </div>
-                            <button type="button" onClick={() => setShowProjectPlanner(true)} className="shrink-0 py-2 px-3 rounded-lg font-sans text-sm font-medium border border-moss-400 dark:border-moss-500 text-moss-700 dark:text-moss-300 hover:bg-moss-50 dark:hover:bg-moss-900/30 focus:outline-none focus:ring-2 focus:ring-moss-500/40" aria-label="Open project planner (main planning command center)">Open planner</button>
-                          </div>
-                        </section>
-                      );
-                    }
-                    if (sectionId === 'week_capacity' || sectionId === 'billable_strip') return null;
-                    if (sectionId === 'week_capacity') {
-                      return (
-                        <section key={sectionId} className={`rounded-xl border p-3 ${isDark ? 'border-slate-600/50 bg-slate-800/50' : 'border-stone-200 bg-stone-50/80'}`}>
-                          <p className="font-sans text-sm font-medium text-stone-800 dark:text-stone-200 mb-1">Week capacity</p>
-                          <p className="font-sans text-xs text-stone-600 dark:text-stone-400">Available {weekCapacity.availableHours.toFixed(1)}h · Planned {weekCapacity.plannedHours.toFixed(1)}h · Remaining {weekCapacity.remainingHours.toFixed(1)}h</p>
-                          {weekCapacity.overload && <p className="font-sans text-xs text-amber-600 dark:text-amber-400 mt-0.5">Week is overplanned</p>}
-                        </section>
-                      );
-                    }
-                    if (sectionId === 'billable_strip') {
-                      return (
-                        <section key={sectionId} className={`rounded-xl border p-3 ${isDark ? 'border-slate-600/50 bg-slate-800/50' : 'border-stone-200 bg-stone-50/80'}`}>
-                          <p className="font-sans text-sm font-medium text-stone-800 dark:text-stone-200 mb-1">Billable vs non-billable</p>
-                          <p className="font-sans text-xs text-stone-600 dark:text-stone-400">{weekCapacity.billablePlanned.toFixed(1)}h billable · {weekCapacity.nonBillablePlanned.toFixed(1)}h non-billable (planned)</p>
-                        </section>
-                      );
-                    }
-                    if (sectionId === 'needs_attention') {
-                      const items = [...needsAttention.noNextStep, ...needsAttention.overdueUnscheduled.slice(0, 2), ...needsAttention.deadlineRisk.slice(0, 1)].map((x) => x.label);
-                      const hasAny = items.length > 0 || needsAttention.overplannedWeek;
-                      if (!hasAny) return null;
-                      return (
-                        <section key={sectionId} className={`rounded-xl border p-3 ${isDark ? 'border-slate-600/50 bg-slate-800/50' : 'border-stone-200 bg-stone-50/80'}`}>
-                          <p className="font-sans text-sm font-medium text-stone-800 dark:text-stone-200 mb-1">Needs attention</p>
-                          <ul className="font-sans text-xs text-stone-600 dark:text-stone-400 space-y-0.5">{items.slice(0, 4).map((l, i) => <li key={i}>{l}</li>)}</ul>
-                          {needsAttention.overplannedWeek && <p className="font-sans text-xs text-amber-600 dark:text-amber-400 mt-1">Overplanned week</p>}
-                          <button type="button" onClick={() => setShowProjectPlanner(true)} className="mt-2 font-sans text-xs text-moss-600 dark:text-moss-400 hover:underline focus:outline-none focus:ring-2 focus:ring-moss-500/40">View in planner</button>
-                        </section>
-                      );
-                    }
-                    if (sectionId === 'briefing') {
-                      if (morningBriefing.length === 0) return null;
-                      return (
-                        <div key={sectionId} className={`rounded-xl border p-3 ${isDark ? 'border-slate-600/50 bg-slate-800/50' : 'border-stone-200 bg-stone-50/80'}`}>
-                          <div className="flex items-center justify-between gap-2 mb-2">
-                            <span className="font-sans text-xs font-medium text-stone-500 dark:text-stone-400">{gamificationConfig.metaphorWording ? 'Mochi left a note' : 'Briefing'}</span>
-                            <button type="button" onClick={() => setMorningBriefing([])} className="font-sans text-xs text-stone-400 hover:text-stone-600 dark:hover:text-stone-300 focus:outline-none focus:ring-2 focus:ring-indigo-300 rounded px-1.5 py-0.5" aria-label="Dismiss briefing">Dismiss</button>
-                          </div>
-                          <ul className="space-y-1.5">
-                            {morningBriefing.map((item, i) => (
-                              <li key={i} className={`flex flex-wrap items-center gap-2 rounded-md px-2 py-1.5 ${isDark ? 'bg-slate-700/40' : 'bg-white/60'}`}>
-                                <span className="font-sans text-sm text-stone-700 dark:text-stone-300 flex-1 min-w-0">{item.title}</span>
-                                {item.category && <span className="font-sans text-xs text-stone-500 dark:text-stone-400 shrink-0">{item.category}</span>}
-                                <a href={`https://www.google.com/search?q=${encodeURIComponent(item.searchQuery)}`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 font-sans text-xs text-indigo-600 dark:text-indigo-400 hover:underline shrink-0">Verify</a>
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      );
-                    }
-                    if (sectionId === 'continuity_summary') return null;
-                    if (sectionId === 'calendar_deadlines') {
-                      const hasDeadlines = upcomingDeadlines.length > 0 || (Array.isArray(events) && events.length > 0);
-                      if (!hasDeadlines) return null;
-                      const nextEvents = (events ?? []).slice(0, 3).map((e) => ({ title: e.title ?? 'Event', date: e.start || e.end }));
-                      return (
-                        <section key={sectionId} className={`rounded-xl border p-3 ${isDark ? 'border-slate-600/50 bg-slate-800/50' : 'border-stone-200 bg-stone-50/80'}`}>
-                          <p className="font-sans text-sm font-medium text-stone-800 dark:text-stone-200 mb-1">Calendar & deadlines</p>
-                          <ul className="font-sans text-xs text-stone-600 dark:text-stone-400 space-y-0.5">
-                            {upcomingDeadlines.slice(0, 3).map(({ goal, date }) => <li key={goal.id}>{goal.title ?? goal._projectName ?? 'Project'}: {date}</li>)}
-                            {nextEvents.map((e, i) => <li key={i}>{e.title}</li>)}
-                          </ul>
-                          <button type="button" onClick={() => setActiveTab('planner')} className="mt-2 font-sans text-xs text-moss-600 dark:text-moss-400 hover:underline focus:outline-none focus:ring-2 focus:ring-moss-500/40">Plan week</button>
-                        </section>
-                      );
-                    }
-                    if (sectionId === 'blocked_work') {
-                      if (blockedProjectsCount === 0) return null;
-                      return (
-                        <section key={sectionId} className={`rounded-xl border p-3 ${isDark ? 'border-slate-600/50 bg-slate-800/50' : 'border-stone-200 bg-stone-50/80'}`}>
-                          <p className="font-sans text-sm font-medium text-stone-800 dark:text-stone-200 mb-1">Blocked work</p>
-                          <p className="font-sans text-xs text-stone-600 dark:text-stone-400">{blockedProjectsCount} project{blockedProjectsCount !== 1 ? 's' : ''} stuck or blocked</p>
-                          <button type="button" onClick={() => setShowProjectPlanner(true)} className="mt-2 font-sans text-xs text-moss-600 dark:text-moss-400 hover:underline focus:outline-none focus:ring-2 focus:ring-moss-500/40">View in planner</button>
-                        </section>
-                      );
-                    }
-                    if (sectionId === 'deep_work_suggestion' && nowRecommendation) {
-                      return (
-                        <section key={sectionId} className={`rounded-xl border p-3 ${isDark ? 'border-slate-600/50 bg-slate-800/50' : 'border-stone-200 bg-stone-50/80'}`}>
-                          <p className="font-sans text-sm font-medium text-stone-800 dark:text-stone-200 mb-1">Deep work</p>
-                          <p className="font-sans text-xs text-stone-600 dark:text-stone-400 mb-2">{nowRecommendation.stateLine}</p>
-                          <button type="button" onClick={nowRecommendation.recommendedPrimary?.onClick} className="py-2 px-3 rounded-lg font-sans text-sm font-medium bg-moss-600 text-white hover:bg-moss-700 focus:outline-none focus:ring-2 focus:ring-moss-500/40">{nowRecommendation.recommendedPrimary?.label}</button>
-                        </section>
-                      );
-                    }
-                    if (sectionId === 'weekly_plan_link') {
-                      return (
-                        <section key={sectionId} className={`rounded-xl border p-3 ${isDark ? 'border-slate-600/50 bg-slate-800/50' : 'border-stone-200 bg-stone-50/80'}`}>
-                          <button type="button" onClick={() => setActiveTab('planner')} className="w-full py-3 rounded-lg font-sans text-sm font-medium border border-moss-400 dark:border-moss-500 text-moss-700 dark:text-moss-300 hover:bg-moss-50 dark:hover:bg-moss-900/30 focus:outline-none focus:ring-2 focus:ring-moss-500/40">Plan my week</button>
-                        </section>
-                      );
-                    }
-                    if (sectionId === 'routines_today') {
-                      if (todayRitualItems.length === 0) return null;
-                      return (
-                        <section key={sectionId} className={`rounded-xl border p-3 ${isDark ? 'border-slate-600/50 bg-slate-800/50' : 'border-stone-200 bg-stone-50/80'}`}>
-                          <p className="font-sans text-sm font-medium text-stone-800 dark:text-stone-200 mb-1">Routines today</p>
-                          <ul className="font-sans text-xs text-stone-600 dark:text-stone-400 space-y-0.5">
-                            {todayRitualItems.slice(0, 5).map(({ goal, ritualTitle }, i) => <li key={goal?.id ?? i}>{ritualTitle || goal?.title}</li>)}
-                          </ul>
-                        </section>
-                      );
-                    }
-                    if (sectionId === 'recovery') {
-                      if (!isOverloaded) return null;
-                      const recoveryHeading = getCopyForTone('recovery_heading', helperTone);
-                      const recoveryBody = getCopyForTone('recovery_body', helperTone);
-                      return (
-                        <section key={sectionId} className={`rounded-xl border p-3 border-amber-200 dark:border-amber-800 bg-amber-50/80 dark:bg-amber-900/20`}>
-                          <p className="font-sans text-sm font-medium text-amber-800 dark:text-amber-200 mb-1">{recoveryHeading}</p>
-                          <p className="font-sans text-xs text-amber-700 dark:text-amber-300 mb-2">{recoveryBody}</p>
-                          <button type="button" onClick={() => { document.getElementById('tour-timeline')?.scrollIntoView({ behavior: 'smooth' }); setLoadLightenedMessage('Lighten your plan'); setShowSpiritDialogue(true); }} className="py-2 px-3 rounded-lg font-sans text-sm font-medium bg-amber-600 text-white hover:bg-amber-700 focus:outline-none focus:ring-2 focus:ring-amber-500/40">Lighten my plan</button>
-                        </section>
-                      );
-                    }
-                    if (sectionId === 'projects_if_relevant') {
-                      if (activeProjects.length === 0) return null;
-                      return (
-                        <section key={sectionId} className={`rounded-xl border p-3 ${isDark ? 'border-slate-600/50 bg-slate-800/50' : 'border-stone-200 bg-stone-50/80'}`}>
-                          <button type="button" onClick={() => setShowProjectPlanner(true)} className="font-sans text-xs text-moss-600 dark:text-moss-400 hover:underline focus:outline-none focus:ring-2 focus:ring-moss-500/40" aria-label="View projects in planner">View in planner</button>
-                        </section>
-                      );
-                    }
-                    return null;
-                  })}
-                </div>
-                {/* Right: Supporting — full-day timeline (planning detail, not the primary recommendation) */}
-                <div className="lg:col-span-8 flex flex-col gap-2 min-h-0">
-                  <div className={`rounded-2xl border px-4 py-3 ${isDark ? 'border-slate-600/50 bg-slate-800/35' : 'border-stone-200 bg-white/75'}`}>
+            <div className="flex flex-col gap-5 h-full">
+              <TourHighlight step={1} tooltip="Start here. In one glance you should know what today can hold and what to do first.">
+                <section
+                  id="guide-morning-checkin"
+                  className={`rounded-[28px] border px-5 py-5 sm:px-6 sm:py-6 shadow-lg ${
+                    isDark
+                      ? 'border-slate-600/50 bg-slate-800/85'
+                      : 'border-stone-200/80 bg-white/95'
+                  }`}
+                >
+                  <div className="flex flex-col gap-4">
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <h2 className="font-sans text-sm font-medium text-stone-700 dark:text-stone-200">Your day</h2>
-                        <p className="mt-1 font-sans text-sm text-stone-900 dark:text-stone-100">{todayPathSummary.lead}</p>
-                        <p className="mt-0.5 font-sans text-xs text-stone-500 dark:text-stone-400">{todayPathSummary.follow}</p>
+                        <p className="font-sans text-xs font-semibold uppercase tracking-[0.18em] text-stone-400 dark:text-stone-500">Today briefing</p>
+                        <h1 className="mt-2 font-serif text-2xl sm:text-3xl text-stone-900 dark:text-stone-100">
+                          {todayHero.statusLabel}
+                        </h1>
+                        {todayHero.statusDetail && (
+                          <p className="mt-1 font-sans text-sm text-stone-500 dark:text-stone-400">{todayHero.statusDetail}</p>
+                        )}
                       </div>
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setActiveTab('planner')}
-                          className="font-sans text-xs text-moss-700 dark:text-moss-300 border border-moss-300 dark:border-moss-700 rounded-lg px-2.5 py-1.5 hover:bg-moss-50 dark:hover:bg-moss-900/30 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
-                        >
-                          Open planner
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setNowShowDetails((v) => !v)}
-                          className="font-sans text-xs text-stone-500 hover:text-stone-700 dark:text-stone-400 dark:hover:text-stone-200 focus:outline-none focus:ring-2 focus:ring-moss-500/40 rounded px-2 py-1"
-                        >
-                          {nowShowDetails ? 'Hide progress' : 'Show progress'}
-                        </button>
+                      <div className={`rounded-2xl px-3 py-2 text-xs font-medium ${
+                        isOverloaded
+                          ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200'
+                          : 'bg-moss-100 text-moss-800 dark:bg-moss-900/30 dark:text-moss-200'
+                      }`}>
+                        {todayPathSummary.lead}
                       </div>
                     </div>
-                  </div>
-                  {nowShowDetails && (
-                  <>
-                  <div className={`rounded-xl border px-2 py-2 text-sm ${isDark ? 'border-slate-600/50 bg-slate-800/30' : 'border-stone-200 bg-stone-50/80'}`}>
-                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-                      <span className="font-sans text-stone-600 dark:text-stone-400">
-                        Today: {continuitySummary.todaySessions === 0 ? 'no focus yet' : `${continuitySummary.todaySessions} session${continuitySummary.todaySessions !== 1 ? 's' : ''}, ${continuitySummary.todayMinutes} min`}
-                      </span>
-                      <span className="font-sans text-stone-500 dark:text-stone-500" aria-hidden>·</span>
-                      <span className="font-sans text-stone-600 dark:text-stone-400">
-                        This week: {continuitySummary.weekSessions === 0 ? 'no focus yet' : `${continuitySummary.weekSessions} session${continuitySummary.weekSessions !== 1 ? 's' : ''}, ${continuitySummary.weekMinutes} min`}
-                      </span>
+
+                    <div className={`rounded-2xl border px-4 py-4 ${
+                      isDark
+                        ? 'border-slate-600/50 bg-slate-900/40'
+                        : 'border-stone-200 bg-stone-50/80'
+                    }`}>
+                      <p className="font-sans text-base sm:text-lg font-semibold text-stone-900 dark:text-stone-100">{todayHero.summary}</p>
+                      <p className="mt-1 font-sans text-sm text-stone-600 dark:text-stone-300">{todayHero.recommendation}</p>
+                      {todayHero.timingLine && (
+                        <p className="mt-2 font-sans text-sm text-moss-700 dark:text-moss-300">{todayHero.timingLine}</p>
+                      )}
+                      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                        <div className={`rounded-xl px-3 py-2 ${isDark ? 'bg-slate-800/80' : 'bg-white/90'}`}>
+                          <p className="font-sans text-[11px] font-semibold uppercase tracking-wide text-stone-400 dark:text-stone-500">Realistic</p>
+                          <p className="mt-1 font-sans text-sm text-stone-700 dark:text-stone-200">{todayHero.realisticLine}</p>
+                        </div>
+                        <div className={`rounded-xl px-3 py-2 ${isDark ? 'bg-slate-800/80' : 'bg-white/90'}`}>
+                          <p className="font-sans text-[11px] font-semibold uppercase tracking-wide text-stone-400 dark:text-stone-500">Avoid</p>
+                          <p className="mt-1 font-sans text-sm text-stone-700 dark:text-stone-200">{todayHero.avoidLine}</p>
+                        </div>
+                      </div>
+                      {todayHero.recoveryTimingLine && (
+                        <div className={`mt-2 rounded-xl px-3 py-2 ${isDark ? 'bg-slate-800/80' : 'bg-white/90'}`}>
+                          <p className="font-sans text-[11px] font-semibold uppercase tracking-wide text-stone-400 dark:text-stone-500">Recovery move</p>
+                          <p className="mt-1 font-sans text-sm text-stone-700 dark:text-stone-200">{todayHero.recoveryTimingLine}</p>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row gap-3">
                       <button
                         type="button"
-                        onClick={() => openModal('insights')}
-                        className="font-sans text-moss-600 dark:text-moss-400 hover:underline focus:outline-none focus:ring-2 focus:ring-moss-500/40 rounded ml-auto"
+                        onClick={todayHero.primaryAction.onClick}
+                        disabled={todayHero.primaryAction.disabled}
+                        className="flex-1 rounded-2xl bg-moss-600 px-4 py-3 font-sans text-sm font-semibold text-white shadow-sm transition hover:bg-moss-700 focus:outline-none focus:ring-2 focus:ring-moss-500/40 disabled:cursor-not-allowed disabled:opacity-70"
                       >
-                        Reflect
+                        {todayHero.primaryAction.label}
                       </button>
+                      {todayHero.secondaryActions.map((action) => (
+                        <button
+                          key={action.label}
+                          type="button"
+                          onClick={action.onClick}
+                          disabled={action.disabled}
+                          className={`rounded-2xl px-4 py-3 font-sans text-sm font-medium transition focus:outline-none focus:ring-2 focus:ring-moss-500/40 disabled:cursor-not-allowed disabled:opacity-70 ${
+                            isDark
+                              ? 'border border-slate-600/60 bg-slate-800/60 text-stone-200 hover:bg-slate-700/70'
+                              : 'border border-stone-200 bg-stone-50 text-stone-700 hover:bg-stone-100'
+                          }`}
+                        >
+                          {action.label}
+                        </button>
+                      ))}
                     </div>
-                    <p className="font-sans text-xs text-stone-500 dark:text-stone-400 mt-1.5 px-0.5" aria-live="polite">
-                      {continuitySummary.weekTendingDays === 0
-                        ? 'Your rhythm builds when you show up — even for a few minutes.'
-                        : continuitySummary.weekTendingDays === 1
-                          ? 'You showed up one day this week. Small starts matter.'
-                          : `You've tended the garden ${continuitySummary.weekTendingDays} days this week.`}
+                  </div>
+                </section>
+              </TourHighlight>
+
+              <section className={`rounded-3xl border px-5 py-5 ${isDark ? 'border-slate-600/50 bg-slate-800/70' : 'border-stone-200/80 bg-white/90'}`}>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="font-sans text-xs font-semibold uppercase tracking-[0.16em] text-stone-400 dark:text-stone-500">Assistant actions</p>
+                    <h2 className="mt-2 font-serif text-xl text-stone-900 dark:text-stone-100">
+                      {todayAssistantSignals[0]?.message ?? 'I can make the plan easier with one tap.'}
+                    </h2>
+                    <p className="mt-1 font-sans text-sm text-stone-500 dark:text-stone-400">
+                      Action-first here. Use chat only when the plan change needs more explanation.
                     </p>
-                    {lastGardenImpact?.text && (
-                      <p className="font-sans text-xs text-moss-600 dark:text-moss-400 mt-1.5 px-0.5 flex items-center justify-between gap-2" aria-live="polite">
-                        <span>Garden: {lastGardenImpact.text}</span>
-                        <button type="button" onClick={clearLastGardenImpact} className="shrink-0 text-stone-400 hover:text-stone-600 dark:hover:text-stone-300 focus:outline-none focus:ring-2 focus:ring-moss-500/40 rounded px-1" aria-label="Dismiss">×</button>
-                      </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => openModal('chat')}
+                    className="rounded-xl border border-stone-200 px-3 py-2 font-sans text-sm text-stone-700 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40 dark:border-slate-600 dark:text-stone-200 dark:hover:bg-slate-700/60"
+                  >
+                    Open chat
+                  </button>
+                </div>
+
+                {todayAssistantSignals.length > 1 && (
+                  <div className="mt-4 grid gap-2 md:grid-cols-2">
+                    {todayAssistantSignals.slice(1).map((signal) => (
+                      <div key={signal.id} className={`rounded-2xl px-3 py-3 ${
+                        signal.tone === 'amber'
+                          ? isDark ? 'bg-amber-900/20' : 'bg-amber-50'
+                          : isDark ? 'bg-slate-900/35' : 'bg-stone-50'
+                      }`}>
+                        <p className="font-sans text-sm text-stone-700 dark:text-stone-200">{signal.message}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="mt-4">
+                  <AiActionChips
+                    actions={todayAssistantActions}
+                    onAction={handleAssistantOperatorAction}
+                    loadingAction={assistantActionBusy}
+                  />
+                </div>
+              </section>
+
+              <section className={`rounded-3xl border px-5 py-5 ${isDark ? 'border-slate-600/50 bg-slate-800/70' : 'border-stone-200/80 bg-white/90'}`}>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h2 className="font-serif text-xl text-stone-900 dark:text-stone-100">Must-do lane</h2>
+                    <p className="mt-1 font-sans text-sm text-stone-500 dark:text-stone-400">Keep today narrow: one main task, two support moves, and one optional easy win.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleOpenDailyPlanRitual}
+                    className="rounded-xl border border-moss-300 px-3 py-2 font-sans text-sm text-moss-700 hover:bg-moss-50 focus:outline-none focus:ring-2 focus:ring-moss-500/40 dark:border-moss-700 dark:text-moss-300 dark:hover:bg-moss-900/30"
+                  >
+                    Plan today
+                  </button>
+                </div>
+
+                <div className="mt-4 grid gap-3 lg:grid-cols-[1.2fr_1fr_1fr_1fr]">
+                  <div className={`rounded-2xl border px-4 py-4 ${isDark ? 'border-moss-700/40 bg-moss-900/20' : 'border-moss-200 bg-moss-50/80'}`}>
+                    <p className="font-sans text-[11px] font-semibold uppercase tracking-wide text-moss-700 dark:text-moss-300">Primary</p>
+                    {todayMustDoLane.primary ? (
+                      <>
+                        <p className="mt-2 font-sans text-base font-semibold text-stone-900 dark:text-stone-100">{todayMustDoLane.primary.title}</p>
+                        <p className="mt-1 font-sans text-sm text-stone-600 dark:text-stone-300">{todayMustDoLane.primary.detail}</p>
+                        <button
+                          type="button"
+                          onClick={todayMustDoLane.primary.onClick}
+                          className="mt-3 rounded-xl bg-moss-600 px-3 py-2 font-sans text-sm font-medium text-white hover:bg-moss-700 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
+                        >
+                          {todayMustDoLane.primary.ctaLabel ?? 'Start first task'}
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <p className="mt-2 font-sans text-base font-semibold text-stone-900 dark:text-stone-100">No first task picked yet</p>
+                        <p className="mt-1 font-sans text-sm text-stone-600 dark:text-stone-300">Use Plan today or AI rebuild to narrow the day to one clear starting point.</p>
+                      </>
                     )}
                   </div>
-                  </>
-                  )}
-                  <TourHighlight step={3} tooltip="Click the checkbox to complete it and earn your first Ember.">
-                    <div
-                      id="tour-timeline"
-                      className="overflow-y-auto max-h-[80vh] rounded-2xl border border-stone-200/80 dark:border-slate-600/50 bg-white/90 dark:bg-slate-800/60 backdrop-blur-md shadow-lg p-4"
-                      style={{ boxShadow: '0 4px 24px -4px rgba(0,0,0,0.08), 0 0 0 1px rgba(0,0,0,0.04)' }}
-                    >
-                      <ScheduleErrorBoundary onCollapse={() => {}}>
-                        <TimeSlicer
+
+                  {todayMustDoLane.support.map((item, index) => (
+                    <div key={`${item.title}-${index}`} className={`rounded-2xl border px-4 py-4 ${isDark ? 'border-slate-600/50 bg-slate-900/30' : 'border-stone-200 bg-stone-50/80'}`}>
+                      <p className="font-sans text-[11px] font-semibold uppercase tracking-wide text-stone-400 dark:text-stone-500">Support {index + 1}</p>
+                      <p className="mt-2 font-sans text-base font-semibold text-stone-900 dark:text-stone-100">{item.title}</p>
+                      <p className="mt-1 font-sans text-sm text-stone-600 dark:text-stone-300">{item.detail}</p>
+                    </div>
+                  ))}
+
+                  <div className={`rounded-2xl border px-4 py-4 ${isDark ? 'border-slate-600/50 bg-slate-900/30' : 'border-stone-200 bg-stone-50/80'}`}>
+                    <p className="font-sans text-[11px] font-semibold uppercase tracking-wide text-stone-400 dark:text-stone-500">Quick win</p>
+                    {todayMustDoLane.quickWin ? (
+                      <>
+                        <p className="mt-2 font-sans text-base font-semibold text-stone-900 dark:text-stone-100">{todayMustDoLane.quickWin.title}</p>
+                        <p className="mt-1 font-sans text-sm text-stone-600 dark:text-stone-300">{todayMustDoLane.quickWin.detail}</p>
+                        <button
+                          type="button"
+                          onClick={todayMustDoLane.quickWin.onClick}
+                          className="mt-3 rounded-xl border border-stone-200 px-3 py-2 font-sans text-sm font-medium text-stone-700 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40 dark:border-slate-600 dark:text-stone-200 dark:hover:bg-slate-700/60"
+                        >
+                          Start in 5 min
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <p className="mt-2 font-sans text-base font-semibold text-stone-900 dark:text-stone-100">No quick win needed</p>
+                        <p className="mt-1 font-sans text-sm text-stone-600 dark:text-stone-300">Leave this empty unless you need an easy restart later.</p>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </section>
+
+              <section className={`rounded-3xl border px-5 py-5 ${isDark ? 'border-slate-600/50 bg-slate-800/70' : 'border-stone-200/80 bg-white/90'}`}>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h2 className="font-serif text-xl text-stone-900 dark:text-stone-100">Day map</h2>
+                    <p className="mt-1 font-sans text-sm text-stone-500 dark:text-stone-400">{todayPathSummary.follow}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('planner')}
+                    className="rounded-xl border border-stone-200 px-3 py-2 font-sans text-sm text-stone-700 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40 dark:border-slate-600 dark:text-stone-200 dark:hover:bg-slate-700/60"
+                  >
+                    Open Plan
+                  </button>
+                </div>
+
+                <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                  {todayMapBlocks.map((block) => (
+                    <div key={block.label} className={`rounded-2xl px-3 py-3 ${isDark ? 'bg-slate-900/35' : 'bg-stone-50'}`}>
+                      <p className="font-sans text-[11px] font-semibold uppercase tracking-wide text-stone-400 dark:text-stone-500">{block.label}</p>
+                      <p className="mt-1 font-sans text-sm text-stone-700 dark:text-stone-200">{block.detail}</p>
+                    </div>
+                  ))}
+                </div>
+
+                <TourHighlight step={3} tooltip="This is the full day map. Use it after the briefing, not before.">
+                  <div
+                    id="tour-timeline"
+                    className="mt-4 overflow-y-auto max-h-[78vh] rounded-2xl border border-stone-200/80 bg-white/85 p-4 shadow-sm dark:border-slate-600/50 dark:bg-slate-900/35"
+                  >
+                    <ScheduleErrorBoundary onCollapse={() => {}}>
+                      <TimeSlicer
                         zenMode
                         suppressPrimaryActionsInZen
                         weather={weather ?? 'sun'}
@@ -3389,13 +4235,83 @@ function GardenDashboard() {
                         monthlyRoadmap={monthlyRoadmap}
                         primaryWeekPlanning={planningEntry.primaryWeekPlanning}
                       />
-                      </ScheduleErrorBoundary>
-                    </div>
-                  </TourHighlight>
+                    </ScheduleErrorBoundary>
+                  </div>
+                </TourHighlight>
+              </section>
+
+              {todayRecoveryItems.length > 0 && (
+                <section className={`rounded-3xl border px-5 py-5 ${
+                  isDark ? 'border-amber-800/60 bg-amber-900/15' : 'border-amber-200 bg-amber-50/80'
+                }`}>
+                  <div>
+                    <h2 className="font-serif text-xl text-stone-900 dark:text-stone-100">Recovery and risks</h2>
+                    <p className="mt-1 font-sans text-sm text-stone-600 dark:text-stone-300">Only the things that need attention right now.</p>
+                  </div>
+                  <div className="mt-4 grid gap-3 lg:grid-cols-3">
+                    {todayRecoveryItems.map((item) => (
+                      <div
+                        key={item.key}
+                        className={`rounded-2xl border px-4 py-4 ${
+                          item.tone === 'amber'
+                            ? isDark
+                              ? 'border-amber-700/60 bg-amber-900/20'
+                              : 'border-amber-200 bg-white/80'
+                            : isDark
+                              ? 'border-slate-600/50 bg-slate-900/30'
+                              : 'border-stone-200 bg-white/80'
+                        }`}
+                      >
+                        <p className="font-sans text-base font-semibold text-stone-900 dark:text-stone-100">{item.title}</p>
+                        <p className="mt-1 font-sans text-sm text-stone-600 dark:text-stone-300">{item.body}</p>
+                        <button
+                          type="button"
+                          onClick={item.onClick}
+                          className={`mt-3 rounded-xl px-3 py-2 font-sans text-sm font-medium focus:outline-none focus:ring-2 focus:ring-moss-500/40 ${
+                            item.tone === 'amber'
+                              ? 'bg-amber-600 text-white hover:bg-amber-700'
+                              : 'border border-stone-200 text-stone-700 hover:bg-stone-100 dark:border-slate-600 dark:text-stone-200 dark:hover:bg-slate-700/60'
+                          }`}
+                        >
+                          {item.actionLabel}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              <section className={`rounded-3xl border px-5 py-4 ${isDark ? 'border-slate-600/50 bg-slate-800/55' : 'border-stone-200/80 bg-stone-50/90'}`}>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h2 className="font-serif text-lg text-stone-900 dark:text-stone-100">Progress today</h2>
+                    <p className="mt-1 font-sans text-sm text-stone-600 dark:text-stone-300">{todayProgressFooter.progressLine}</p>
+                    <p className="mt-1 font-sans text-sm text-stone-500 dark:text-stone-400">{todayProgressFooter.supportLine}</p>
+                    {todayProgressFooter.gardenLine && (
+                      <p className="mt-2 font-sans text-xs text-moss-700 dark:text-moss-300">{todayProgressFooter.gardenLine}</p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => openModal('insights')}
+                      className="rounded-xl border border-stone-200 px-3 py-2 font-sans text-sm text-stone-700 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40 dark:border-slate-600 dark:text-stone-200 dark:hover:bg-slate-700/60"
+                    >
+                      Reflect
+                    </button>
+                    {lastGardenImpact?.text && (
+                      <button
+                        type="button"
+                        onClick={clearLastGardenImpact}
+                        className="rounded-xl px-3 py-2 font-sans text-sm text-stone-500 hover:text-stone-700 focus:outline-none focus:ring-2 focus:ring-moss-500/40 dark:text-stone-400 dark:hover:text-stone-200"
+                      >
+                        Dismiss garden note
+                      </button>
+                    )}
+                  </div>
                 </div>
-                </div>
-              </div>
-            )}
+              </section>
+            </div>
           </>
         )}
         {activeTab === 'planner' && (
@@ -3432,13 +4348,9 @@ function GardenDashboard() {
                   <p className="font-sans text-sm font-medium text-stone-800 dark:text-stone-200">Projects</p>
                   <p className="font-sans text-xs text-stone-500 dark:text-stone-400 mt-0.5">Break a project into steps, milestones, and deadlines.</p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setShowProjectPlanner(true)}
-                  className="shrink-0 font-sans text-xs text-moss-600 dark:text-moss-400 hover:underline focus:outline-none focus:ring-2 focus:ring-moss-500/40 rounded px-1 py-0.5"
-                >
-                  View projects
-                </button>
+                <span className="shrink-0 font-sans text-xs text-stone-500 dark:text-stone-400">
+                  Use Project Planner for decomposition.
+                </span>
               </div>
             </div>
 
@@ -3495,10 +4407,11 @@ function GardenDashboard() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setPlannerPlanDayDateStr(today)}
+                    onClick={handlePlanWeek}
                     className="inline-flex items-center gap-2 py-2 px-3 rounded-lg font-sans text-sm font-medium border border-stone-300 dark:border-stone-600 text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800/70 focus:outline-none focus:ring-2 focus:ring-stone-400/30 transition-colors"
+                    disabled={planningWeek}
                   >
-                    Open day planner
+                    {planningWeek ? 'Planning with AI...' : 'Plan with AI'}
                   </button>
                 </>
               )}
@@ -3556,6 +4469,19 @@ function GardenDashboard() {
                   </p>
                   {weekCapacity.overload && (
                     <p className="mt-1 font-sans text-xs text-amber-600 dark:text-amber-400">Week is overplanned</p>
+                  )}
+                  {(learnedFocusRecommendation?.explanation || learnedAdminRecommendation?.explanation || learnedEnergyProfile?.overloadWeekday?.explanation) && (
+                    <div className="mt-2 space-y-1">
+                      {learnedFocusRecommendation?.explanation && (
+                        <p className="font-sans text-xs text-moss-700 dark:text-moss-300">{learnedFocusRecommendation.explanation}</p>
+                      )}
+                      {learnedAdminRecommendation?.explanation && (
+                        <p className="font-sans text-xs text-stone-500 dark:text-stone-400">{learnedAdminRecommendation.explanation}</p>
+                      )}
+                      {learnedEnergyProfile?.overloadWeekday?.explanation && (
+                        <p className="font-sans text-xs text-amber-600 dark:text-amber-400">{learnedEnergyProfile.overloadWeekday.explanation}</p>
+                      )}
+                    </div>
                   )}
                 </div>
                 <div className="min-w-[220px] flex-1 rounded-lg border border-stone-200 dark:border-stone-700 bg-white/80 dark:bg-stone-800/70 px-3 py-2">
@@ -4100,11 +5026,8 @@ function GardenDashboard() {
         open={commandPaletteOpen}
         onClose={() => setCommandPaletteOpen(false)}
         onOpen={() => setCommandPaletteOpen(true)}
-        goals={goals}
-        assignments={assignments}
-        onAssignmentsChange={handlePlantFromPalette}
-        onOpenGoalCreator={handleOpenGoalCreatorFromPalette}
         onOpenSpiritBuilder={() => { setCommandPaletteOpen(false); openModal('mirror'); }}
+        onCapture={handleCaptureFromPalette}
       />
 
       {activeTab !== 'garden' && (
@@ -4116,7 +5039,10 @@ function GardenDashboard() {
             setGoalCreatorInitialSubtasks([]);
             setIsPlanting(true);
           }}
-          onOpenScheduleEvent={() => setShowScheduleEventModal(true)}
+          onOpenScheduleEvent={(title) => {
+            setScheduleEventPrefill(title ? { title } : null);
+            setShowScheduleEventModal(true);
+          }}
           onOpenBrainDump={() => openModal('compost')}
           onParsedRoute={handleOmniAddParsedRoute}
         />
@@ -4175,7 +5101,7 @@ function GardenDashboard() {
         existingVitalityGoals={(goals ?? []).filter((g) => g.type === 'vitality')}
         ritualCategories={userSettings?.ritualCategories ?? []}
         onAddRitualCategory={addRitualCategory}
-        onOpenProjectPlanner={() => setShowProjectPlanner(true)}
+        onOpenProjectPlanner={() => { setProjectPlannerImportedPlan(null); setShowProjectPlanner(true); }}
       />
 
       <ProjectPlanner
@@ -4183,11 +5109,15 @@ function GardenDashboard() {
         onClose={() => {
           setShowProjectPlanner(false);
           setProjectPlannerPrefill({ prefillTitle: '', prefillParentGoalId: '' });
+          setProjectPlannerImportedPlan(null);
           setProjectPlannerFocusGoalId(null);
         }}
         onCreateGoals={handleProjectGoals}
         prefillTitle={projectPlannerPrefill.prefillTitle}
         prefillParentGoalId={projectPlannerPrefill.prefillParentGoalId}
+        prefillPlan={projectPlannerImportedPlan?.plan ?? null}
+        prefillDescription={projectPlannerImportedPlan?.description ?? ''}
+        prefillDeadline={projectPlannerImportedPlan?.deadline ?? ''}
         focusGoalId={projectPlannerFocusGoalId}
         onStartFocus={(payload) => { runStartFocus(payload); setShowProjectPlanner(false); }}
         onReschedule={(payload) => { setActiveTab('planner'); setShowProjectPlanner(false); }}
@@ -4339,6 +5269,7 @@ function GardenDashboard() {
             prefillTitle: opts?.prefillTitle ?? '',
             prefillParentGoalId: opts?.prefillParentGoalId ?? opts?.parentGoalId ?? '',
           });
+          setProjectPlannerImportedPlan(null);
           setEditingGoal(null);
           setShowProjectPlanner(true);
         }}
@@ -4355,6 +5286,8 @@ function GardenDashboard() {
           energy: dailyEnergyModifier ?? 0,
           weather: weather ?? 'sun',
         }}
+        onOperatorAction={handleAssistantOperatorAction}
+        operatorLoadingAction={assistantActionBusy}
       />
 
       <CompostHeap
@@ -4374,6 +5307,20 @@ function GardenDashboard() {
         }}
         onViewInPlanner={(project) => {
           if (project?.id) setProjectPlannerFocusGoalId(project.id);
+          setProjectPlannerImportedPlan(null);
+          closeModal('compost');
+          setShowProjectPlanner(true);
+        }}
+        onOpenProjectPlannerForDocumentPlan={(payload) => {
+          setProjectPlannerPrefill({
+            prefillTitle: payload?.title ?? '',
+            prefillParentGoalId: '',
+          });
+          setProjectPlannerImportedPlan({
+            plan: payload?.plan ?? null,
+            description: payload?.description ?? '',
+            deadline: payload?.deadline ?? '',
+          });
           closeModal('compost');
           setShowProjectPlanner(true);
         }}

@@ -3,49 +3,29 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { DefaultSpiritSvg, ThinkingDots } from './MochiSpirit';
 import { chatWithSpirit, suggestGoalStructure } from '../../services/geminiService';
 import { useGarden } from '../../context/GardenContext';
-import { extractActionCandidate, splitIntoSteps } from '../../services/aiActionExtractor';
+import { splitIntoSteps } from '../../services/aiActionExtractor';
 import { HOURS, getAssignmentsForHour } from './TimeSlicer';
 import { startFocusCommand } from '../../services/coreCommands';
+import AiActionChips from '../Spirit/AiActionChips';
 
-const SPIRIT_EMOJI_BY_TYPE = { mochi: '🐱', cat: '🐱', ember: '🔥', nimbus: '☁️', owl: '🦉' };
-
+const SPIRIT_EMOJI_BY_TYPE = { mochi: 'cat', cat: 'cat', ember: 'fire', nimbus: 'cloud', owl: 'owl' };
 const ERROR_PHRASES = ['try again', 'something rustled', 'tea is still steeping', 'wind is calm'];
+const CUSTOM_HEADS = { bunny: 'bunny', cat: 'cat', bear: 'bear', fox: 'fox', bot: 'bot', owl: 'owl' };
+const EMOJI_MAP = {
+  cat: '🐱',
+  fire: '🔥',
+  cloud: '☁️',
+  owl: '🦉',
+  bunny: '🐰',
+  bear: '🐻',
+  fox: '🦊',
+  bot: '🤖',
+};
 
 function isErrorLikeMessage(text) {
   if (typeof text !== 'string') return true;
   const lower = text.toLowerCase();
-  return ERROR_PHRASES.some((p) => lower.includes(p));
-}
-
-function AiActionChipsRow({ assistantText, onAction, chipLoading = false }) {
-  if (typeof assistantText !== 'string' || !assistantText.trim() || isErrorLikeMessage(assistantText)) return null;
-  const { title } = extractActionCandidate(assistantText);
-  const chips = [
-    { id: 'ADD_TINY_TASK', label: 'Add tiny task (5 min)' },
-    { id: 'SCHEDULE_NEXT', label: 'Schedule next slot' },
-    { id: 'START_FOCUS_5', label: 'Start 5-min focus' },
-    { id: 'BREAK_3_STEPS', label: 'Break into 3 steps' },
-    { id: 'SEND_TO_COMPOST', label: 'Send to compost' },
-    { id: 'AUTO_PLAN_GOAL', label: '✨ Auto-plan this goal' },
-  ];
-  return (
-    <div className="flex flex-wrap gap-2 mt-2" role="group" aria-label="Quick actions">
-      {chips.map((c) => {
-        const disabled = c.id === 'AUTO_PLAN_GOAL' && chipLoading;
-        return (
-          <button
-            key={c.id}
-            type="button"
-            disabled={disabled}
-            onClick={() => onAction(c.id, { title })}
-            className="px-3 py-1.5 rounded-full font-sans text-xs border border-stone-200 bg-white/90 text-stone-700 hover:bg-moss-50 hover:border-moss-300 focus:outline-none focus:ring-2 focus:ring-moss-500/40 disabled:opacity-60 disabled:pointer-events-none"
-          >
-            {c.label}
-          </button>
-        );
-      })}
-    </div>
-  );
+  return ERROR_PHRASES.some((phrase) => lower.includes(phrase));
 }
 
 function fireToast(message) {
@@ -54,32 +34,55 @@ function fireToast(message) {
   }
 }
 
-export default function SpiritChat({ open, onClose, context = {} }) {
+export default function SpiritChat({
+  open,
+  onClose,
+  context = {},
+  onOperatorAction = null,
+  operatorLoadingAction = null,
+}) {
   const { addGoal, addToCompost, setAssignments, assignments, spiritConfig } = useGarden();
   const [history, setHistory] = useState([]);
-
-  const spiritName = spiritConfig?.name || 'Mochi';
-  const spiritEmoji = spiritConfig?.emoji ?? (spiritConfig?.type === 'custom' ? { bunny: '🐰', cat: '🐱', bear: '🐻', fox: '🦊', bot: '🤖', owl: '🦉' }[spiritConfig?.head] : SPIRIT_EMOJI_BY_TYPE[spiritConfig?.type]) ?? '🌸';
-
-  const renderSpiritAvatar = () => {
-    if (!spiritConfig) return <span className="text-4xl">{spiritEmoji}</span>;
-    if (spiritConfig.type === 'mochi' && !spiritConfig.emoji) return <DefaultSpiritSvg className="w-10 h-10 drop-shadow-sm" />;
-    return <span className="text-4xl">{spiritEmoji}</span>;
-  };
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isAutoPlanLoading, setIsAutoPlanLoading] = useState(false);
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
 
+  const spiritName = spiritConfig?.name || 'Mochi';
+  const spiritEmojiKey = spiritConfig?.emoji
+    ? null
+    : spiritConfig?.type === 'custom'
+      ? CUSTOM_HEADS[spiritConfig?.head] ?? 'cat'
+      : SPIRIT_EMOJI_BY_TYPE[spiritConfig?.type] ?? 'cat';
+  const spiritEmoji = spiritConfig?.emoji ?? EMOJI_MAP[spiritEmojiKey] ?? '🌸';
+
+  const renderSpiritAvatar = () => {
+    if (!spiritConfig) return <span className="text-4xl">{spiritEmoji}</span>;
+    if (spiritConfig.type === 'mochi' && !spiritConfig.emoji) return <DefaultSpiritSvg className="w-10 h-10 drop-shadow-sm" />;
+    return <span className="text-4xl">{spiritEmoji}</span>;
+  };
+
   const scrollToBottom = () => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
 
-  const handleChipAction = (actionType, payload) => {
+  useEffect(() => {
+    if (open) {
+      scrollToBottom();
+      inputRef.current?.focus();
+    }
+  }, [open, history]);
+
+  const handleChipAction = async (actionType, payload) => {
     const title = (payload?.title || 'Tiny next step').trim() || 'Tiny next step';
-    const makeGoal = (t, mins = 5) => ({
+    if (typeof onOperatorAction === 'function') {
+      const handled = await onOperatorAction(actionType, payload ?? {});
+      if (handled !== false) return;
+    }
+
+    const makeGoal = (goalTitle, mins = 5) => ({
       id: `ai-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
       type: 'routine',
-      title: t,
+      title: goalTitle,
       estimatedMinutes: mins,
       totalMinutes: 0,
       createdAt: new Date().toISOString(),
@@ -89,17 +92,21 @@ export default function SpiritChat({ open, onClose, context = {} }) {
       case 'ADD_TINY_TASK': {
         const goal = makeGoal(title);
         addGoal(goal);
-        const firstEmpty = HOURS.find((h) => getAssignmentsForHour(assignments, h).length === 0);
-        if (firstEmpty) setAssignments((prev) => ({ ...prev, [firstEmpty]: [...getAssignmentsForHour(prev, firstEmpty), goal.id] }));
-        fireToast('Added a tiny step 🌱');
+        const firstEmpty = HOURS.find((hour) => getAssignmentsForHour(assignments, hour).length === 0);
+        if (firstEmpty) {
+          setAssignments((prev) => ({ ...prev, [firstEmpty]: [...getAssignmentsForHour(prev, firstEmpty), goal.id] }));
+        }
+        fireToast('Added a tiny step.');
         break;
       }
       case 'SCHEDULE_NEXT': {
         const goal = makeGoal(title);
         addGoal(goal);
-        const firstEmpty = HOURS.find((h) => getAssignmentsForHour(assignments, h).length === 0);
-        if (firstEmpty) setAssignments((prev) => ({ ...prev, [firstEmpty]: [...getAssignmentsForHour(prev, firstEmpty), goal.id] }));
-        fireToast('Added to today. You can place it in your schedule.');
+        const firstEmpty = HOURS.find((hour) => getAssignmentsForHour(assignments, hour).length === 0);
+        if (firstEmpty) {
+          setAssignments((prev) => ({ ...prev, [firstEmpty]: [...getAssignmentsForHour(prev, firstEmpty), goal.id] }));
+        }
+        fireToast('Added to today.');
         break;
       }
       case 'START_FOCUS_5': {
@@ -109,64 +116,60 @@ export default function SpiritChat({ open, onClose, context = {} }) {
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('kaizen:startFocus', { detail: { goal: session, title, minutes: 5 } }));
         }
-        fireToast('Starting 5 min focus 🌱');
+        fireToast('Starting 5 min focus.');
         break;
       }
       case 'BREAK_3_STEPS': {
-        const lastModel = history.filter((m) => m.role === 'model').pop();
+        const lastModel = history.filter((message) => message.role === 'model').pop();
         const steps = splitIntoSteps(lastModel?.text || '', 3);
-        const toAdd = steps.length >= 2 ? steps : [title, 'Second step', 'Third step'].slice(0, 3);
-        const goalsToAdd = toAdd.map((stepTitle) => makeGoal(stepTitle));
-        goalsToAdd.forEach((g) => addGoal(g));
-        const emptySlots = HOURS.filter((h) => getAssignmentsForHour(assignments, h).length === 0).slice(0, goalsToAdd.length);
-        if (emptySlots.length > 0) {
-          setAssignments((prev) => {
-            const next = { ...prev };
-            emptySlots.forEach((slot, i) => {
-              if (goalsToAdd[i]) next[slot] = [...getAssignmentsForHour(next, slot), goalsToAdd[i].id];
-            });
-            return next;
-          });
-        }
-        fireToast(`Added ${goalsToAdd.length} tiny steps 🌱`);
+        const stepTitles = steps.length >= 2 ? steps : [title, 'Second step', 'Third step'].slice(0, 3);
+        const newGoals = stepTitles.map((stepTitle) => makeGoal(stepTitle));
+        newGoals.forEach((goal) => addGoal(goal));
+        fireToast(`Added ${newGoals.length} small steps.`);
         break;
       }
       case 'SEND_TO_COMPOST': {
         addToCompost(title);
-        fireToast('Moved to compost 🌿');
+        fireToast('Moved to compost.');
         break;
       }
       case 'AUTO_PLAN_GOAL': {
-        (async () => {
-          setIsAutoPlanLoading(true);
-          try {
-            const structure = await suggestGoalStructure(title, 'kaizen');
-            const uid = () => crypto.randomUUID?.() ?? `id-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-            const newGoal = {
-              id: uid(),
-              type: 'kaizen',
-              title,
-              estimatedMinutes: structure?.estimatedMinutes ?? 30,
-              targetHours: structure?.targetHours ?? 3,
-              totalMinutes: 0,
-              createdAt: new Date().toISOString(),
-              subtasks: (structure?.vines?.length
-                ? structure.vines.map((v) => ({ id: uid(), title: typeof v === 'string' ? v : v?.title ?? 'Step', estimatedHours: 0.1, completedHours: 0 }))
-                : [{ id: uid(), title: 'First step', estimatedHours: 0.1, completedHours: 0 }]),
-              rituals: (structure?.rituals?.length ? structure.rituals.map((r) => ({ ...r, id: uid() })) : []),
-              milestones: (structure?.milestones?.length
-                ? structure.milestones.map((m) => ({ id: uid(), title: typeof m === 'string' ? m : m?.title ?? '', completed: false }))
-                : []),
-            };
-            addGoal(newGoal);
-            fireToast('Magically planned and planted in your garden! 🌱');
-          } catch (e) {
-            console.warn('Auto-plan goal failed', e);
-            fireToast('Something rustled. Try again or open Goal Creator.');
-          } finally {
-            setIsAutoPlanLoading(false);
-          }
-        })();
+        setIsAutoPlanLoading(true);
+        try {
+          const structure = await suggestGoalStructure(title, 'kaizen');
+          const uid = () => crypto.randomUUID?.() ?? `id-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+          addGoal({
+            id: uid(),
+            type: 'kaizen',
+            title,
+            estimatedMinutes: structure?.estimatedMinutes ?? 30,
+            targetHours: structure?.targetHours ?? 3,
+            totalMinutes: 0,
+            createdAt: new Date().toISOString(),
+            subtasks: structure?.vines?.length
+              ? structure.vines.map((vine) => ({
+                  id: uid(),
+                  title: typeof vine === 'string' ? vine : vine?.title ?? 'Step',
+                  estimatedHours: 0.1,
+                  completedHours: 0,
+                }))
+              : [{ id: uid(), title: 'First step', estimatedHours: 0.1, completedHours: 0 }],
+            rituals: structure?.rituals?.length ? structure.rituals.map((ritual) => ({ ...ritual, id: uid() })) : [],
+            milestones: structure?.milestones?.length
+              ? structure.milestones.map((milestone) => ({
+                  id: uid(),
+                  title: typeof milestone === 'string' ? milestone : milestone?.title ?? '',
+                  completed: false,
+                }))
+              : [],
+          });
+          fireToast('Draft plan added.');
+        } catch (error) {
+          console.warn('Auto-plan goal failed', error);
+          fireToast('Could not auto-plan that yet.');
+        } finally {
+          setIsAutoPlanLoading(false);
+        }
         break;
       }
       default:
@@ -174,15 +177,8 @@ export default function SpiritChat({ open, onClose, context = {} }) {
     }
   };
 
-  useEffect(() => {
-    if (open) {
-      scrollToBottom();
-      inputRef.current?.focus();
-    }
-  }, [open, history]);
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  const handleSubmit = async (event) => {
+    event.preventDefault();
     const text = input.trim();
     if (!text || isLoading) return;
 
@@ -192,23 +188,16 @@ export default function SpiritChat({ open, onClose, context = {} }) {
     setIsLoading(true);
 
     try {
-      const newHistory = [...history, userMessage];
-      const reply = await chatWithSpirit(newHistory, context);
+      const reply = await chatWithSpirit([...history, userMessage], context);
       if (reply != null) {
-        const text = typeof reply === 'string' ? reply : reply?.text;
+        const replyText = typeof reply === 'string' ? reply : reply?.text;
         const meta = typeof reply === 'object' && reply !== null ? reply.meta : undefined;
-        setHistory((prev) => [...prev, { role: 'model', text: text ?? '', ...(meta && { meta }) }]);
+        setHistory((prev) => [...prev, { role: 'model', text: replyText ?? '', ...(meta && { meta }) }]);
       } else {
-        setHistory((prev) => [
-          ...prev,
-          { role: 'model', text: 'The tea is still steeping. Try again in a moment, or rest here with me.' },
-        ]);
+        setHistory((prev) => [...prev, { role: 'model', text: 'The tea is still steeping. Try again in a moment.' }]);
       }
     } catch {
-      setHistory((prev) => [
-        ...prev,
-        { role: 'model', text: 'Something rustled in the garden. Try again when the wind is calm.' },
-      ]);
+      setHistory((prev) => [...prev, { role: 'model', text: 'Something rustled in the garden. Try again when the wind is calm.' }]);
     } finally {
       setIsLoading(false);
     }
@@ -226,23 +215,25 @@ export default function SpiritChat({ open, onClose, context = {} }) {
         onClick={onClose}
         role="dialog"
         aria-modal="true"
-        aria-label="Chat with Mochi Spirit"
+        aria-label="Chat with assistant"
       >
         <motion.aside
           initial={{ x: '100%' }}
           animate={{ x: 0 }}
           exit={{ x: '100%' }}
           transition={{ type: 'spring', damping: 28, stiffness: 300 }}
-          onClick={(e) => e.stopPropagation()}
-          className="w-full max-w-md h-full bg-stone-50 border-l border-stone-200 shadow-xl flex flex-col safe-area-pt safe-area-pb max-h-[100dvh]"
+          onClick={(event) => event.stopPropagation()}
+          className="w-full max-w-md h-full max-h-[100dvh] bg-stone-50 border-l border-stone-200 shadow-xl flex flex-col safe-area-pt safe-area-pb"
         >
-          {/* Header */}
           <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-stone-200 bg-white/80">
             <div className="flex items-center gap-3 min-w-0">
               <div className="flex-shrink-0 flex items-center justify-center w-10 h-10">
                 {renderSpiritAvatar()}
               </div>
-              <h2 className="font-serif text-stone-900 text-lg truncate">Chat with {spiritName}</h2>
+              <div className="min-w-0">
+                <h2 className="font-serif text-stone-900 text-lg truncate">Assistant chat</h2>
+                <p className="font-sans text-xs text-stone-500 truncate">Action-first when possible, chat when needed.</p>
+              </div>
             </div>
             <button
               type="button"
@@ -250,46 +241,49 @@ export default function SpiritChat({ open, onClose, context = {} }) {
               className="p-2 rounded-lg text-stone-500 hover:text-stone-800 hover:bg-stone-200/60 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
               aria-label="Close chat"
             >
-              <span className="text-lg leading-none">×</span>
+              <span className="text-lg leading-none">x</span>
             </button>
           </div>
 
-          {/* Messages */}
           <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
             {history.length === 0 && !isLoading && (
               <p className="font-sans text-sm text-stone-500 italic">
-                Say something — how you feel, what you’re carrying, or ask for a gentle nudge.
+                Ask for a plan change, a calmer day, or help turning something vague into a next step.
               </p>
             )}
-            {history.map((msg, i) => (
-              <div
-                key={i}
-                className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
-              >
+
+            {history.map((message, index) => (
+              <div key={index} className={`flex flex-col ${message.role === 'user' ? 'items-end' : 'items-start'}`}>
                 <div
                   className={`max-w-[85%] px-4 py-2.5 rounded-2xl font-sans text-sm ${
-                    msg.role === 'user'
+                    message.role === 'user'
                       ? 'bg-moss-100 text-moss-900 rounded-br-md'
                       : 'bg-white border border-stone-200 text-stone-800 shadow-sm rounded-bl-md'
                   }`}
                 >
-                  {msg.role === 'model' && (
+                  {message.role === 'model' && (
                     <span className="text-stone-400 text-xs block mb-1" aria-hidden>{spiritName}</span>
                   )}
-                  <p className="leading-relaxed whitespace-pre-wrap">{msg.text}</p>
-                  {msg.role === 'model' && msg.meta?.redactionCount > 0 && (
+                  <p className="leading-relaxed whitespace-pre-wrap">{message.text}</p>
+                  {message.role === 'model' && message.meta?.redactionCount > 0 && (
                     <p className="text-stone-400 text-xs mt-2" aria-live="polite">
-                      Privacy note: removed {msg.meta.redactionCount} personal detail(s) before sending.
+                      Privacy note: removed {message.meta.redactionCount} personal detail(s) before sending.
                     </p>
                   )}
                 </div>
-                {msg.role === 'model' && (
-                  <div className="max-w-[85%] w-full mt-1">
-                    <AiActionChipsRow assistantText={msg.text} onAction={handleChipAction} chipLoading={isAutoPlanLoading} />
+                {message.role === 'model' && !isErrorLikeMessage(message.text) && (
+                  <div className="max-w-[85%] w-full mt-2">
+                    <AiActionChips
+                      assistantText={message.text}
+                      onAction={handleChipAction}
+                      loadingAction={operatorLoadingAction ?? (isAutoPlanLoading ? 'AUTO_PLAN_GOAL' : null)}
+                      compact
+                    />
                   </div>
                 )}
               </div>
             ))}
+
             {isLoading && (
               <div className="flex justify-start">
                 <div className="max-w-[85%] px-4 py-2.5 rounded-2xl rounded-bl-md bg-white border border-stone-200 shadow-sm">
@@ -300,18 +294,18 @@ export default function SpiritChat({ open, onClose, context = {} }) {
                 </div>
               </div>
             )}
+
             <div ref={messagesEndRef} />
           </div>
 
-          {/* Input */}
           <form onSubmit={handleSubmit} className="p-4 border-t border-stone-200 bg-white">
             <div className="flex gap-2">
               <input
                 ref={inputRef}
                 type="text"
                 value={input}
-                onChange={(e) => setInput(e.target.value)}
-                placeholder={`Type to ${spiritName}…`}
+                onChange={(event) => setInput(event.target.value)}
+                placeholder={`Type to ${spiritName}...`}
                 disabled={isLoading}
                 className="flex-1 py-2.5 px-4 rounded-xl border border-stone-200 bg-stone-50 font-sans text-stone-900 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-moss-500/40 focus:border-moss-500 disabled:opacity-60"
                 aria-label={`Message to ${spiritName}`}

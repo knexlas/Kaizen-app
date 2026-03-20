@@ -1,3 +1,6 @@
+import { inferTaskTimingType } from './energyDictionaryService';
+import { getTimingFitScore } from './insightsReflectionService';
+
 export const ENERGY_ZONES = {
   HIGH: { start: 9, end: 12, label: 'Deep Work 🧠' },
   MEDIUM: { start: 13, end: 17, label: 'Action Mode ⚡' },
@@ -46,23 +49,37 @@ export function recalibrateSchedule(missedTask, currentSchedule) {
 /**
  * Auto-assigns tasks to hours based on Energy Level.
  */
-export function optimizeDailySchedule(tasks, energyLevel = 'medium') {
+export function optimizeDailySchedule(tasks, energyLevel = 'medium', learnedEnergyProfile = null) {
   // 1. Sort tasks: Deep work first
-  const deepTasks = tasks.filter((t) => t.estimatedMinutes >= 45);
-  const quickTasks = tasks.filter((t) => t.estimatedMinutes < 45);
+  const deepTasks = tasks.filter((t) => inferTaskTimingType(t) === 'deep_work');
+  const quickTasks = tasks.filter((t) => inferTaskTimingType(t) !== 'deep_work');
 
   const schedule = {};
+  const scoredDeepTasks = [...deepTasks].sort((a, b) => {
+    const aScore = learnedEnergyProfile ? getTimingFitScore(learnedEnergyProfile, 'deep_work', 10) : 0;
+    const bScore = learnedEnergyProfile ? getTimingFitScore(learnedEnergyProfile, 'deep_work', 10) : 0;
+    if (aScore !== bScore) return bScore - aScore;
+    return (Number(b?.estimatedMinutes) || 0) - (Number(a?.estimatedMinutes) || 0);
+  });
+  const scoredQuickTasks = [...quickTasks].sort((a, b) => {
+    const aType = inferTaskTimingType(a);
+    const bType = inferTaskTimingType(b);
+    const aScore = learnedEnergyProfile ? getTimingFitScore(learnedEnergyProfile, aType, 14) : 0;
+    const bScore = learnedEnergyProfile ? getTimingFitScore(learnedEnergyProfile, bType, 14) : 0;
+    if (aScore !== bScore) return bScore - aScore;
+    return (Number(a?.estimatedMinutes) || 60) - (Number(b?.estimatedMinutes) || 60);
+  });
 
   // 2. Assign High Energy tasks to Morning (9-12)
   if (energyLevel === 'high' || energyLevel === 'medium') {
-    deepTasks.forEach((t, i) => {
+    scoredDeepTasks.forEach((t, i) => {
       const hour = 9 + i;
       if (hour < 12) schedule[minutesToHour(hour * 60)] = t;
     });
   }
 
   // 3. Assign remaining to afternoon
-  quickTasks.forEach((t, i) => {
+  scoredQuickTasks.forEach((t, i) => {
     const hour = 13 + i;
     if (hour < 17) schedule[minutesToHour(hour * 60)] = t;
   });

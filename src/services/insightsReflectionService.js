@@ -5,6 +5,8 @@
  */
 
 import { localISODate } from './dateUtils';
+import { inferTaskTimingType } from './energyDictionaryService';
+import { getPlannedMinutesByWeekday } from '../utils/plannedHoursAggregation';
 
 const DAY_LABELS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
@@ -218,4 +220,278 @@ export function buildReflectionInsights(logs, goals, checkInRows = [], spiritPoi
     suggestion,
     gardenStory,
   };
+}
+
+const TIME_BANDS = [
+  { id: 'early_morning', label: 'early morning', start: 6, end: 9 },
+  { id: 'late_morning', label: 'late morning', start: 9, end: 12 },
+  { id: 'early_afternoon', label: 'early afternoon', start: 12, end: 15 },
+  { id: 'late_afternoon', label: 'late afternoon', start: 15, end: 18 },
+  { id: 'evening', label: 'evening', start: 18, end: 22 },
+];
+
+const WEEKDAY_LABELS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+function getHourFromDateValue(value) {
+  if (!value) return null;
+  const d = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d.getHours();
+}
+
+function getBandForHour(hour) {
+  if (!Number.isFinite(Number(hour))) return TIME_BANDS[1];
+  return TIME_BANDS.find((band) => hour >= band.start && hour < band.end) ?? TIME_BANDS[TIME_BANDS.length - 1];
+}
+
+function buildHourMap() {
+  return Array.from({ length: 24 }, (_, hour) => ({
+    hour,
+    starts: 0,
+    completes: 0,
+    abandons: 0,
+    completionMinutes: 0,
+  }));
+}
+
+function buildBandMap() {
+  return TIME_BANDS.reduce((acc, band) => {
+    acc[band.id] = { bandId: band.id, label: band.label, starts: 0, completes: 0, abandons: 0, completionMinutes: 0 };
+    return acc;
+  }, {});
+}
+
+function completionScoreForHour(row) {
+  return (row.completes * 3) + Math.min(3, row.completionMinutes / 45) - (row.abandons * 2) - Math.max(0, row.starts - row.completes) * 0.5;
+}
+
+function describeFocusReason(bestBand) {
+  if (!bestBand) return null;
+  if (bestBand.completes >= Math.max(2, bestBand.abandons + 1)) {
+    return `You usually finish focused work better in ${bestBand.label}.`;
+  }
+  return `${bestBand.label[0].toUpperCase()}${bestBand.label.slice(1)} is currently your most reliable focus window.`;
+}
+
+function describeAdminReason(bestBand) {
+  if (!bestBand) return null;
+  return `Admin and lighter tasks tend to land better in ${bestBand.label}.`;
+}
+
+function describeWeakWindow(band) {
+  if (!band) return null;
+  return `Heavy work tends to slip more in ${band.label}.`;
+}
+
+/**
+ * Build a lightweight derived energy model from logs, planner state, and focus behavior history.
+ */
+export function buildDerivedEnergyProfile({
+  logs = [],
+  goals = [],
+  weekAssignments = {},
+  behaviorHistory = [],
+  userSettings = null,
+} = {}) {
+  const hourMap = buildHourMap();
+  const focusBandMap = buildBandMap();
+  const taskTypeBands = {
+    deep_work: buildBandMap(),
+    admin: buildBandMap(),
+    low_energy: buildBandMap(),
+  };
+  const weekdayPressure = WEEKDAY_LABELS.map((label, dayIndex) => ({
+    dayIndex,
+    label,
+    starts: 0,
+    completes: 0,
+    abandons: 0,
+    plannedMinutes: 0,
+  }));
+  const goalMap = new Map((Array.isArray(goals) ? goals : []).map((goal) => [goal.id, goal]));
+  const hasTrackedFocusCompletes = (Array.isArray(behaviorHistory) ? behaviorHistory : []).some((event) => event?.type === 'focus_complete');
+
+  (Array.isArray(behaviorHistory) ? behaviorHistory : []).forEach((event) => {
+    const d = event?.date ? new Date(event.date) : null;
+    if (!d || Number.isNaN(d.getTime())) return;
+    const hour = Number.isFinite(Number(event.hour)) ? Number(event.hour) : d.getHours();
+    const band = getBandForHour(hour);
+    const taskType = event?.taskType || inferTaskTimingType(goalMap.get(event?.goalId) ?? event?.title);
+    const dayIndex = d.getDay();
+
+    if (event.type === 'focus_start') {
+      hourMap[hour].starts += 1;
+      focusBandMap[band.id].starts += 1;
+      weekdayPressure[dayIndex].starts += 1;
+    }
+    if (event.type === 'focus_complete') {
+      hourMap[hour].completes += 1;
+      hourMap[hour].completionMinutes += Number(event.minutes) || 0;
+      focusBandMap[band.id].completes += 1;
+      focusBandMap[band.id].completionMinutes += Number(event.minutes) || 0;
+      weekdayPressure[dayIndex].completes += 1;
+      taskTypeBands[taskType][band.id].completes += 1;
+      taskTypeBands[taskType][band.id].completionMinutes += Number(event.minutes) || 0;
+    }
+    if (event.type === 'focus_abandon') {
+      hourMap[hour].abandons += 1;
+      focusBandMap[band.id].abandons += 1;
+      weekdayPressure[dayIndex].abandons += 1;
+    }
+  });
+
+  (Array.isArray(logs) ? logs : []).forEach((log) => {
+    const d = log?.date ? new Date(log.date) : null;
+    if (!d || Number.isNaN(d.getTime())) return;
+    const hour = d.getHours();
+    const band = getBandForHour(hour);
+    const goal = goalMap.get(log?.taskId);
+    const taskType = inferTaskTimingType({
+      ...(goal ?? {}),
+      taskTitle: log?.taskTitle,
+      minutes: log?.minutes,
+    });
+    hourMap[hour].completionMinutes += Number(log?.minutes) || 0;
+    focusBandMap[band.id].completionMinutes += Number(log?.minutes) || 0;
+    taskTypeBands[taskType][band.id].completionMinutes += Number(log?.minutes) || 0;
+    if (!hasTrackedFocusCompletes) {
+      hourMap[hour].completes += 1;
+      focusBandMap[band.id].completes += 1;
+      weekdayPressure[d.getDay()].completes += 1;
+      taskTypeBands[taskType][band.id].completes += 1;
+    }
+  });
+
+  const plannedMinutesByWeekday = getPlannedMinutesByWeekday(weekAssignments ?? {}, goals ?? []);
+  weekdayPressure.forEach((row) => {
+    row.plannedMinutes = plannedMinutesByWeekday[row.dayIndex] ?? 0;
+    row.pressureScore = (row.abandons * 2) + Math.max(0, row.starts - row.completes) + (row.plannedMinutes / 90);
+  });
+
+  const focusBandList = Object.values(focusBandMap).map((band) => ({
+    ...band,
+    score: (band.completes * 3) + Math.min(4, band.completionMinutes / 60) - (band.abandons * 2),
+  }));
+  const bestFocusBand = [...focusBandList].sort((a, b) => b.score - a.score || b.completes - a.completes)[0] ?? null;
+  const weakFocusBand = [...focusBandList]
+    .filter((band) => band.starts + band.completes + band.abandons >= 2)
+    .sort((a, b) => (b.abandons - b.completes) - (a.abandons - a.completes))[0] ?? null;
+
+  const deepWorkBand = Object.values(taskTypeBands.deep_work).sort((a, b) => (b.completes * 2 + b.completionMinutes / 60) - (a.completes * 2 + a.completionMinutes / 60))[0] ?? bestFocusBand;
+  const adminBand = Object.values(taskTypeBands.admin).sort((a, b) => (b.completes * 2 + b.completionMinutes / 90) - (a.completes * 2 + a.completionMinutes / 90))[0] ?? TIME_BANDS[2];
+  const lowEnergyBand = Object.values(taskTypeBands.low_energy).sort((a, b) => (b.completes * 2 + b.completionMinutes / 90) - (a.completes * 2 + a.completionMinutes / 90))[0] ?? TIME_BANDS[3];
+
+  const bestHourWindow = (() => {
+    let best = null;
+    for (let startHour = 8; startHour <= 17; startHour += 1) {
+      const rows = [hourMap[startHour], hourMap[startHour + 1]].filter(Boolean);
+      const score = rows.reduce((sum, row) => sum + completionScoreForHour(row), 0);
+      const starts = rows.reduce((sum, row) => sum + row.starts, 0);
+      const abandons = rows.reduce((sum, row) => sum + row.abandons, 0);
+      const completes = rows.reduce((sum, row) => sum + row.completes, 0);
+      const candidate = {
+        startHour,
+        endHour: startHour + 2,
+        score,
+        starts,
+        abandons,
+        completes,
+      };
+      if (!best || candidate.score > best.score || (candidate.score === best.score && candidate.completes > best.completes)) {
+        best = candidate;
+      }
+    }
+    return best;
+  })();
+
+  const overloadWeekday = [...weekdayPressure]
+    .filter((row) => row.pressureScore > 0)
+    .sort((a, b) => b.pressureScore - a.pressureScore)[0] ?? null;
+
+  const focusRecommendation = bestFocusBand
+    ? {
+        bandId: bestFocusBand.bandId,
+        label: bestFocusBand.label,
+        explanation: describeFocusReason(bestFocusBand),
+      }
+    : {
+        bandId: 'late_morning',
+        label: 'late morning',
+        explanation: 'Late morning is a strong default for focused work.',
+      };
+
+  const adminRecommendation = adminBand
+    ? {
+        bandId: adminBand.bandId,
+        label: adminBand.label,
+        explanation: describeAdminReason(adminBand),
+      }
+    : {
+        bandId: 'early_afternoon',
+        label: 'early afternoon',
+        explanation: 'Admin usually fits better after your first focus block.',
+      };
+
+  const lowEnergyRecommendation = lowEnergyBand
+    ? {
+        bandId: lowEnergyBand.bandId,
+        label: lowEnergyBand.label,
+        explanation: `When energy is lower, ${lowEnergyBand.label} is usually a better fit for lighter work.`,
+      }
+    : {
+        bandId: 'late_afternoon',
+        label: 'late afternoon',
+        explanation: 'Lighter work tends to fit better later in the day.',
+      };
+
+  return {
+    focusWindow: bestHourWindow
+      ? {
+          startHour: bestHourWindow.startHour,
+          endHour: bestHourWindow.endHour,
+          duration: bestHourWindow.endHour - bestHourWindow.startHour,
+          label: `${bestHourWindow.startHour % 12 === 0 ? 12 : bestHourWindow.startHour % 12}${bestHourWindow.startHour >= 12 ? 'pm' : 'am'}-${bestHourWindow.endHour % 12 === 0 ? 12 : bestHourWindow.endHour % 12}${bestHourWindow.endHour >= 12 ? 'pm' : 'am'}`,
+          explanation: focusRecommendation.explanation,
+        }
+      : null,
+    recommendations: {
+      deep_work: focusRecommendation,
+      admin: adminRecommendation,
+      low_energy: lowEnergyRecommendation,
+    },
+    weakWindow: weakFocusBand
+      ? {
+          bandId: weakFocusBand.bandId,
+          label: weakFocusBand.label,
+          explanation: describeWeakWindow(weakFocusBand),
+        }
+      : null,
+    overloadWeekday: overloadWeekday && overloadWeekday.pressureScore >= 2
+      ? {
+          dayIndex: overloadWeekday.dayIndex,
+          label: overloadWeekday.label,
+          explanation: `${overloadWeekday.label}s tend to overload more easily for you.`,
+        }
+      : null,
+    stats: {
+      byHour: hourMap,
+      focusBands: focusBandList,
+      weekdayPressure,
+    },
+  };
+}
+
+export function getRecommendationForTaskType(profile, taskType = 'deep_work') {
+  return profile?.recommendations?.[taskType] ?? null;
+}
+
+export function getTimingFitScore(profile, taskType = 'deep_work', hour = null) {
+  const recommendation = getRecommendationForTaskType(profile, taskType);
+  const targetBand = TIME_BANDS.find((band) => band.id === recommendation?.bandId);
+  const numericHour = Number.isFinite(Number(hour)) ? Number(hour) : null;
+  if (!targetBand || numericHour == null) return 0;
+  if (numericHour >= targetBand.start && numericHour < targetBand.end) return 3;
+  if (Math.abs(numericHour - targetBand.start) <= 1 || Math.abs(numericHour - targetBand.end) <= 1) return 1;
+  const weakBand = TIME_BANDS.find((band) => band.id === profile?.weakWindow?.bandId);
+  if (weakBand && numericHour >= weakBand.start && numericHour < weakBand.end && taskType === 'deep_work') return -2;
+  return 0;
 }

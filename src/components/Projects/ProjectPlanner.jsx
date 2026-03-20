@@ -81,6 +81,11 @@ export default function ProjectPlanner({
   onCreateGoals,
   prefillTitle = '',
   prefillParentGoalId = '',
+  prefillPlan = null,
+  prefillDescription = '',
+  prefillDeadline = '',
+  prefillClientName = '',
+  prefillBillable = null,
   focusGoalId = null,
   today: todayProp,
   onStartFocus,
@@ -193,9 +198,31 @@ export default function ProjectPlanner({
     if (open && prefillTitle) {
       setName(prefillTitle);
       setView('create');
+      setPlan(null);
+      setSliceError(null);
+      setFeedback('');
     }
     if (open && prefillParentGoalId) setParentGoalId(prefillParentGoalId);
   }, [open, prefillTitle, prefillParentGoalId]);
+
+  useEffect(() => {
+    if (!open || !prefillPlan) return;
+    setView('create');
+    setPlan(prefillPlan);
+    setSliceError(null);
+    setFeedback('');
+    setName(prefillTitle || prefillPlan.title || 'Project');
+    setDescription(prefillDescription || prefillPlan.summary || '');
+    setDeadline(prefillDeadline || '');
+    setClientName(prefillClientName || '');
+    if (typeof prefillBillable === 'boolean') setBillable(prefillBillable);
+    const allTasks = new Set();
+    (prefillPlan.phases || []).forEach((phase) => {
+      (phase.tasks || []).forEach((task) => allTasks.add(task.title));
+    });
+    setSelectedTasks(allTasks);
+    setLinkedGoals({});
+  }, [open, prefillPlan, prefillTitle, prefillDescription, prefillDeadline, prefillClientName, prefillBillable]);
 
   const healthContext = useMemo(
     () => ({ weekAssignments: weekAssignments ?? {}, goals: goals ?? [], logs: logs ?? [] }),

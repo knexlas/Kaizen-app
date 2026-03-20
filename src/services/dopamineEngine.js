@@ -5,7 +5,7 @@
  * missed-day recovery, week review, project progress, completing planned work.
  * Weaker or none for: opening screens, tapping, creating tiny low-value tasks, browsing.
  *
- * Returns { message, tone?, icon?, durationMs?, variableBonus?, growthLine? } or null.
+ * Returns { message, tone?, icon?, durationMs?, variableBonus?, growthLine?, showVariableBonus?, showGrowthLine?, surface? } or null.
  * variableBonus: { embers?, waterDrops? }; growthLine: optional second line.
  *
  * @param {{ type: string, payload?: object }} input
@@ -14,32 +14,37 @@ export function buildReward(input) {
   if (!input?.type) return null;
   const payload = input.payload ?? {};
   switch (input.type) {
-    /** Recovery: set energy for the day (incl. after missed days). Celebrates restoration, not consistency. */
     case 'MORNING_CHECKIN_DONE': {
       const { spoonCount, missedDays } = payload;
-      const growthLine = typeof missedDays === 'number' && missedDays > 1 ? "You're back. Today starts now." : undefined;
       return {
-        message: typeof spoonCount === 'number' ? `Today you have ${spoonCount} spoons. Go gently.` : "Energy set. Start when you're ready.",
+        message: typeof spoonCount === 'number' ? `Capacity set: ${spoonCount} spoons.` : 'Capacity set for today.',
         tone: 'moss',
         icon: '🌱',
-        durationMs: 2800,
+        durationMs: 2400,
         variableBonus: { waterDrops: 1 },
-        growthLine,
+        growthLine: typeof missedDays === 'number' && missedDays > 1 ? 'You are back. Start small.' : null,
+        showVariableBonus: false,
+        showGrowthLine: false,
+        surface: 'utility',
       };
     }
-    /** Recover: lighten overloaded day. */
     case 'LOAD_LIGHTENED': {
       const { removedCount } = payload;
-      const msg = typeof removedCount === 'number' && removedCount > 0
-        ? `Lightened by ${removedCount} item${removedCount === 1 ? '' : 's'}.`
-        : 'Good decision. The garden will wait.';
-      return { message: msg, tone: 'moss', icon: '🍃', durationMs: 2800, variableBonus: { waterDrops: 1 } };
+      return {
+        message: typeof removedCount === 'number' && removedCount > 0
+          ? `Lightened today by ${removedCount} item${removedCount === 1 ? '' : 's'}.`
+          : 'Today has been lightened.',
+        tone: 'moss',
+        icon: '🍃',
+        durationMs: 2400,
+        variableBonus: { waterDrops: 1 },
+        showVariableBonus: false,
+        surface: 'utility',
+      };
     }
-    /** Focus: completed a focus block. Stronger when from planned slot. */
     case 'FOCUS_COMPLETE': {
       const { goalTitle, minutes, spoonCount, fromPlanned } = payload;
       const mins = typeof minutes === 'number' ? minutes : 0;
-      const message = goalTitle ? `Nice focus on ${goalTitle}.` : 'Focus session complete.';
       const variableBonus = { waterDrops: 1 };
       if (fromPlanned && mins >= 5) {
         variableBonus.embers = mins >= 25 ? 3 : 2;
@@ -48,95 +53,110 @@ export function buildReward(input) {
         if (lowSpoons && mins >= 5) variableBonus.embers = mins >= 25 ? 2 : 1;
         else if (mins >= 25) variableBonus.embers = 1;
       }
-      return { message, tone: 'moss', icon: '✨', durationMs: 2800, variableBonus };
-    }
-    /** Focus: put in more time than estimated — acknowledge only, no extra embers. */
-    case 'FOCUS_PERSEVERANCE': {
       return {
-        message: 'You put in more time than planned. Progress saved.',
+        message: goalTitle ? `${goalTitle} session complete.` : 'Session complete.',
         tone: 'moss',
-        icon: '🌿',
-        durationMs: 2600,
+        icon: '✓',
+        durationMs: 2400,
+        variableBonus,
+        showVariableBonus: false,
+        surface: 'utility',
       };
     }
-    /** Progress: milestone completed on a goal. */
+    case 'FOCUS_PERSEVERANCE': {
+      return {
+        message: 'You put in more time than planned.',
+        tone: 'moss',
+        icon: '✓',
+        durationMs: 2200,
+        surface: 'utility',
+      };
+    }
     case 'MILESTONE_COMPLETE': {
       const { milestoneTitle } = payload;
       return {
-        message: milestoneTitle ? `Milestone: ${milestoneTitle}` : 'Milestone reached.',
+        message: milestoneTitle ? `Milestone reached: ${milestoneTitle}.` : 'Milestone reached.',
         tone: 'moss',
         icon: '🌿',
-        durationMs: 2800,
+        durationMs: 2600,
         variableBonus: { waterDrops: 1 },
         growthLine: 'Progress saved.',
+        showVariableBonus: false,
+        showGrowthLine: false,
+        surface: 'utility',
       };
     }
     case 'COMPOST_ADDED': {
-      return { message: 'Added to compost. No guilt.', tone: 'moss', icon: '🍂', durationMs: 2200 };
+      return { message: 'Saved for later.', tone: 'moss', icon: '🍂', durationMs: 2200, surface: 'utility' };
     }
-    /** Start: began a focus session — encouraging, no currency (avoids rewarding just opening). */
     case 'ACTIVATION_START': {
-      return { message: 'You showed up. That counts.', tone: 'moss', icon: '🌱', durationMs: 2200 };
+      return { message: 'Focus started.', tone: 'moss', icon: '🌱', durationMs: 1800, surface: 'utility' };
     }
     case 'ACTIVATION_SHORT_SESSION': {
-      return { message: 'Short sessions count. You showed up.', tone: 'moss', icon: '✨', durationMs: 2400 };
+      return { message: 'Short session logged.', tone: 'moss', icon: '✓', durationMs: 2000, surface: 'utility' };
     }
     case 'ACTIVATION_RESUME': {
-      return { message: "You came back. That's the rhythm.", tone: 'moss', icon: '🌿', durationMs: 2200 };
+      return { message: 'Back on task.', tone: 'moss', icon: '🌿', durationMs: 1800, surface: 'utility' };
     }
-    /** Start: chose a tiny step — message only (avoid rewarding low-value task creation). */
     case 'ACTIVATION_TINY_STEP': {
-      return { message: 'You chose a tiny step. That counts.', tone: 'moss', icon: '🌱', durationMs: 2200 };
+      return { message: 'First step set.', tone: 'moss', icon: '🌱', durationMs: 1800, surface: 'utility' };
     }
-    /** Complete: marked planned work done from timeline/anytime. */
     case 'TASK_COMPLETE': {
       const { goalTitle } = payload;
       return {
-        message: goalTitle ? `Nice — ${goalTitle} done.` : 'Task completed.',
+        message: goalTitle ? `${goalTitle} completed.` : 'Task completed.',
         tone: 'moss',
         icon: '✓',
-        durationMs: 2800,
+        durationMs: 2400,
         variableBonus: { waterDrops: 1 },
-        growthLine: goalTitle ? `Your ${goalTitle} has grown a little.` : 'Progress saved.',
+        growthLine: 'Progress saved.',
+        showVariableBonus: false,
+        showGrowthLine: false,
+        surface: 'utility',
       };
     }
     case 'SUPPORT_ACCEPTED': {
       return {
-        message: 'Support planted.',
+        message: 'Support step added.',
         tone: 'moss',
         icon: '🌱',
         durationMs: 2200,
         variableBonus: { waterDrops: 1 },
+        showVariableBonus: false,
+        surface: 'utility',
       };
     }
-    /** Plan: defined a real next step and added it to the week. */
     case 'NEXT_STEP_ADDED': {
       return {
-        message: 'Next step added to your week.',
+        message: 'Next step added.',
         tone: 'moss',
         icon: '✓',
-        durationMs: 2600,
+        durationMs: 2200,
         variableBonus: { waterDrops: 1 },
+        showVariableBonus: false,
+        surface: 'utility',
       };
     }
-    /** Recover: rescheduled instead of abandoning (focus exit or planner). */
     case 'RESCHEDULED': {
       return {
-        message: 'Task moved. You can pick it up when you\'re ready.',
+        message: 'Moved to a better time.',
         tone: 'moss',
         icon: '↩',
-        durationMs: 2600,
+        durationMs: 2200,
         variableBonus: { waterDrops: 1 },
+        showVariableBonus: false,
+        surface: 'utility',
       };
     }
-    /** Review: applied week plan (reviewed and committed the week). */
     case 'WEEK_REVIEWED': {
       return {
-        message: 'Week plan applied. You know what’s ahead.',
+        message: 'Week plan updated.',
         tone: 'moss',
-        icon: '✨',
-        durationMs: 2800,
+        icon: '✓',
+        durationMs: 2400,
         variableBonus: { waterDrops: 1 },
+        showVariableBonus: false,
+        surface: 'utility',
       };
     }
     default:
