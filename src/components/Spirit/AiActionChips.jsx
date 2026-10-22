@@ -10,7 +10,7 @@ const FALLBACK_ACTIONS = [
  * - `actions`: optional explicit action objects [{ id, label, payload?, tone? }]
  * - else derive operator actions from assistant text
  */
-export default function AiActionChips({ assistantText, onAction, actions = null, loadingAction = null, compact = false }) {
+export default function AiActionChips({ assistantText, onAction, actions = null, loadingAction = null, compact = false, variant = 'default' }) {
   if (typeof onAction !== 'function') return null;
 
   const explicitActions = Array.isArray(actions) ? actions.filter(Boolean) : null;
@@ -25,8 +25,10 @@ export default function AiActionChips({ assistantText, onAction, actions = null,
 
   if (chips.length === 0) return null;
 
+  const isOperatorVariant = variant === 'operator';
+
   return (
-    <div className="flex flex-wrap gap-2" role="group" aria-label="Assistant actions">
+    <div className={`flex flex-wrap ${isOperatorVariant ? 'gap-3' : 'gap-2'}`} role="group" aria-label="Assistant actions">
       {chips.map((chip) => {
         const isBusy = loadingAction != null && loadingAction === chip.id;
         const emphasisClass = chip.tone === 'primary'
@@ -41,10 +43,21 @@ export default function AiActionChips({ assistantText, onAction, actions = null,
             type="button"
             disabled={isBusy}
             onClick={() => onAction(chip.id, chip.payload ?? {})}
-            className={`rounded-2xl border px-3 py-2 font-sans ${compact ? 'text-xs' : 'text-sm'} font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-moss-500/40 disabled:pointer-events-none disabled:opacity-60 ${emphasisClass}`}
+            className={`rounded-2xl border font-sans font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-moss-500/40 disabled:pointer-events-none disabled:opacity-60 ${emphasisClass} ${
+              isOperatorVariant
+                ? 'px-4 py-3 text-sm shadow-sm'
+                : `${compact ? 'px-3 py-2 text-xs' : 'px-3 py-2 text-sm'}`
+            }`}
             title={chip.description ?? chip.label}
           >
-            {isBusy ? 'Working...' : chip.label}
+            <span className="block text-left leading-tight">
+              {isBusy ? 'Working...' : chip.label}
+            </span>
+            {isOperatorVariant && !isBusy && chip.description && (
+              <span className="mt-1 block text-left text-xs opacity-80">
+                {chip.description}
+              </span>
+            )}
           </button>
         );
       })}

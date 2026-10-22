@@ -8,6 +8,7 @@ import { localISODate } from './dateUtils';
 import { autoFillWeek as plannerEngineAutoFillWeek } from './plannerEngine';
 import { inferTaskTimingType } from './energyDictionaryService';
 import { getTimingFitScore } from './insightsReflectionService';
+import { isProtectedAssignment } from '../domains/recovery/services/protectedTimeService';
 
 const DEFAULT_HOUR_START = 6;
 const DEFAULT_HOUR_END = 23;
@@ -38,12 +39,6 @@ export function minutesToTime(minutes) {
   const h = Math.floor(minutes / 60);
   const m = minutes % 60;
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-}
-
-/** Get day index 0 (Sun) .. 6 (Sat) from an ISO date string or Date */
-function getDayIndex(isoOrDate) {
-  const d = typeof isoOrDate === 'string' ? new Date(isoOrDate) : isoOrDate;
-  return d.getDay();
 }
 
 /** Normalize event to { dayIndex, startMinutes, endMinutes, type }. dayIndex 0=Sun..6=Sat. */
@@ -178,15 +173,11 @@ export function getStormImpactForDay(events, dayIndex, options = {}) {
   const costPerEvent = Math.max(0, Number.isFinite(costPerEventRaw) ? costPerEventRaw : 1);
 
   let stormCount = 0;
-  let totalStormMinutes = 0;
-
   if (Array.isArray(events)) {
     for (const e of events) {
       const norm = normalizeEventToWeek(e, weekStart);
       if (norm == null || norm.dayIndex !== dayIndex || norm.type !== 'storm') continue;
       stormCount += 1;
-      const buffer = stormBufferMinutes * 2;
-      totalStormMinutes += (norm.endMinutes - norm.startMinutes) + buffer;
     }
   }
 
@@ -319,11 +310,7 @@ export function generateLiquidSchedule(goal, availableSlots) {
  */
 export function getStormWarnings(goals, events = [], options = {}) {
   const weekStart = options.weekStartDate ?? getDefaultWeekStart();
-  const startHour = options.startHour ?? DEFAULT_HOUR_START;
-  const endHour = options.endHour ?? DEFAULT_HOUR_END;
   const openSlots = findAvailableSlots(events, [], options);
-  const dayStart = startHour * 60;
-  const dayEnd = endHour * 60;
 
   const workableMinutesByDay = {};
   for (let dayIndex = 0; dayIndex < 7; dayIndex++) {
@@ -557,7 +544,8 @@ export function suggestLoadLightening(assignments, goals, maxSlots, energyModifi
     const energyType = getEnergyType(goal);
     const activationEnergy = getActivationEnergy(goal);
     const spoonCost = a && typeof a === 'object' && (a.type === 'recovery' || a.spoonCost === 0) ? 0 : getSpoonCost(goal ?? a);
-    return { hour, goalId: gid, title, energyType, activationEnergy, spoonCost };
+    const protectedTime = isProtectedAssignment(a, goal);
+    return { hour, goalId: gid, title, energyType, activationEnergy, spoonCost, protectedTime };
   });
 
   const filledSpoonTotal = filled.reduce((sum, f) => sum + (f.spoonCost ?? 1), 0);
@@ -569,6 +557,7 @@ export function suggestLoadLightening(assignments, goals, maxSlots, energyModifi
   const highEnergy = modifier > 0;
 
   const sorted = filled.slice().sort((a, b) => {
+    if (a.protectedTime !== b.protectedTime) return a.protectedTime ? 1 : -1;
     // When low energy, remove high-activation tasks first (4, 3), then use energyType order
     if (lowEnergy) {
       const aeA = a.activationEnergy ?? 1;
@@ -591,6 +580,7 @@ export function suggestLoadLightening(assignments, goals, maxSlots, energyModifi
   for (const item of removable) {
     if (currentTotal <= maxSlots) break;
     const cost = item.spoonCost ?? 1;
+    if (item.protectedTime) continue;
     delete next[item.hour];
     currentTotal -= cost;
     let reason;
@@ -719,6 +709,8 @@ export function generateDailyPlan(goals, maxSlotsOrModifier = 0, calendarEvents 
           type: 'routine',
           duration: 60,
           spoonCost: cost,
+        ...(goal?._protectedTimeStrength ? { protectedTimeStrength: goal._protectedTimeStrength } : {}),
+        ...(goal?._protectedTimeCategory ? { protectedTimeCategory: goal._protectedTimeCategory } : {}),
           ...(block.subtaskId && { subtaskId: block.subtaskId, subtaskTitle: block.subtaskTitle }),
         };
         entriesByCategory[category].push({ hour: hourStr, value, spoonCost: cost });
@@ -847,8 +839,6 @@ export function generateDailyPlan(goals, maxSlotsOrModifier = 0, calendarEvents 
  */
 export function autoFillDailyPlan(goals, calendarEvents, energyLevel = 'normal', options = {}) {
   const todayDayIndex = new Date().getDay();
-  const workStart = 9 * 60; // 09:00
-  const workEnd = 18 * 60; // 18:00 (6 PM)
 
   const planOptions = {
     weekStartDate: getDefaultWeekStart(),
@@ -892,26 +882,9 @@ export function autoFillDailyPlan(goals, calendarEvents, energyLevel = 'normal',
     (typeof energyLevel === 'number' && energyLevel <= 4);
 
   const learnedEnergyProfile = options?.learnedEnergyProfile ?? null;
-  const sorted = [...eligibleGoals].sort((a, b) => {
-    const minsA = Number(a?.estimatedMinutes) || 60;
-    const minsB = Number(b?.estimatedMinutes) || 60;
-    const adminA = getEnergyType(a) === 'maintenance' ? 1 : 0;
-    const adminB = getEnergyType(b) === 'maintenance' ? 1 : 0;
-    const timingA = learnedEnergyProfile ? getTimingFitScore(learnedEnergyProfile, inferTaskTimingType(a), nextHourMins / 60) : 0;
-    const timingB = learnedEnergyProfile ? getTimingFitScore(learnedEnergyProfile, inferTaskTimingType(b), nextHourMins / 60) : 0;
-    if (timingA !== timingB) return timingB - timingA;
-    if (isHigh) {
-      return minsB - minsA;
-    }
-    if (isLow) {
-      if (adminA !== adminB) return adminA - adminB;
-      return minsA - minsB;
-    }
-    return 0;
-  });
+  const remainingGoals = [...eligibleGoals];
 
   const assignments = {};
-  let goalIdx = 0;
   const maxSlots = Math.min(
     futureSlotHours.length,
     typeof energyLevel === 'number' && energyLevel >= 1 && energyLevel <= 12
@@ -921,9 +894,26 @@ export function autoFillDailyPlan(goals, calendarEvents, energyLevel = 'normal',
         : futureSlotHours.length
   );
 
-  for (let i = 0; i < maxSlots && goalIdx < sorted.length; i++) {
+  for (let i = 0; i < maxSlots && remainingGoals.length > 0; i++) {
     const hour = futureSlotHours[i];
-    const goal = sorted[goalIdx++];
+    const hourNum = timeToMinutes(hour) / 60;
+    remainingGoals.sort((a, b) => {
+      const minsA = Number(a?.estimatedMinutes) || 60;
+      const minsB = Number(b?.estimatedMinutes) || 60;
+      const adminA = getEnergyType(a) === 'maintenance' ? 1 : 0;
+      const adminB = getEnergyType(b) === 'maintenance' ? 1 : 0;
+      const timingA = learnedEnergyProfile ? getTimingFitScore(learnedEnergyProfile, inferTaskTimingType(a), hourNum) : 0;
+      const timingB = learnedEnergyProfile ? getTimingFitScore(learnedEnergyProfile, inferTaskTimingType(b), hourNum) : 0;
+      if (timingA !== timingB) return timingB - timingA;
+      if (isHigh) return minsB - minsA;
+      if (isLow) {
+        if (adminA !== adminB) return adminA - adminB;
+        return minsA - minsB;
+      }
+      return minsA - minsB;
+    });
+    const goal = remainingGoals.shift();
+    if (!goal) break;
     if (goal.type === 'routine') {
       assignments[hour] = [{
         id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `s-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,

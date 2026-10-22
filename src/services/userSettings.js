@@ -46,5 +46,7 @@ export function setSettings(settings) {
       window.dispatchEvent(new CustomEvent('accessibility-settings-changed'));
     }
     return next;
-  } catch (_) {}
+  } catch (_) {
+    // Ignore persistence failures and let callers continue with defaults.
+  }
 }

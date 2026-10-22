@@ -89,7 +89,9 @@ export function recordHelperShown(type) {
   if (!type) return;
   try {
     sessionStorage.setItem(STORAGE_KEY_PREFIX + type, String(Date.now()));
-  } catch (_) {}
+  } catch (_) {
+    // Ignore session storage failures; cooldown tracking is best-effort.
+  }
 }
 
 const nextId = (() => {

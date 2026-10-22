@@ -25,7 +25,7 @@ export function useTodayBriefingModel({
   continuitySummary,
   plannerActionBusy,
   compost,
-  userSettings,
+  userSettings: _userSettings,
   currentHelperIntervention,
   helperInterventionTypes,
   lastGardenImpact,

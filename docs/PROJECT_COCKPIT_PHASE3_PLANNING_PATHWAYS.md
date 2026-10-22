@@ -1,5 +1,7 @@
 # Phase 3: Planning Pathway Consolidation and Primary-Flow Cleanup
 
+Next phase: see `docs/PROJECT_COCKPIT_PHASE5_OPERATING_SURFACE.md` for the operating-surface redesign that turns Today, Plan, and Capture into a calmer premium shell.
+
 Goal: One decisive premium planning product—one primary planning path per persona, overlapping pathways reduced or demoted, shared logic unified, cockpit as main command center.
 
 ---

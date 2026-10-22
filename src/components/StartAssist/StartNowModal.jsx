@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { getSettings } from '../../services/userSettings';
 
 /**
@@ -16,6 +16,7 @@ export default function StartNowModal({
   onCreateSuggestion,
   onClose,
 }) {
+  const [countdown, setCountdown] = useState(0);
   const [dynamicSuggestions] = useState(() => {
     const adminTasks = ['Wipe down one counter', 'Reply to one email', 'Put 5 items away', 'Clear your downloads folder'];
     const careTasks = ['Drink a glass of water', 'Stretch your shoulders', 'Wash your face', 'Take 10 deep breaths'];
@@ -38,6 +39,20 @@ export default function StartNowModal({
   if (!open) return null;
 
   const lowStim = getSettings().lowStim ?? false;
+
+  const runCountdownStart = (task, minutes = 3) => {
+    setCountdown(3);
+    const id = setInterval(() => {
+      setCountdown((prev) => {
+        if (prev <= 1) {
+          clearInterval(id);
+          onStart?.(task, minutes);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 650);
+  };
 
   return (
     <div
@@ -64,6 +79,10 @@ export default function StartNowModal({
             <p className="font-sans text-stone-600 text-sm mb-5">
               We&apos;ll do 5 minutes on: <strong>{candidateTask.ritualTitle || candidateTask.goal?.title || candidateTask.title || 'This task'}</strong>
             </p>
+            <div className="mb-3 rounded-xl border border-stone-200 bg-white px-3 py-2">
+              <p className="font-sans text-xs uppercase tracking-wide text-stone-500">Guided entry</p>
+              <p className="mt-1 font-sans text-sm text-stone-700">Open it, do setup only, then choose 3 or 5 minutes.</p>
+            </div>
             <div className="flex flex-col gap-2">
               <button
                 type="button"
@@ -71,6 +90,13 @@ export default function StartNowModal({
                 className="w-full py-3 rounded-xl font-sans font-medium text-stone-50 bg-moss-600 hover:bg-moss-700 focus:outline-none focus:ring-2 focus:ring-moss-500 focus:ring-offset-2"
               >
                 Start 5 min
+              </button>
+              <button
+                type="button"
+                onClick={() => runCountdownStart(candidateTask, 3)}
+                className="w-full py-3 rounded-xl font-sans font-medium text-moss-800 border-2 border-moss-300 bg-moss-50 hover:bg-moss-100 focus:outline-none focus:ring-2 focus:ring-moss-500 focus:ring-offset-2"
+              >
+                {countdown > 0 ? `Starting in ${countdown}...` : 'Start guided 3 min'}
               </button>
               <button
                 type="button"

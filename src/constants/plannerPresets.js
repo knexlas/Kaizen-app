@@ -93,7 +93,7 @@ const PRESET_CONFIG = {
     },
     /** Planning entry points: primary flow per persona; demote overlapping. */
     planningEntry: {
-      showPlanAProjectInGoalCreator: true,
+      showPlanAProjectInGoalCreator: false,
       primaryWeekPlanning: 'suggest',
     },
     /** Helper/empty-state copy tone: business = project/client-oriented; professional = direct; calm = gentle; default = balanced. */
@@ -125,7 +125,7 @@ const PRESET_CONFIG = {
       emphasizeFocus: true,
     },
     planningEntry: {
-      showPlanAProjectInGoalCreator: true,
+      showPlanAProjectInGoalCreator: false,
       primaryWeekPlanning: 'suggest',
     },
     helperTone: 'professional',
@@ -187,7 +187,7 @@ const PRESET_CONFIG = {
       emphasizeFocus: true,
     },
     planningEntry: {
-      showPlanAProjectInGoalCreator: true,
+      showPlanAProjectInGoalCreator: false,
       primaryWeekPlanning: 'suggest',
     },
     helperTone: 'default',
@@ -238,7 +238,7 @@ export function getPlannerTabPresetConfig(userSettings) {
 }
 
 const DEFAULT_PLANNING_ENTRY = {
-  showPlanAProjectInGoalCreator: true,
+  showPlanAProjectInGoalCreator: false,
   primaryWeekPlanning: 'suggest',
 };
 

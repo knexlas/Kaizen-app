@@ -22,12 +22,17 @@ export default function RewardOverlay() {
     const ms = top.vibePayload ? VIBE_DURATION_MS : (top.durationMs ?? gamificationConfig.rewardDurationMs);
     const t = setTimeout(() => removeTop(), ms);
     return () => clearTimeout(t);
-  }, [top?.id, top?.vibePayload, top?.durationMs, gamificationConfig.rewardDurationMs, removeTop]);
+  }, [top, gamificationConfig.rewardDurationMs, removeTop]);
 
   if (!top) return null;
 
-  const toneClass = TONE_CLASSES[top.tone] ?? TONE_CLASSES.moss;
+  const utilityTone = gamificationConfig.utilitySurfaceTone === 'moss' ? 'moss' : 'slate';
+  const effectiveTone = top.surface === 'utility' ? utilityTone : (top.tone ?? 'moss');
+  const toneClass = TONE_CLASSES[effectiveTone] ?? TONE_CLASSES.moss;
   const hasVibe = top.vibePayload && typeof top.onVibe === 'function';
+  const showIcon = top.surface === 'utility'
+    ? Boolean(gamificationConfig.showUtilitySurfaceIcon && top.icon)
+    : Boolean(top.icon);
   const shouldShowBonusDetails = Boolean(
     top.variableBonus
     && (top.variableBonus.embers > 0 || top.variableBonus.waterDrops > 0)
@@ -49,9 +54,9 @@ export default function RewardOverlay() {
       role="status"
       aria-live="polite"
     >
-      <div className={`px-4 py-3 rounded-xl border shadow-lg font-sans text-sm ${toneClass}`}>
+      <div className={`px-4 py-3 rounded-xl border ${top.surface === 'utility' ? 'shadow-md' : 'shadow-lg'} font-sans text-sm ${toneClass}`}>
         <div className="flex flex-wrap items-center gap-2">
-          <span className="mr-2 shrink-0" aria-hidden>{top.icon}</span>
+          {showIcon && <span className="mr-2 shrink-0" aria-hidden>{top.icon}</span>}
           <span className="flex-1 min-w-0">{top.message}</span>
         </div>
         {shouldShowBonusDetails && (

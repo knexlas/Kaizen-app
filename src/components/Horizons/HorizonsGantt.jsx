@@ -1,4 +1,4 @@
-import { useMemo, useState, useCallback } from 'react';
+import { useMemo, useState } from 'react';
 import { useDialog } from '../../context/DialogContext';
 /**
  * Parse a range string that may mention 'Week' or 'Day', and return column indices for the current scale.
@@ -56,43 +56,6 @@ const WEEKS_COLS_FALLBACK = 12;
 const MAX_DAYS = 90;
 const MAX_WEEKS = 26;
 
-/** Monday of the week that contains the first day of the current month. */
-function getFirstWeekMondayOfMonth() {
-  const today = new Date();
-  const y = today.getFullYear();
-  const m = today.getMonth();
-  const first = new Date(y, m, 1);
-  first.setHours(0, 0, 0, 0);
-  const dayOfWeek = first.getDay();
-  const daysUntilMonday = dayOfWeek === 0 ? -6 : dayOfWeek === 1 ? 0 : 1 - dayOfWeek;
-  const monday = new Date(first);
-  monday.setDate(first.getDate() + daysUntilMonday);
-  monday.setHours(0, 0, 0, 0);
-  return monday;
-}
-
-/** Number of weeks that intersect the current month (Mon–Sun). Caps Horizons to current month only. */
-function getWeeksInCurrentMonth() {
-  const today = new Date();
-  const y = today.getFullYear();
-  const m = today.getMonth();
-  const first = new Date(y, m, 1);
-  const last = new Date(y, m + 1, 0);
-  first.setHours(0, 0, 0, 0);
-  last.setHours(23, 59, 59, 999);
-  const monday = getFirstWeekMondayOfMonth();
-  let weeks = 0;
-  let weekStart = new Date(monday.getTime());
-  while (weekStart.getTime() <= last.getTime() + 7 * 24 * 60 * 60 * 1000) {
-    const weekEnd = new Date(weekStart.getTime());
-    weekEnd.setDate(weekEnd.getDate() + 6);
-    if (weekEnd.getTime() >= first.getTime() && weekStart.getTime() <= last.getTime()) weeks++;
-    weekStart.setDate(weekStart.getDate() + 7);
-    if (weekStart.getTime() > last.getTime()) break;
-  }
-  return Math.max(1, Math.min(weeks, 6));
-}
-
 /** Get project start and end column indices. Uses phases for start, _projectDeadline for end. */
 function getProjectWeekRange(goal, timeScale, totalCols) {
   const milestones = goal.milestones || [];
@@ -131,7 +94,7 @@ export default function HorizonsGantt({
   onDeleteGoal,
   onToggleMilestone,
   onUpdateSubtask,
-  onEditGoal,
+  onEditGoal: _onEditGoal,
   onAddMilestone,
   onUpdateMilestone,
   onDeleteMilestone,

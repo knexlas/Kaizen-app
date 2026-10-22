@@ -79,13 +79,13 @@ function groupSubtasks(goal, nextStep) {
 
 export default function ProjectDetailView({
   goal,
-  onClose,
+  onClose: _onClose,
   onStartFocus,
   onReschedule,
   onEditSettings,
   updateSubtask,
 }) {
-  const { goals, weekAssignments, logs, today } = useGarden();
+  const { goals, weekAssignments, logs } = useGarden();
   const [showNotes, setShowNotes] = useState(false);
 
   const healthContext = useMemo(

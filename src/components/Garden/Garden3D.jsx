@@ -3,7 +3,6 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls, Sky, Environment, RoundedBox, useGLTF, Sparkles, Billboard, Text, PerformanceMonitor } from '@react-three/drei';
 import * as THREE from 'three';
 import { useGarden } from '../../context/GardenContext';
-import { getGoalProgressPercent } from './gardenProgress';
 import { getGoalGardenState } from '../../services/gardenStateService';
 import { getProjectHealthState } from '../../services/projectSupportService';
 import WanderingCreature from './WanderingCreature';
@@ -687,7 +686,7 @@ export default function Garden3D({ onGoalClick, onOpenShop, onOpenNursery, focus
   const [lowPerf, setLowPerf] = useState(initialPerfProfile.lowPerf);
   const chosenForm = spiritTypeToForm(spiritConfig, userSettings);
   const motionPaused = uiBlocksCanvas || pageHidden;
-  const allGoals = goals ?? [];
+  const allGoals = useMemo(() => goals ?? [], [goals]);
   const shopStandPosition3D = Array.isArray(userSettings?.gardenLayout?.shopStandPosition3D) && userSettings.gardenLayout.shopStandPosition3D.length >= 3
     ? userSettings.gardenLayout.shopStandPosition3D
     : [8, 0, -8];

@@ -1,23 +1,76 @@
-import { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { db } from '../firebase/firebaseConfig';
+import { onAuthStateChanged } from 'firebase/auth';
+import { auth, db } from '../firebase/firebaseConfig';
 import { subscribeToCompost, addCompostItem, deleteCompostItem, subscribeToDailyPlan, saveDailyPlan, getDailyPlan, saveCheckInForDate, getCheckInsForLastDays } from '../firebase/services';
 import { recordVibe } from '../services/energyDictionaryService';
 import { loginWithGoogle, logoutUser } from '../services/authService';
-import { loginWithMicrosoft, logoutMicrosoft, fetchOutlookEvents, getAccessTokenSilently } from '../services/microsoftCalendarService';
+import { loginWithMicrosoft, logoutMicrosoft, getAccessTokenSilently } from '../services/microsoftCalendarService';
 import { localISODate, getThisWeekSundayLocal, getLogicalToday, getDayStartsAtHour } from '../services/dateUtils';
 import { normalizePlanKeys, toCanonicalSlotKey } from '../services/schedulingConflictService';
+import { getGoalIdFromAssignment } from '../services/planAssignmentUtils';
 import { vibrateShort, vibrateCelebration } from '../utils/vibration';
+import { createMaintenanceBlock, createGoalFromMaintenanceBlock } from '../domains/recovery/services/maintenanceBlockService';
+import {
+  RECURRING_SUPPORT_STATUSES,
+  normalizeRecurringSupportState,
+  markRecurringSupportState,
+} from '../domains/recovery/services/antiShameRecurrenceService';
+import {
+  normalizeWaitingSupportState,
+  setWaitingSupportItem,
+  clearWaitingSupportItem,
+} from '../domains/recovery/services/waitingSupportService';
+import {
+  createLifeDomain,
+} from '../domains/recovery/services/lifeDomainService';
+import {
+  buildRoutineSupportPlacementFromRoutine,
+  createRoutineSupportPlacement,
+  normalizeRoutineSupportPlacements,
+} from '../domains/recovery/services/routineSupportPlacementService';
 
 const STORAGE_KEY = 'gardenData';
 const DAY_PLANS_STORAGE_KEY = 'gardenDayPlans';
 const LAST_OPEN_DATE_KEY = 'gardenLastOpenDate';
 const CLOUD_DEBOUNCE_MS = 2000;
+const DECORATION_COSTS = { lantern: 15, bench: 25, pond: 40, path: 10, bush: 20 };
 
 function yesterdayString() {
   const d = new Date();
   d.setDate(d.getDate() - 1);
   return localISODate(d);
+}
+
+function isArchivedItem(item) {
+  return Boolean(item?.archivedAt);
+}
+
+function stripGoalFromDayPlan(dayPlan, goalId) {
+  if (!dayPlan || typeof dayPlan !== 'object' || !goalId) {
+    return { changed: false, next: normalizePlanKeys(dayPlan ?? {}) };
+  }
+
+  let changed = false;
+  const next = {};
+
+  Object.entries(dayPlan).forEach(([slotKey, rawValue]) => {
+    if (rawValue == null) return;
+    const items = Array.isArray(rawValue) ? rawValue : [rawValue];
+    const kept = items.filter((assignment) => getGoalIdFromAssignment(assignment) !== goalId);
+    if (kept.length !== items.length) changed = true;
+    if (kept.length === 1) next[slotKey] = kept[0];
+    else if (kept.length > 1) next[slotKey] = kept;
+  });
+
+  return { changed, next: normalizePlanKeys(next) };
+}
+
+function removeGoalFromStagingTaskStatus(statusMap, goalId) {
+  if (!statusMap || typeof statusMap !== 'object' || !goalId) return statusMap ?? {};
+  return Object.fromEntries(
+    Object.entries(statusMap).filter(([taskId]) => !taskId.startsWith(`subtask-${goalId}-`) && !taskId.startsWith(`narrative-${goalId}-m`))
+  );
 }
 
 /** Calendar today (midnight-based). For logical "today" with custom day start, use useGarden().today. */
@@ -87,6 +140,12 @@ const defaultData = {
     { id: 'r_walk', title: 'Go for a Walk', category: '💪 Wellness', duration: 30 },
     { id: 'r_meditate', title: 'Meditate', category: '💪 Wellness', duration: 10 },
   ], // micro-habit templates: { id, title, category, duration (minutes) }
+  maintenanceBlocks: [],
+  socialFollowUps: [],
+  recurringSupportState: { byItem: {} },
+  waitingSupportState: { byItem: {} },
+  lifeDomains: [],
+  routineSupportPlacements: [],
 };
 
 const GardenContext = createContext(null);
@@ -109,6 +168,7 @@ function ensureRoutineGoalsFromTemplates(routines, goals) {
 
   routines.forEach((r) => {
     if (!r || !r.id) return;
+    if (isArchivedItem(r)) return;
     if (existingByTemplateId.has(r.id)) return;
     const goalId = `routine-${r.id}`;
     if (existingById.has(goalId)) return;
@@ -141,6 +201,28 @@ function ensureRoutineGoalsFromTemplates(routines, goals) {
   return changed ? nextGoals : goals;
 }
 
+function ensureMaintenanceGoalsFromBlocks(maintenanceBlocks, goals) {
+  if (!Array.isArray(maintenanceBlocks) || maintenanceBlocks.length === 0) return goals;
+  const nextGoals = Array.isArray(goals) ? [...goals] : [];
+  let changed = false;
+  const existingByBlockId = new Set(
+    nextGoals
+      .filter((g) => g && g.type === 'routine' && g._maintenanceBlockId)
+      .map((g) => g._maintenanceBlockId)
+  );
+  const existingById = new Set(nextGoals.map((g) => g.id));
+  maintenanceBlocks.forEach((block) => {
+    const normalized = createMaintenanceBlock(block ?? {});
+    if (!normalized.active) return;
+    if (existingByBlockId.has(normalized.id)) return;
+    const goal = createGoalFromMaintenanceBlock(normalized);
+    if (existingById.has(goal.id)) return;
+    nextGoals.push(goal);
+    changed = true;
+  });
+  return changed ? nextGoals : goals;
+}
+
 export function GardenProvider({ children }) {
   const [goals, setGoals] = useState(defaultData.goals);
   const [weeklyEvents, setWeeklyEvents] = useState(defaultData.weeklyEvents);
@@ -156,6 +238,7 @@ export function GardenProvider({ children }) {
   const [soilNutrients, setSoilNutrients] = useState(defaultData.soilNutrients ?? 0);
   const [assignments, setAssignments] = useState({}); // daily schedule { [hour]: assignment | assignment[], anytime?: assignment[] }
   const [planDate, setPlanDate] = useState(() => getLogicalToday(new Date(), 0)); // logical "today" for plan subscription (respects userSettings.dayStartsAt)
+  const initialPlanDateRef = useRef(planDate);
   const [weekAssignments, setWeekAssignments] = useState({}); // cache: { [dateStr]: { [hour]: assignment } }
   const weekAssignmentsRef = useRef({});
   const [eveningMode, setEveningMode] = useState('none'); // 'none' | 'sleep' | 'night-owl'
@@ -175,6 +258,12 @@ export function GardenProvider({ children }) {
   const [waterDrops, setWaterDrops] = useState(defaultData.waterDrops ?? 5);
   const [monthlyQuotas, setMonthlyQuotas] = useState(defaultData.monthlyQuotas ?? []);
   const [routines, setRoutines] = useState(defaultData.routines ?? []);
+  const [maintenanceBlocks, setMaintenanceBlocks] = useState(defaultData.maintenanceBlocks ?? []);
+  const [socialFollowUps, setSocialFollowUps] = useState(defaultData.socialFollowUps ?? []);
+  const [recurringSupportState, setRecurringSupportState] = useState(() => normalizeRecurringSupportState(defaultData.recurringSupportState));
+  const [waitingSupportState, setWaitingSupportState] = useState(() => normalizeWaitingSupportState(defaultData.waitingSupportState));
+  const [lifeDomains, setLifeDomains] = useState(defaultData.lifeDomains ?? []);
+  const [routineSupportPlacements, setRoutineSupportPlacements] = useState(() => normalizeRoutineSupportPlacements(defaultData.routineSupportPlacements));
   const [pausedDays, setPausedDays] = useState(defaultData.pausedDays ?? {});
   const [needsRescheduling, setNeedsRescheduling] = useState(defaultData.needsRescheduling ?? []);
   const [spawnedVolumeBlocks, setSpawnedVolumeBlocks] = useState([]); // { id, goalId, goalTitle, blockValue, targetMetric }[] — from Sunday Ritual Pacer
@@ -196,6 +285,11 @@ export function GardenProvider({ children }) {
   const [googleToken, setGoogleToken] = useState(null);
   const [msUser, setMsUser] = useState(null);
   const [msToken, setMsToken] = useState(null);
+
+  // Restore the Firebase session on reload so cloud save (and the watch feed) keep working without a new popup.
+  useEffect(() => onAuthStateChanged(auth, (user) => {
+    if (user) setGoogleUser((prev) => prev ?? user);
+  }), []);
 
   const connectCalendar = useCallback(async () => {
     try {
@@ -229,7 +323,11 @@ export function GardenProvider({ children }) {
   }, []);
 
   const disconnectOutlook = useCallback(async () => {
-    try { await logoutMicrosoft(); } catch (_) {}
+    try {
+      await logoutMicrosoft();
+    } catch (_) {
+      // Continue local disconnect even if remote logout fails.
+    }
     setMsUser(null);
     setMsToken(null);
   }, []);
@@ -267,13 +365,19 @@ export function GardenProvider({ children }) {
         if (typeof data.waterDrops === 'number' && data.waterDrops >= 0) setWaterDrops(data.waterDrops);
         if (Array.isArray(data.monthlyQuotas)) setMonthlyQuotas(data.monthlyQuotas);
         if (Array.isArray(data.routines)) setRoutines(data.routines);
+        if (Array.isArray(data.maintenanceBlocks)) setMaintenanceBlocks(data.maintenanceBlocks.map((item) => createMaintenanceBlock(item)));
+        if (Array.isArray(data.socialFollowUps)) setSocialFollowUps(data.socialFollowUps);
+        if (data.recurringSupportState && typeof data.recurringSupportState === 'object') setRecurringSupportState(normalizeRecurringSupportState(data.recurringSupportState));
+        if (data.waitingSupportState && typeof data.waitingSupportState === 'object') setWaitingSupportState(normalizeWaitingSupportState(data.waitingSupportState));
+        if (Array.isArray(data.lifeDomains)) setLifeDomains(data.lifeDomains.map((item) => createLifeDomain(item)));
+        if (Array.isArray(data.routineSupportPlacements)) setRoutineSupportPlacements(normalizeRoutineSupportPlacements(data.routineSupportPlacements));
       }
       const rawDayPlans = localStorage.getItem(DAY_PLANS_STORAGE_KEY);
       if (rawDayPlans) {
         const parsedDayPlans = normalizeStoredDayPlans(JSON.parse(rawDayPlans));
         weekAssignmentsRef.current = parsedDayPlans;
         setWeekAssignments(parsedDayPlans);
-        setAssignments(parsedDayPlans[planDate] ?? {});
+        setAssignments(parsedDayPlans[initialPlanDateRef.current] ?? {});
       }
     } catch (e) {
       console.warn('GardenContext: failed to load gardenData', e);
@@ -315,6 +419,12 @@ export function GardenProvider({ children }) {
           if (typeof data.waterDrops === 'number' && data.waterDrops >= 0) setWaterDrops(data.waterDrops);
           if (Array.isArray(data.monthlyQuotas)) setMonthlyQuotas(data.monthlyQuotas);
           if (Array.isArray(data.routines)) setRoutines(data.routines);
+          if (Array.isArray(data.maintenanceBlocks)) setMaintenanceBlocks(data.maintenanceBlocks.map((item) => createMaintenanceBlock(item)));
+          if (Array.isArray(data.socialFollowUps)) setSocialFollowUps(data.socialFollowUps);
+          if (data.recurringSupportState && typeof data.recurringSupportState === 'object') setRecurringSupportState(normalizeRecurringSupportState(data.recurringSupportState));
+          if (data.waitingSupportState && typeof data.waitingSupportState === 'object') setWaitingSupportState(normalizeWaitingSupportState(data.waitingSupportState));
+          if (Array.isArray(data.lifeDomains)) setLifeDomains(data.lifeDomains.map((item) => createLifeDomain(item)));
+          if (Array.isArray(data.routineSupportPlacements)) setRoutineSupportPlacements(normalizeRoutineSupportPlacements(data.routineSupportPlacements));
           if (data.pausedDays && typeof data.pausedDays === 'object') setPausedDays(data.pausedDays);
           if (Array.isArray(data.needsRescheduling)) setNeedsRescheduling(data.needsRescheduling);
           skipCloudSaveUntilRef.current = Date.now() + 3000;
@@ -331,6 +441,11 @@ export function GardenProvider({ children }) {
     if (!hydrated) return;
     setGoals((prev) => ensureRoutineGoalsFromTemplates(routines, prev));
   }, [hydrated, routines]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    setGoals((prev) => ensureMaintenanceGoalsFromBlocks(maintenanceBlocks, prev));
+  }, [hydrated, maintenanceBlocks]);
 
   // Persist compost to Firebase: subscribe when logged in
   useEffect(() => {
@@ -377,11 +492,13 @@ export function GardenProvider({ children }) {
     };
   }, [googleUser?.uid, hydrated, planDate, assignments]);
 
-  // Keep weekAssignments cache in sync with today's assignments
+  // Keep weekAssignments cache in sync with today's assignments.
+  // Waits for hydration: on the first render `assignments` is still {} and would overwrite the stored plan.
   useEffect(() => {
+    if (!hydrated) return;
     weekAssignmentsRef.current = { ...weekAssignmentsRef.current, [planDate]: assignments };
     setWeekAssignments((prev) => ({ ...prev, [planDate]: assignments }));
-  }, [planDate, assignments]);
+  }, [hydrated, planDate, assignments]);
 
   // When working locally, restore the selected day's plan from the local cache.
   useEffect(() => {
@@ -548,9 +665,66 @@ export function GardenProvider({ children }) {
     );
   }, []);
 
-  const deleteGoal = useCallback((goalId) => {
-    setGoals((prev) => prev.filter((g) => g.id !== goalId));
+  const clearGoalPlanningRefs = useCallback(async (goalId) => {
+    if (!goalId) return;
+
+    const changedDates = [];
+    const nextWeekAssignments = Object.entries(weekAssignmentsRef.current ?? {}).reduce((acc, [dateStr, dayPlan]) => {
+      const { changed, next } = stripGoalFromDayPlan(dayPlan, goalId);
+      if (changed) changedDates.push(dateStr);
+      acc[dateStr] = next;
+      return acc;
+    }, {});
+
+    const currentDayResult = stripGoalFromDayPlan(assignments, goalId);
+    if (currentDayResult.changed) {
+      setAssignments(currentDayResult.next);
+      if (planDate && !changedDates.includes(planDate)) {
+        changedDates.push(planDate);
+        nextWeekAssignments[planDate] = currentDayResult.next;
+      }
+    }
+
+    weekAssignmentsRef.current = nextWeekAssignments;
+    setWeekAssignments(nextWeekAssignments);
+    setNeedsRescheduling((prev) => (Array.isArray(prev) ? prev : []).filter((item) => getGoalIdFromAssignment(item?.assignment) !== goalId));
+    setSpawnedVolumeBlocks((prev) => (Array.isArray(prev) ? prev : []).filter((block) => block?.goalId !== goalId));
+    setStagingTaskStatus((prev) => removeGoalFromStagingTaskStatus(prev, goalId));
+
+    if (typeof saveDayPlanForDate === 'function' && changedDates.length > 0) {
+      await Promise.all(changedDates.map((dateStr) => saveDayPlanForDate(dateStr, nextWeekAssignments[dateStr] ?? {})));
+    }
+  }, [assignments, planDate, saveDayPlanForDate]);
+
+  const archiveGoal = useCallback(async (goalId, options = {}) => {
+    if (!goalId) return;
+    const archivedAt = options.archivedAt ?? new Date().toISOString();
+    setGoals((prev) => (Array.isArray(prev) ? prev : []).map((goal) => (
+      goal.id === goalId
+        ? {
+            ...goal,
+            archivedAt,
+            archivedReason: options.reason ?? goal.archivedReason ?? null,
+          }
+        : goal
+    )));
+    await clearGoalPlanningRefs(goalId);
+  }, [clearGoalPlanningRefs]);
+
+  const restoreGoal = useCallback((goalId) => {
+    if (!goalId) return;
+    setGoals((prev) => (Array.isArray(prev) ? prev : []).map((goal) => (
+      goal.id === goalId
+        ? { ...goal, archivedAt: null, archivedReason: null }
+        : goal
+    )));
   }, []);
+
+  const deleteGoal = useCallback(async (goalId) => {
+    if (!goalId) return;
+    await clearGoalPlanningRefs(goalId);
+    setGoals((prev) => (Array.isArray(prev) ? prev : []).filter((g) => g.id !== goalId));
+  }, [clearGoalPlanningRefs]);
 
   const addToCompost = useCallback(
     async (text) => {
@@ -627,12 +801,12 @@ export function GardenProvider({ children }) {
   useEffect(() => {
     if (!hydrated) return;
     try {
-      const data = { goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, weeklyNorthStarId, logs, spiritConfig, compost, soilNutrients, spiritPoints, embers, decorations, ownedSeeds, terrainMap, unlockedAnimals, metrics, fertilizerCount, waterDrops, monthlyQuotas, pausedDays, needsRescheduling, routines };
+      const data = { goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, weeklyNorthStarId, logs, spiritConfig, compost, soilNutrients, spiritPoints, embers, decorations, ownedSeeds, terrainMap, unlockedAnimals, metrics, fertilizerCount, waterDrops, monthlyQuotas, pausedDays, needsRescheduling, routines, maintenanceBlocks, socialFollowUps, recurringSupportState, waitingSupportState, lifeDomains, routineSupportPlacements };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     } catch (e) {
       console.warn('GardenContext: failed to save gardenData', e);
     }
-  }, [hydrated, goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, weeklyNorthStarId, logs, spiritConfig, compost, soilNutrients, spiritPoints, embers, decorations, ownedSeeds, terrainMap, unlockedAnimals, metrics, fertilizerCount, waterDrops, monthlyQuotas, pausedDays, needsRescheduling, routines]);
+  }, [hydrated, goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, weeklyNorthStarId, logs, spiritConfig, compost, soilNutrients, spiritPoints, embers, decorations, ownedSeeds, terrainMap, unlockedAnimals, metrics, fertilizerCount, waterDrops, monthlyQuotas, pausedDays, needsRescheduling, routines, maintenanceBlocks, socialFollowUps, recurringSupportState, waitingSupportState, lifeDomains, routineSupportPlacements]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -682,6 +856,12 @@ export function GardenProvider({ children }) {
           pausedDays: pausedDays && typeof pausedDays === 'object' ? pausedDays : {},
           needsRescheduling: Array.isArray(needsRescheduling) ? needsRescheduling : [],
           routines: Array.isArray(routines) ? routines : [],
+          maintenanceBlocks: Array.isArray(maintenanceBlocks) ? maintenanceBlocks : [],
+          socialFollowUps: Array.isArray(socialFollowUps) ? socialFollowUps : [],
+          recurringSupportState: recurringSupportState && typeof recurringSupportState === 'object' ? recurringSupportState : { byItem: {} },
+          waitingSupportState: waitingSupportState && typeof waitingSupportState === 'object' ? waitingSupportState : { byItem: {} },
+          lifeDomains: Array.isArray(lifeDomains) ? lifeDomains : [],
+          routineSupportPlacements: Array.isArray(routineSupportPlacements) ? routineSupportPlacements : [],
           updatedAt: new Date().toISOString(),
         }, { merge: true });
         setCloudSaveStatus('saved');
@@ -703,7 +883,7 @@ export function GardenProvider({ children }) {
         savedIdleTimeoutRef.current = null;
       }
     };
-  }, [hydrated, googleUser?.uid, goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, weeklyNorthStarId, logs, spiritConfig, compost, soilNutrients, spiritPoints, embers, decorations, ownedSeeds, terrainMap, unlockedAnimals, metrics, fertilizerCount, waterDrops, monthlyQuotas, pausedDays, needsRescheduling, routines]);
+  }, [hydrated, googleUser?.uid, goals, weeklyEvents, userSettings, dailyEnergyModifier, dailySpoonCount, lastCheckInDate, lastSundayRitualDate, weeklyNorthStarId, logs, spiritConfig, compost, soilNutrients, spiritPoints, embers, decorations, ownedSeeds, terrainMap, unlockedAnimals, metrics, fertilizerCount, waterDrops, monthlyQuotas, pausedDays, needsRescheduling, routines, maintenanceBlocks, socialFollowUps, recurringSupportState, waitingSupportState, lifeDomains, routineSupportPlacements]);
 
   const addLog = useCallback((log) => {
     const mins = Number(log?.minutes) || 0;
@@ -713,8 +893,6 @@ export function GardenProvider({ children }) {
       recordVibe(googleUser.uid, log.taskTitle, log.vibe, log.energyCost).catch(() => {});
     }
   }, [googleUser?.uid]);
-
-  const DECORATION_COSTS = { lantern: 15, bench: 25, pond: 40, path: 10, bush: 20 };
 
   /** Add a decoration without spending. Use with spendEmbers(cost) for purchasing. */
   const placeDecoration = useCallback((type, x, y, variant) => {
@@ -810,11 +988,6 @@ export function GardenProvider({ children }) {
     setDecorations((prev) => prev.filter((d) => d.id !== id));
   }, []);
 
-  const spendSpiritPoints = useCallback((amount) => {
-    const n = Number(amount) || 0;
-    setSpiritPoints((p) => (p >= n ? p - n : p));
-  }, []);
-
   const consumeSoilNutrients = useCallback((amount = 1) => {
     const n = Math.max(0, Math.floor(Number(amount) || 0));
     if (n <= 0) return true;
@@ -841,11 +1014,23 @@ export function GardenProvider({ children }) {
     if (!isNewDay) {
       try {
         localStorage.setItem(LAST_OPEN_DATE_KEY, today);
-      } catch (_) {}
+      } catch (_) {
+        // Ignore storage write failures; the planner can still continue normally.
+      }
       return;
     }
 
     const uid = googleUser?.uid;
+
+    // Plan mode plans days ahead (Plan my week), so a new day must not wipe what was planned for it.
+    if (userSettings?.uiMode !== 'garden') {
+      try {
+        localStorage.setItem(LAST_OPEN_DATE_KEY, today);
+      } catch (_) {
+        // Ignore storage write failures.
+      }
+      return;
+    }
 
     if (!gardenerHasRunRef.current) {
       gardenerHasRunRef.current = true;
@@ -853,7 +1038,9 @@ export function GardenProvider({ children }) {
       setEveningMode('none');
       try {
         localStorage.setItem(LAST_OPEN_DATE_KEY, today);
-      } catch (_) {}
+      } catch (_) {
+        // Ignore storage write failures during day rollover.
+      }
     }
 
     const archiveYesterday = async () => {
@@ -894,7 +1081,7 @@ export function GardenProvider({ children }) {
     };
 
     archiveYesterday();
-  }, [hydrated, googleUser?.uid, goals, addToCompost, planDate]);
+  }, [hydrated, googleUser?.uid, goals, addToCompost, planDate, userSettings?.uiMode]);
 
   /** Archive current plan into compost and clear assignments (no lastCheckInDate change). Used for missed-day flow before choosing 1/3/0 spoons. */
   const archivePlanToCompost = useCallback(() => {
@@ -924,7 +1111,7 @@ export function GardenProvider({ children }) {
   }, [assignments, goals, addToCompost, setAssignments]);
 
   /** Shame-free reset: archive current plan into compost, clear today's plan, show morning check-in again. */
-  const gentleResetToToday = useCallback(({ gapDays } = {}) => {
+  const gentleResetToToday = useCallback(({ gapDays: _gapDays } = {}) => {
     const getGoalId = (a) => {
       if (a == null) return null;
       if (typeof a === 'string') return a;
@@ -957,7 +1144,7 @@ export function GardenProvider({ children }) {
     if (uid) {
       saveDailyPlan(uid, today, {}).catch((e) => console.warn('gentleResetToToday: saveDailyPlan failed', e));
     }
-  }, [assignments, goals, addToCompost, setAssignments, googleUser?.uid]);
+  }, [assignments, goals, addToCompost, setAssignments, googleUser?.uid, planDate]);
 
   /** Archive plan items from past dates into compost so today stays light. Returns count archived. */
   const archiveStalePlanItems = useCallback(async ({ olderThanDays = 1 } = {}) => {
@@ -1001,7 +1188,7 @@ export function GardenProvider({ children }) {
       }
     }
     return totalArchived;
-  }, [googleUser?.uid, goals, addToCompost]);
+  }, [googleUser?.uid, goals, addToCompost, planDate]);
 
   /** Wall of Awful cure: auto-compost backlog seeds created 30+ days ago with zero progress. Call quietly during morning check-in. */
   const compostStaleSeeds = useCallback(() => {
@@ -1081,7 +1268,9 @@ export function GardenProvider({ children }) {
             if (!cur || dateStr < cur) earliestByGoal.set(goalId, dateStr);
           }
         });
-      } catch (_) {}
+      } catch (_) {
+        // Skip unreadable past day plans when scanning backlog history.
+      }
     }
     let composted = 0;
     let escalated = 0;
@@ -1610,7 +1799,197 @@ export function GardenProvider({ children }) {
 
   /** Delete a routine by id. */
   const deleteRoutine = useCallback((id) => {
-    setRoutines((prev) => prev.filter((r) => r.id !== id));
+    if (!id) return;
+    const mirroredGoalId = `routine-${id}`;
+    setRoutines((prev) => (Array.isArray(prev) ? prev : []).filter((r) => r.id !== id));
+    setRoutineSupportPlacements((prev) => (Array.isArray(prev) ? prev : []).filter((placement) => placement?.routineId !== id));
+    setGoals((prev) => (Array.isArray(prev) ? prev : []).filter((goal) => goal?._routineTemplateId !== id && goal?.id !== mirroredGoalId));
+    void clearGoalPlanningRefs(mirroredGoalId);
+  }, [clearGoalPlanningRefs]);
+
+  const archiveRoutine = useCallback(async (routineId, options = {}) => {
+    if (!routineId) return;
+    const archivedAt = options.archivedAt ?? new Date().toISOString();
+    const mirroredGoalId = `routine-${routineId}`;
+    setRoutines((prev) => (Array.isArray(prev) ? prev : []).map((routine) => (
+      routine.id === routineId
+        ? {
+            ...routine,
+            archivedAt,
+            archivedReason: options.reason ?? routine.archivedReason ?? null,
+          }
+        : routine
+    )));
+    setGoals((prev) => (Array.isArray(prev) ? prev : []).map((goal) => (
+      goal?._routineTemplateId === routineId || goal?.id === mirroredGoalId
+        ? {
+            ...goal,
+            archivedAt,
+            archivedReason: options.reason ?? goal.archivedReason ?? null,
+          }
+        : goal
+    )));
+    setRoutineSupportPlacements((prev) => (Array.isArray(prev) ? prev : []).filter((placement) => placement?.routineId !== routineId));
+    await clearGoalPlanningRefs(mirroredGoalId);
+  }, [clearGoalPlanningRefs]);
+
+  const restoreRoutine = useCallback((routineId) => {
+    if (!routineId) return;
+    const mirroredGoalId = `routine-${routineId}`;
+    setRoutines((prev) => (Array.isArray(prev) ? prev : []).map((routine) => (
+      routine.id === routineId
+        ? { ...routine, archivedAt: null, archivedReason: null }
+        : routine
+    )));
+    setGoals((prev) => (Array.isArray(prev) ? prev : []).map((goal) => (
+      goal?._routineTemplateId === routineId || goal?.id === mirroredGoalId
+        ? { ...goal, archivedAt: null, archivedReason: null }
+        : goal
+    )));
+  }, []);
+
+  const addMaintenanceBlock = useCallback((block) => {
+    const normalized = createMaintenanceBlock(block ?? {});
+    setMaintenanceBlocks((prev) => [...prev, normalized]);
+    return normalized.id;
+  }, []);
+
+  const updateMaintenanceBlock = useCallback((id, updates) => {
+    setMaintenanceBlocks((prev) => prev.map((item) => (item.id === id ? createMaintenanceBlock({ ...item, ...updates, id }) : item)));
+  }, []);
+
+  const deleteMaintenanceBlock = useCallback((id) => {
+    setMaintenanceBlocks((prev) => prev.filter((item) => item.id !== id));
+    setGoals((prev) => prev.filter((goal) => goal?._maintenanceBlockId !== id));
+  }, []);
+
+  const addSocialFollowUp = useCallback((item) => {
+    const text = String(item?.text ?? item?.title ?? '').trim();
+    if (!text) return null;
+    const entry = {
+      id: item?.id ?? (crypto.randomUUID?.() ?? `social-${Date.now()}`),
+      text,
+      person: typeof item?.person === 'string' ? item.person : null,
+      source: typeof item?.source === 'string' ? item.source : 'capture',
+      status: item?.status === 'done' ? 'done' : 'pending',
+      snoozedUntil: item?.snoozedUntil ?? null,
+      createdAt: item?.createdAt ?? new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    setSocialFollowUps((prev) => [entry, ...(Array.isArray(prev) ? prev : [])].slice(0, 200));
+    return entry.id;
+  }, []);
+
+  const updateSocialFollowUp = useCallback((id, updates = {}) => {
+    setSocialFollowUps((prev) => (Array.isArray(prev) ? prev : []).map((item) => (
+      item.id === id ? { ...item, ...updates, updatedAt: new Date().toISOString() } : item
+    )));
+  }, []);
+
+  const deleteSocialFollowUp = useCallback((id) => {
+    setSocialFollowUps((prev) => (Array.isArray(prev) ? prev : []).filter((item) => item.id !== id));
+  }, []);
+
+  const markRoutineSupportState = useCallback((routineId, status, options = {}) => {
+    setRecurringSupportState((prev) => markRecurringSupportState(prev, {
+      itemType: 'routine',
+      itemId: routineId,
+      status,
+      date: options?.date,
+      note: options?.note,
+    }));
+  }, []);
+
+  const pauseRoutineTemporarily = useCallback((routineId, days = 7) => {
+    const until = new Date(Date.now() + (Math.max(1, Number(days) || 7) * 24 * 60 * 60 * 1000)).toISOString().slice(0, 10);
+    updateRoutine(routineId, { pausedUntil: until });
+    markRoutineSupportState(routineId, RECURRING_SUPPORT_STATUSES.DEFERRED_SAFELY, { note: `Paused until ${until}` });
+  }, [updateRoutine, markRoutineSupportState]);
+
+  const softenRoutineIntensity = useCallback((routineId) => {
+    setRoutines((prev) => prev.map((r) => {
+      if (r.id !== routineId) return r;
+      const nextDuration = Math.max(5, Math.round((Number(r.duration) || 15) * 0.7));
+      const nextPerWeek = Math.max(1, Math.min(7, Number(r.perWeek ?? 3) - 1));
+      return { ...r, duration: nextDuration, perWeek: nextPerWeek };
+    }));
+    markRoutineSupportState(routineId, RECURRING_SUPPORT_STATUSES.LIGHT_VERSION_COMPLETED, { note: 'Routine softened automatically.' });
+  }, [markRoutineSupportState]);
+
+  const upsertRoutineSupportPlacement = useCallback((placement) => {
+    if (!placement?.routineId) return null;
+    const normalized = createRoutineSupportPlacement(placement);
+    setRoutineSupportPlacements((prev) => {
+      const current = normalizeRoutineSupportPlacements(prev);
+      const existing = current.find((item) => item.routineId === normalized.routineId && item.weekId === normalized.weekId);
+      const nextPlacement = createRoutineSupportPlacement({
+        ...(existing ?? {}),
+        ...normalized,
+        id: existing?.id ?? normalized.id,
+        createdAt: existing?.createdAt ?? normalized.createdAt,
+        updatedAt: new Date().toISOString(),
+      });
+      const remaining = current.filter((item) => !(item.routineId === normalized.routineId && item.weekId === normalized.weekId));
+      return normalizeRoutineSupportPlacements([nextPlacement, ...remaining]);
+    });
+    return normalized;
+  }, []);
+
+  const placeRoutineSupportInWeek = useCallback((routineId, options = {}) => {
+    const routine = (Array.isArray(routines) ? routines : []).find((item) => item.id === routineId);
+    if (!routine) return null;
+    const placement = buildRoutineSupportPlacementFromRoutine(routine, {
+      dateStr: options.dateStr,
+      mode: options.mode === 'light' ? 'light' : 'normal',
+      source: options.source ?? 'systems',
+    });
+    upsertRoutineSupportPlacement(placement);
+    if (placement.mode === 'light') {
+      markRoutineSupportState(routineId, RECURRING_SUPPORT_STATUSES.LIGHT_VERSION_COMPLETED, {
+        note: `Placed a lighter version for ${placement.dateStr}.`,
+      });
+    }
+    return placement;
+  }, [routines, upsertRoutineSupportPlacement, markRoutineSupportState]);
+
+  const removeRoutineSupportPlacement = useCallback((placementId) => {
+    if (!placementId) return;
+    setRoutineSupportPlacements((prev) => (Array.isArray(prev) ? prev : []).filter((item) => item.id !== placementId));
+  }, []);
+
+  const setGoalWaitingSupport = useCallback((goalId, payload = {}) => {
+    if (!goalId) return;
+    setWaitingSupportState((prev) => setWaitingSupportItem(prev, {
+      itemType: 'goal',
+      itemId: goalId,
+      waitingType: payload.waitingType,
+      waitingOn: payload.waitingOn,
+      holdUntil: payload.holdUntil,
+      followUpDate: payload.followUpDate,
+      note: payload.note,
+      status: payload.status,
+    }));
+  }, []);
+
+  const resolveGoalWaitingSupport = useCallback((goalId) => {
+    if (!goalId) return;
+    setWaitingSupportState((prev) => clearWaitingSupportItem(prev, { itemType: 'goal', itemId: goalId }));
+  }, []);
+
+  const addLifeDomain = useCallback((domainInput = {}) => {
+    const domain = createLifeDomain(domainInput);
+    setLifeDomains((prev) => [domain, ...(Array.isArray(prev) ? prev : [])].slice(0, 80));
+    return domain;
+  }, []);
+
+  const updateLifeDomain = useCallback((domainId, updates = {}) => {
+    setLifeDomains((prev) => (Array.isArray(prev) ? prev : []).map((domain) => (
+      domain.id === domainId ? createLifeDomain({ ...domain, ...updates, id: domainId }) : domain
+    )));
+  }, []);
+
+  const deleteLifeDomain = useCallback((domainId) => {
+    setLifeDomains((prev) => (Array.isArray(prev) ? prev : []).filter((domain) => domain.id !== domainId));
   }, []);
 
   /** Import garden data from JSON (e.g. backup). Merges into state; persist effects will save to localStorage/Firestore. */
@@ -1639,6 +2018,12 @@ export function GardenProvider({ children }) {
     if (typeof data.waterDrops === 'number' && data.waterDrops >= 0) setWaterDrops(data.waterDrops);
     if (Array.isArray(data.monthlyQuotas)) setMonthlyQuotas(data.monthlyQuotas);
     if (Array.isArray(data.routines)) setRoutines(data.routines);
+    if (Array.isArray(data.maintenanceBlocks)) setMaintenanceBlocks(data.maintenanceBlocks.map((item) => createMaintenanceBlock(item)));
+    if (Array.isArray(data.socialFollowUps)) setSocialFollowUps(data.socialFollowUps);
+    if (data.recurringSupportState && typeof data.recurringSupportState === 'object') setRecurringSupportState(normalizeRecurringSupportState(data.recurringSupportState));
+    if (data.waitingSupportState && typeof data.waitingSupportState === 'object') setWaitingSupportState(normalizeWaitingSupportState(data.waitingSupportState));
+    if (Array.isArray(data.lifeDomains)) setLifeDomains(data.lifeDomains.map((item) => createLifeDomain(item)));
+    if (Array.isArray(data.routineSupportPlacements)) setRoutineSupportPlacements(normalizeRoutineSupportPlacements(data.routineSupportPlacements));
     if (data.pausedDays && typeof data.pausedDays === 'object') setPausedDays(data.pausedDays);
     if (Array.isArray(data.needsRescheduling)) setNeedsRescheduling(data.needsRescheduling);
   }, []);
@@ -1671,6 +2056,12 @@ export function GardenProvider({ children }) {
     setPausedDays(defaultData.pausedDays ?? {});
     setNeedsRescheduling(defaultData.needsRescheduling ?? []);
     setRoutines(defaultData.routines ?? []);
+    setMaintenanceBlocks(defaultData.maintenanceBlocks ?? []);
+    setSocialFollowUps(defaultData.socialFollowUps ?? []);
+    setRecurringSupportState(normalizeRecurringSupportState(defaultData.recurringSupportState));
+    setWaitingSupportState(normalizeWaitingSupportState(defaultData.waitingSupportState));
+    setLifeDomains(defaultData.lifeDomains ?? []);
+    setRoutineSupportPlacements(normalizeRoutineSupportPlacements(defaultData.routineSupportPlacements));
     weekAssignmentsRef.current = {};
     setWeekAssignments({});
     try {
@@ -1691,8 +2082,30 @@ export function GardenProvider({ children }) {
     }
   }, [googleUser?.uid, planDate]);
 
+  const activeGoals = useMemo(
+    () => (Array.isArray(goals) ? goals : []).filter((goal) => !isArchivedItem(goal)),
+    [goals]
+  );
+
+  const archivedGoals = useMemo(
+    () => (Array.isArray(goals) ? goals : []).filter((goal) => isArchivedItem(goal)),
+    [goals]
+  );
+
+  const activeRoutines = useMemo(
+    () => (Array.isArray(routines) ? routines : []).filter((routine) => !isArchivedItem(routine)),
+    [routines]
+  );
+
+  const archivedRoutines = useMemo(
+    () => (Array.isArray(routines) ? routines : []).filter((routine) => isArchivedItem(routine)),
+    [routines]
+  );
+
   const value = {
-    goals,
+    goals: activeGoals,
+    allGoals: goals,
+    archivedGoals,
     weeklyEvents,
     userSettings,
     setUserSettings,
@@ -1722,6 +2135,8 @@ export function GardenProvider({ children }) {
     updateWeeklyEvents,
     editGoal,
     deleteGoal,
+    archiveGoal,
+    restoreGoal,
     fertilizeGoal,
     waterGoal,
     fertilizerCount,
@@ -1776,6 +2191,13 @@ export function GardenProvider({ children }) {
     removeSpawnedVolumeBlock,
     stagingTaskStatus,
     setStagingTaskStatus,
+    waitingSupportState,
+    setGoalWaitingSupport,
+    resolveGoalWaitingSupport,
+    lifeDomains,
+    addLifeDomain,
+    updateLifeDomain,
+    deleteLifeDomain,
     promoteTaskToThisWeek,
     pausedDays,
     needsRescheduling,
@@ -1816,11 +2238,31 @@ export function GardenProvider({ children }) {
     monthlyQuotas,
     addMonthlyQuota,
     updateMonthlyQuota,
-    routines,
+    routines: activeRoutines,
+    allRoutines: routines,
+    archivedRoutines,
+    maintenanceBlocks,
+    socialFollowUps,
+    recurringSupportState,
+    routineSupportPlacements,
     setRoutines,
     addRoutine,
     updateRoutine,
     deleteRoutine,
+    archiveRoutine,
+    restoreRoutine,
+    addMaintenanceBlock,
+    updateMaintenanceBlock,
+    deleteMaintenanceBlock,
+    addSocialFollowUp,
+    updateSocialFollowUp,
+    deleteSocialFollowUp,
+    markRoutineSupportState,
+    pauseRoutineTemporarily,
+    softenRoutineIntensity,
+    upsertRoutineSupportPlacement,
+    placeRoutineSupportInWeek,
+    removeRoutineSupportPlacement,
   };
 
   return (
@@ -1835,5 +2277,3 @@ export function useGarden() {
   if (!ctx) throw new Error('useGarden must be used within GardenProvider');
   return ctx;
 }
-
-

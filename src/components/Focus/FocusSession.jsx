@@ -27,7 +27,9 @@ function getStoredAmbience() {
   try {
     const s = localStorage.getItem(AMBIENCE_STORAGE_KEY);
     if (s === 'rain' || s === 'brownNoise') return s;
-  } catch (_) {}
+  } catch (_) {
+    // Ignore storage read failures and fall back to silence.
+  }
   return 'silence';
 }
 
@@ -152,11 +154,12 @@ export default function FocusSession({
   const [showBrokenPath, setShowBrokenPath] = useState(false);
   const [ambience, setAmbience] = useState(getStoredAmbience);
   const [soundMenuOpen, setSoundMenuOpen] = useState(false);
-  const [volume, setVolume] = useState(0.5);
+  const [volume, _setVolume] = useState(0.5);
   const [hasCommitted, setHasCommitted] = useState(false);
   const controlsTimeoutRef = useRef(null);
   const ambienceAudioRef = useRef(null);
   const gongAudioRef = useRef(null);
+  const volumeRef = useRef(0.5);
   const fadeCancelRef = useRef(null);
   const hasAudioInteractionRef = useRef(false);
   const soundMenuRef = useRef(null);
@@ -181,7 +184,9 @@ export default function FocusSession({
     if (wakeLockRef.current) {
       try {
         wakeLockRef.current.release();
-      } catch (_) {}
+      } catch (_) {
+        // Ignore release errors if the browser has already dropped the wake lock.
+      }
       wakeLockRef.current = null;
     }
   }, []);
@@ -199,7 +204,9 @@ export default function FocusSession({
     setAmbience(value);
     try {
       localStorage.setItem(AMBIENCE_STORAGE_KEY, value);
-    } catch (_) {}
+    } catch (_) {
+      // Ignore storage write failures; ambience still applies for this session.
+    }
   }, []);
 
   const playAmbienceLoop = useCallback(
@@ -279,8 +286,8 @@ export default function FocusSession({
   useEffect(() => {
     const ambienceEl = new Audio();
     const gongEl = new Audio();
-    ambienceEl.volume = volume;
-    gongEl.volume = volume;
+    ambienceEl.volume = volumeRef.current;
+    gongEl.volume = volumeRef.current;
     ambienceAudioRef.current = ambienceEl;
     gongAudioRef.current = gongEl;
     return () => {
@@ -295,6 +302,7 @@ export default function FocusSession({
   }, []);
 
   useEffect(() => {
+    volumeRef.current = volume;
     if (ambienceAudioRef.current) ambienceAudioRef.current.volume = volume;
     if (gongAudioRef.current) gongAudioRef.current.volume = volume;
   }, [volume]);

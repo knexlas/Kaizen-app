@@ -7,8 +7,8 @@ const COPY = {
   empty_need_energy_title: {
     business: 'Set your capacity',
     professional: "How's your energy today?",
-    calm: "Let's start gently. How's your energy?",
-    default: "Let's start gently. How's your energy today?",
+    calm: "How's your energy?",
+    default: "How's your energy today?",
   },
   empty_need_energy_cta: {
     business: 'Set capacity',
@@ -25,7 +25,7 @@ const COPY = {
   empty_next_step_subtitle: {
     business: 'Pick one small step and begin.',
     professional: 'Pick one 5-minute step and start.',
-    calm: 'Pick one small step and start when you are ready.',
+    calm: 'Pick one small step and start.',
     default: 'Pick one 5-minute step and start.',
   },
   recovery_heading: {
@@ -37,7 +37,7 @@ const COPY = {
   recovery_body: {
     business: 'Plan exceeds capacity. Move or reduce a few items.',
     professional: 'Today looks full. Move or reduce a few items.',
-    calm: 'Today looks full. Lighten it a little if you need to.',
+    calm: 'Today looks full. Lighten it if needed.',
     default: 'Today looks full. Move or reduce a few items.',
   },
 };

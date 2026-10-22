@@ -74,7 +74,9 @@ export function ThemeProvider({ children }) {
         if (next === null) localStorage.removeItem(DARK_OVERRIDE_KEY);
         else localStorage.setItem(DARK_OVERRIDE_KEY, String(next));
       }
-    } catch (_) {}
+    } catch (_) {
+      // Ignore storage failures; the in-memory theme state still updates.
+    }
   }, []);
 
   const value = useMemo(() => {

@@ -338,6 +338,15 @@ export function getNeedsAttention(goals, logs, weekAssignments, weekCapacityHour
   const noNextStep = active.filter((g) => getProjectHealthState(g, context) === 'stuck');
   const plannedMins = plannedTotalMinutes ?? getPlannedHoursByScope(weekAssignments ?? {}, goals ?? [], 'week').totalMinutes;
   const overplannedWeek = weekCapacityHours > 0 && plannedMins / 60 > weekCapacityHours;
+  const waitingOn = (goals ?? [])
+    .filter((g) => g?._waitingSupport && g?._waitingSupport !== null)
+    .map((g) => ({
+      goal: g,
+      label: g.title ?? g._projectName ?? 'Project',
+      waitingOn: g._waitingSupport?.waitingOn ?? '',
+      holdUntil: g._waitingSupport?.holdUntil ?? null,
+      followUpDate: g._waitingSupport?.followUpDate ?? null,
+    }));
 
   return {
     noNextStep: noNextStep.map((g) => ({ goal: g, label: g.title ?? g._projectName ?? 'Project' })),
@@ -348,6 +357,7 @@ export function getNeedsAttention(goals, logs, weekAssignments, weekCapacityHour
     }).map((g) => ({ goal: g, label: g.title ?? g._projectName ?? 'Project' })),
     deadlineRisk: atRisk.map((g) => ({ goal: g, label: g.title ?? g._projectName ?? 'Project' })),
     notTouchedRecently: neglected.map((g) => ({ goal: g, label: g.title ?? g._projectName ?? 'Project' })),
+    waitingOn,
     overplannedWeek,
   };
 }
@@ -476,13 +486,34 @@ export function getAssistantOperatorSignals({
   }
 
   if (focusWindow?.duration >= 2) {
+    const confidenceNote = learnedEnergyProfile?.confidence?.level === 'low'
+      ? ' Early signal; adjust as needed.'
+      : '';
     signals.push({
       id: 'focus-window',
       tone: 'moss',
       message: focusWindow.source === 'behavioral'
-        ? `${focusWindow.explanation ?? `You usually focus best around ${focusWindow.label}.`}`
+        ? `${focusWindow.explanation ?? `You usually focus best around ${focusWindow.label}.`}${confidenceNote}`
         : `Your best deep-work window is probably ${focusWindow.label}.`,
       actionId: 'PROTECT_FOCUS_BLOCK',
+    });
+  }
+
+  if (learnedEnergyProfile?.weakWindow?.label && learnedEnergyProfile?.weakWindow?.explanation) {
+    signals.push({
+      id: 'weak-window',
+      tone: 'stone',
+      message: learnedEnergyProfile.weakWindow.explanation,
+      actionId: 'MOVE_LOW_ENERGY_LATER',
+    });
+  }
+
+  if (learnedEnergyProfile?.overloadWeekday?.label && learnedEnergyProfile?.overloadWeekday?.explanation) {
+    signals.push({
+      id: 'overload-weekday',
+      tone: 'amber',
+      message: learnedEnergyProfile.overloadWeekday.explanation,
+      actionId: 'REBALANCE_WEEK',
     });
   }
 

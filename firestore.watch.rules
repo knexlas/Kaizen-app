@@ -1,0 +1,23 @@
+// Rules for the Garmin watch sync. Merge this `match` block into your existing Firestore rules
+// (Firebase console → Firestore Database → Rules), inside `match /databases/{database}/documents { ... }`.
+//
+// watchFeeds/{watchKey}: the key is a 12-character random secret shown in Kaizen → Settings → Watch.
+// Anyone holding the key can read that one feed (the watch has no Google sign-in); nobody can list feeds.
+// Only the signed-in owner can write the feed. The watch may only add small, well-formed events.
+
+match /watchFeeds/{watchKey} {
+  allow get: if true;
+  allow list: if false;
+  allow create: if request.auth != null && request.resource.data.uid == request.auth.uid;
+  allow update: if request.auth != null && resource.data.uid == request.auth.uid
+                && request.resource.data.uid == request.auth.uid;
+  allow delete: if request.auth != null && resource.data.uid == request.auth.uid;
+
+  match /events/{eventId} {
+    allow create: if request.resource.data.keys().hasOnly(['a', 'i', 'k', 'd', 's', 'n', 'at'])
+                  && request.resource.data.a in ['done', 'undo', 'snooze', 'start', 'today']
+                  && exists(/databases/$(database)/documents/watchFeeds/$(watchKey));
+    allow read, delete: if request.auth != null
+                        && get(/databases/$(database)/documents/watchFeeds/$(watchKey)).data.uid == request.auth.uid;
+  }
+}

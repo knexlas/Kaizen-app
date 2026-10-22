@@ -15,6 +15,7 @@ export default function CommandPalette({
   onOpen,
   onOpenSpiritBuilder,
   onCapture,
+  onOpenOmniAdd,
 }) {
   const [query, setQuery] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -151,10 +152,13 @@ export default function CommandPalette({
                 </button>
                 <button
                   type="button"
-                  onClick={onOpenSpiritBuilder}
+                  onClick={() => {
+                    if (query.trim()) onOpenOmniAdd?.(query);
+                    else onOpenSpiritBuilder?.();
+                  }}
                   className="font-sans text-sm text-stone-500 hover:text-stone-700"
                 >
-                  Open spirit builder
+                  {query.trim() ? 'Open in OmniAdd' : 'Open spirit builder'}
                 </button>
               </div>
             </div>

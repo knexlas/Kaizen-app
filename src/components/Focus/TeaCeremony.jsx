@@ -42,6 +42,7 @@ export default function TeaCeremony({ task, completedTask, subtasks = [], onComp
 
   const durationMinutes = resolvedTask?.timeSpentMinutes ?? 25;
   const showFocusCurrency = gamificationConfig.showFocusSuccessCurrency;
+  const showCelebrationVisuals = gamificationConfig.showParticles || gamificationConfig.showFocusSuccessCurrency;
 
   const handleFinish = () => {
     const embers = Math.max(1, Math.floor(durationMinutes));
@@ -58,7 +59,8 @@ export default function TeaCeremony({ task, completedTask, subtasks = [], onComp
       minutes: durationMinutes,
     };
 
-    setTimeout(() => onComplete?.(log), 2800);
+    const closeDelay = showFocusCurrency ? 2800 : 1800;
+    setTimeout(() => onComplete?.(log), closeDelay);
   };
 
   if (phase === 'success') {
@@ -171,40 +173,42 @@ export default function TeaCeremony({ task, completedTask, subtasks = [], onComp
         >
           <div className="relative">
             <TeaCup />
-            <div className="absolute top-0 left-0 right-0 flex justify-center pointer-events-none" style={{ height: 40 }}>
-              <svg width="60" height="40" viewBox="0 0 60 40" fill="none" className="overflow-visible">
-                <motion.path
-                  d="M28 28 Q30 18 32 28 Q34 12 36 28"
-                  stroke="#C4B8A8"
-                  strokeWidth="1.5"
-                  fill="none"
-                  strokeLinecap="round"
-                  initial={{ opacity: 0.5, y: 0 }}
-                  animate={{ opacity: 0, y: reduceMotion ? -8 : -20 }}
-                  transition={reduceMotion ? { duration: 1.2, repeat: Infinity, ease: 'easeOut' } : { duration: 2.5, repeat: Infinity, ease: 'easeOut' }}
-                />
-                <motion.path
-                  d="M24 26 Q26 16 28 26"
-                  stroke="#C4B8A8"
-                  strokeWidth="1.5"
-                  fill="none"
-                  strokeLinecap="round"
-                  initial={{ opacity: 0.5, y: 0 }}
-                  animate={{ opacity: 0, y: reduceMotion ? -8 : -20 }}
-                  transition={reduceMotion ? { duration: 1.2, repeat: Infinity, ease: 'easeOut', delay: 0.5 } : { duration: 2.5, repeat: Infinity, ease: 'easeOut', delay: 0.5 }}
-                />
-                <motion.path
-                  d="M32 26 Q34 16 36 26"
-                  stroke="#C4B8A8"
-                  strokeWidth="1.5"
-                  fill="none"
-                  strokeLinecap="round"
-                  initial={{ opacity: 0.5, y: 0 }}
-                  animate={{ opacity: 0, y: reduceMotion ? -8 : -20 }}
-                  transition={reduceMotion ? { duration: 1.2, repeat: Infinity, ease: 'easeOut', delay: 1 } : { duration: 2.5, repeat: Infinity, ease: 'easeOut', delay: 1 }}
-                />
-              </svg>
-            </div>
+            {showCelebrationVisuals && (
+              <div className="absolute top-0 left-0 right-0 flex justify-center pointer-events-none" style={{ height: 40 }}>
+                <svg width="60" height="40" viewBox="0 0 60 40" fill="none" className="overflow-visible">
+                  <motion.path
+                    d="M28 28 Q30 18 32 28 Q34 12 36 28"
+                    stroke="#C4B8A8"
+                    strokeWidth="1.5"
+                    fill="none"
+                    strokeLinecap="round"
+                    initial={{ opacity: 0.5, y: 0 }}
+                    animate={{ opacity: 0, y: reduceMotion ? -8 : -20 }}
+                    transition={reduceMotion ? { duration: 1.2, repeat: Infinity, ease: 'easeOut' } : { duration: 2.5, repeat: Infinity, ease: 'easeOut' }}
+                  />
+                  <motion.path
+                    d="M24 26 Q26 16 28 26"
+                    stroke="#C4B8A8"
+                    strokeWidth="1.5"
+                    fill="none"
+                    strokeLinecap="round"
+                    initial={{ opacity: 0.5, y: 0 }}
+                    animate={{ opacity: 0, y: reduceMotion ? -8 : -20 }}
+                    transition={reduceMotion ? { duration: 1.2, repeat: Infinity, ease: 'easeOut', delay: 0.5 } : { duration: 2.5, repeat: Infinity, ease: 'easeOut', delay: 0.5 }}
+                  />
+                  <motion.path
+                    d="M32 26 Q34 16 36 26"
+                    stroke="#C4B8A8"
+                    strokeWidth="1.5"
+                    fill="none"
+                    strokeLinecap="round"
+                    initial={{ opacity: 0.5, y: 0 }}
+                    animate={{ opacity: 0, y: reduceMotion ? -8 : -20 }}
+                    transition={reduceMotion ? { duration: 1.2, repeat: Infinity, ease: 'easeOut', delay: 1 } : { duration: 2.5, repeat: Infinity, ease: 'easeOut', delay: 1 }}
+                  />
+                </svg>
+              </div>
+            )}
           </div>
         </motion.div>
 

@@ -41,7 +41,7 @@ function getLastWateredOrCreated(goal) {
  * Visual state from project/activity: nurtured (normal), neglected (dormant), restored (back to life), stuck (gentle wilt).
  * Motivating, not punitive: dormant = resting; restored = small glow.
  */
-export default function ProceduralFlora({ goal, isHovered, gardenState }) {
+export default function ProceduralFlora({ goal, isHovered: _isHovered, gardenState }) {
   const lowPerf = useContext(LowPerfContext);
   const progress = getGoalProgressPercent(goal) || 0;
   const growthScale = Math.max(0.3, progress / 100);

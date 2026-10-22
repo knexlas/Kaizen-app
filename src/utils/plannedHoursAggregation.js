@@ -129,3 +129,25 @@ export function getPlannedMinutesByWeekday(weekAssignments, goals, dateStrings =
   });
   return byDay;
 }
+
+/**
+ * Compare planned vs completed minutes by JS weekday (0=Sun..6=Sat).
+ * Completed minutes are derived from logs by log.date.
+ */
+export function getPlannedVsCompletedByWeekday(weekAssignments, goals, logs = [], dateStrings = null) {
+  const planned = getPlannedMinutesByWeekday(weekAssignments, goals, dateStrings);
+  const completed = { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 };
+  (Array.isArray(logs) ? logs : []).forEach((log) => {
+    const dateRaw = typeof log?.date === 'string' ? log.date : (log?.date instanceof Date ? log.date.toISOString() : null);
+    if (!dateRaw) return;
+    const dateStr = String(dateRaw).slice(0, 10);
+    const d = new Date(`${dateStr}T12:00:00`);
+    if (Number.isNaN(d.getTime())) return;
+    completed[d.getDay()] = (completed[d.getDay()] || 0) + (Number(log?.minutes) || 0);
+  });
+  const delta = { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 };
+  for (let day = 0; day <= 6; day += 1) {
+    delta[day] = (planned[day] || 0) - (completed[day] || 0);
+  }
+  return { planned, completed, delta };
+}

@@ -8,6 +8,7 @@ export default function PlanWeekPanel({
   setPlannerPlanDayDateStr,
   goals,
   weeklyEvents,
+  routineSupportPlacements,
   weekAssignments,
   loadDayPlan,
   saveDayPlanForDate,
@@ -23,6 +24,7 @@ export default function PlanWeekPanel({
   setStagingTaskStatus,
   plannerScheduleDrawerPreSelect,
   setPlannerScheduleDrawerPreSelect,
+  removeRoutineSupportPlacement,
   isPlanningWeek = false,
 }) {
   return (
@@ -71,6 +73,7 @@ export default function PlanWeekPanel({
         <StagingArea
           goals={goals ?? []}
           weeklyEvents={Array.isArray(weeklyEvents) ? weeklyEvents : []}
+          routineSupportPlacements={Array.isArray(routineSupportPlacements) ? routineSupportPlacements : []}
           weekAssignments={weekAssignments ?? {}}
           loadDayPlan={loadDayPlan}
           saveDayPlanForDate={saveDayPlanForDate}
@@ -89,6 +92,7 @@ export default function PlanWeekPanel({
           onPlanDay={setPlannerPlanDayDateStr}
           stagingTaskStatus={stagingTaskStatus ?? {}}
           setStagingTaskStatus={setStagingTaskStatus}
+          onRemoveRoutineSupportPlacement={removeRoutineSupportPlacement}
           initialScheduleSelection={plannerScheduleDrawerPreSelect}
           onConsumeScheduleSelection={() => setPlannerScheduleDrawerPreSelect(null)}
         />

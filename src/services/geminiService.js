@@ -8,7 +8,6 @@
  * the service switches to working models and persists them (localStorage).
  */
 
-import { redactUserText } from './redaction.js';
 
 const AI_MODEL_CONFIG_KEY = 'kaizen_ai_model_config';
 const DEFAULT_GEMINI_MODELS = [
@@ -58,7 +57,9 @@ function setModelConfig(config) {
       groqModel: config.groqModel || DEFAULT_GROQ_MODEL,
       lastCheck: config.lastCheck || getTodayString(),
     }));
-  } catch (_) {}
+  } catch (_) {
+    // Ignore storage write failures and keep the in-memory model config.
+  }
 }
 
 function getGeminiModelsToTry() {
@@ -108,7 +109,9 @@ export async function ensureModelCheckDone() {
             break;
           }
         }
-      } catch (_) {}
+      } catch (_) {
+        // Leave the saved Gemini model order unchanged if probing is unavailable.
+      }
     }
 
     const groqKey = typeof import.meta !== 'undefined' && import.meta.env?.VITE_GROQ_API_KEY;
@@ -128,7 +131,9 @@ export async function ensureModelCheckDone() {
           }),
         });
         groqOk = res.ok;
-      } catch (_) {}
+      } catch (_) {
+        // Keep the current Groq model when the health probe cannot run.
+      }
       if (!groqOk) {
         try {
           const listRes = await fetch('https://api.groq.com/openai/v1/models', {
@@ -158,7 +163,9 @@ export async function ensureModelCheckDone() {
               }
             }
           }
-        } catch (_) {}
+        } catch (_) {
+          // Keep the current Groq fallback when model discovery fails.
+        }
       }
     }
 
@@ -1337,7 +1344,7 @@ Return ONLY a raw JSON array. Example: [{"title":"Review goals","date":"2025-02-
  * @param {{ userSettings?: object }} [options]
  * @returns {Promise<{ goalTitle: string, milestones: Array<{ title: string, tasks: Array<{ title: string, estimatedSparks: number, isKaizen: boolean }> }> | null>}
  */
-export async function generateGoalBreakdownMilestones(goalTitle, options = {}) {
+export async function generateGoalBreakdownMilestones(goalTitle, _options = {}) {
   const apiKey = getApiKey();
   if (!apiKey) {
     console.error('Missing API Key');
@@ -1516,7 +1523,9 @@ Return EXACTLY a JSON array of 3-5 strings representing the new or updated miles
     if (Array.isArray(parsed)) {
       return parsed.filter((s) => typeof s === 'string').map((s) => String(s).trim()).filter(Boolean);
     }
-  } catch (_) {}
+  } catch (_) {
+    // Fall through to generic adjusted steps if Groq returns malformed data.
+  }
   return ['Adjusted step 1', 'Adjusted step 2', 'Adjusted step 3'];
 }
 

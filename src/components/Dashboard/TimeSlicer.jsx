@@ -150,6 +150,14 @@ const BACKLOG_CATEGORY_LABELS = {
   'Other': '📋 Other',
 };
 
+function normalizeRoutineTitle(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
 /** Emoji for the user's spirit from Spirit Builder (creation). Matches GardenDashboard / MochiSpirit. */
 function getSpiritEmoji(spiritConfig) {
   if (!spiritConfig) return '🦉';
@@ -2803,7 +2811,7 @@ function TimeSlicer({
                   item: null,
                   routine: r,
                   title: r.title ?? 'Routine',
-                  typeLabel: 'Micro-habit',
+                  typeLabel: 'Routine',
                   category: r.category ?? '📋 Other',
                   durationMinutes: Math.max(1, Math.min(120, Number(r.duration) || 5)),
                 }));
@@ -2819,7 +2827,18 @@ function TimeSlicer({
                     durationMinutes: durationMin,
                   };
                 });
-                const allRows = [...routineRows, ...bankRows];
+                const allRows = [...routineRows, ...bankRows].filter((row, rowIndex, rows) => {
+                  if (row.typeLabel !== 'Routine') return true;
+                  const rowStableKey = row.routine?.id ? `id:${row.routine.id}` : row.goal?._routineTemplateId ? `id:${row.goal._routineTemplateId}` : row.goal?.routineId ? `id:${row.goal.routineId}` : null;
+                  const rowTitleKey = normalizeRoutineTitle(row.title);
+                  const firstMatchIndex = rows.findIndex((candidate) => {
+                    if (candidate.typeLabel !== 'Routine') return false;
+                    const candidateStableKey = candidate.routine?.id ? `id:${candidate.routine.id}` : candidate.goal?._routineTemplateId ? `id:${candidate.goal._routineTemplateId}` : candidate.goal?.routineId ? `id:${candidate.goal.routineId}` : null;
+                    if (rowStableKey && candidateStableKey) return rowStableKey === candidateStableKey;
+                    return rowTitleKey && rowTitleKey === normalizeRoutineTitle(candidate.title);
+                  });
+                  return firstMatchIndex === rowIndex;
+                });
                 const filtered = searchLower
                   ? allRows.filter((r) => (r.title || '').toLowerCase().includes(searchLower) || (r.typeLabel || '').toLowerCase().includes(searchLower) || (r.category || '').toLowerCase().includes(searchLower))
                   : allRows;
