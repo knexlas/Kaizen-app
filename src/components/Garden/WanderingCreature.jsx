@@ -46,7 +46,7 @@ export default function WanderingCreature({
   customComponent,
   allowedTerrain = 'grass',
   speed = 1,
-  jumpHeight = 0,
+  jumpHeight: _jumpHeight = 0,
   scale = 1,
   zOffset = 0.5,
   goalPositions = null,
@@ -54,7 +54,7 @@ export default function WanderingCreature({
   timePhase = 'day',
   campfirePositions = [],
 }) {
-  const { terrainMap, earnEmbers, tourStep, setTourStep } = useGarden();
+  const { terrainMap, tourStep, setTourStep } = useGarden();
   const motionPaused = useContext(MotionPausedContext);
   const groupRef = useRef();
   const [target, setTarget] = useState(() => new THREE.Vector3(0, 0, 0));

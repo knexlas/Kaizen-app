@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, lazy, Suspense } from 'react';
 import { EnergyProvider } from './context/EnergyContext';
 import { useGarden, todayString } from './context/GardenContext';
 import { localISODate, getThisWeekSundayLocal } from './services/dateUtils';
@@ -7,18 +7,28 @@ import { useReward } from './context/RewardContext';
 import { buildReward } from './services/dopamineEngine';
 import { completeCheckInCommand } from './services/coreCommands';
 import { useTheme } from './context/ThemeContext';
-import SundayRitualController from './components/Rituals/SundayRitualController';
-import GardenDashboard from './components/Dashboard/GardenDashboard';
-import MorningCheckIn from './components/Dashboard/MorningCheckIn';
-import FirstRunFlow from './components/Onboarding/FirstRunFlow';
-import PreferenceOnboarding from './components/Onboarding/PreferenceOnboarding';
 import SeasonParticles from './components/SeasonParticles';
 import { getGamificationConfig } from './constants/gamificationIntensity';
+
+const SundayRitualController = lazy(() => import('./components/Rituals/SundayRitualController'));
+const GardenDashboard = lazy(() => import('./components/Dashboard/GardenDashboard'));
+const MorningCheckIn = lazy(() => import('./components/Dashboard/MorningCheckIn'));
+const FirstRunFlow = lazy(() => import('./components/Onboarding/FirstRunFlow'));
+const PreferenceOnboarding = lazy(() => import('./components/Onboarding/PreferenceOnboarding'));
 /** YYYY-MM-DD for yesterday, local timezone. */
 function yesterdayString() {
   const d = new Date();
   d.setDate(d.getDate() - 1);
   return localISODate(d);
+}
+
+function AppViewFallback() {
+  return (
+    <div className="flex min-h-screen flex-col items-center justify-center gap-3 text-stone-500" role="status" aria-live="polite">
+      <span className="text-4xl" aria-hidden>🌱</span>
+      <span className="animate-pulse font-sans text-sm">Loading your garden...</span>
+    </div>
+  );
 }
 
 function App() {
@@ -31,14 +41,11 @@ function App() {
     dailySpoonCount,
     goals,
     userSettings,
-    googleUser,
     logMetric,
     updateWeeklyEvents,
     completeMorningCheckIn,
     markSundayRitualComplete,
-    assignments,
     setAssignments,
-    addGoal,
     archivePlanToCompost,
     weeklyEvents,
   } = useGarden();
@@ -122,32 +129,29 @@ function App() {
       <div className={`min-h-screen font-sans relative ${theme.containerClass} ${a11yClasses}`}>
         {!a11y.lowStim && getGamificationConfig(userSettings ?? {}).showParticles && <SeasonParticles particleType={theme.particleType} />}
         <div className="relative z-10">
-          {(!hydrated || (hasOnboarded && view === 'loading')) && (
-            <div className="flex min-h-screen flex-col items-center justify-center gap-3 text-stone-500" role="status" aria-live="polite">
-              <span className="text-4xl" aria-hidden>🌱</span>
-              <span className="animate-pulse font-sans text-sm">Loading your garden…</span>
-            </div>
-          )}
-          {hydrated && !preferencesCompleted && (
-            <PreferenceOnboarding onComplete={() => {}} />
-          )}
-          {hydrated && preferencesCompleted && !hasOnboarded && (
-            <FirstRunFlow onComplete={() => {}} />
-          )}
-          {hasOnboarded && view === 'sunday_ritual' && (
-            <SundayRitualController onComplete={handleRitualComplete} />
-          )}
-          {hasOnboarded && view === 'intro' && (
-            <MorningCheckIn
-              goals={goals}
-              logMetric={logMetric}
-              yesterdayPlan={yesterdayPlan}
-              onComplete={(modifier, energyLevel) => handleMissedDayChoose(energyLevel ?? modifier)}
-            />
-          )}
-          {hasOnboarded && view === 'dashboard' && (
-            <GardenDashboard />
-          )}
+          {(!hydrated || (hasOnboarded && view === 'loading')) && <AppViewFallback />}
+          <Suspense fallback={<AppViewFallback />}>
+            {hydrated && !preferencesCompleted && (
+              <PreferenceOnboarding onComplete={() => {}} />
+            )}
+            {hydrated && preferencesCompleted && !hasOnboarded && (
+              <FirstRunFlow onComplete={() => {}} />
+            )}
+            {hasOnboarded && view === 'sunday_ritual' && (
+              <SundayRitualController onComplete={handleRitualComplete} />
+            )}
+            {hasOnboarded && view === 'intro' && (
+              <MorningCheckIn
+                goals={goals}
+                logMetric={logMetric}
+                yesterdayPlan={yesterdayPlan}
+                onComplete={(modifier, energyLevel) => handleMissedDayChoose(energyLevel ?? modifier)}
+              />
+            )}
+            {hasOnboarded && view === 'dashboard' && (
+              <GardenDashboard />
+            )}
+          </Suspense>
         </div>
 
         {/* Feedback button appears only when configured. */}

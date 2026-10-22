@@ -5,7 +5,7 @@ import { useEnergy } from '../../context/EnergyContext';
 import { useDialog } from '../../context/DialogContext';
 import { getGoalSupportDomain, SUPPORT_DOMAINS } from '../../services/domainSupportService';
 import { startFocusCommand } from '../../services/coreCommands';
-import { getGoalProgressPercent, getPlantStage, STAGE_EMOJI, PROJECT_STAGE_EMOJI, FLORA, PONDS, ROCKS, getHash } from './gardenProgress';
+import { getGoalProgressPercent, getPlantStage, STAGE_EMOJI, PROJECT_STAGE_EMOJI, FLORA, PONDS, ROCKS } from './gardenProgress';
 import { getGoalGardenState, getGardenSummary, getGardenStateLabel, GOAL_GARDEN_STATE } from '../../services/gardenStateService';
 import { getProjectHealthState } from '../../services/projectSupportService';
 import VirtualJoystick from './VirtualJoystick';
@@ -23,6 +23,9 @@ const SEED_CATALOG = [
   { id: 'seed_sunflower', name: 'Sunflower', model: 'flower_yellowA.glb', icon: '🌻' },
   { id: 'seed_mushroom', name: 'Giant Spore', model: 'mushroom_redGroup.glb', icon: '🍄' },
 ];
+
+const ROUTINE_CATEGORIES = ['💪 Wellness', '📁 Life Admin', '🧹 Household', '🧼 Care & Hygiene'];
+
 
 function isProjectDone(goal) {
   const ms = Array.isArray(goal?.milestones) ? goal.milestones : [];
@@ -85,10 +88,8 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
     weekAssignments = {},
     decorations = [],
     fertilizerCount = 0,
-    fertilizeGoal,
     waterGoal,
     waterDrops = 0,
-    addWater = () => {},
     dailySpoonCount,
     activeTool,
     setActiveTool,
@@ -106,7 +107,7 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
   const spoons = typeof dailySpoonCount === 'number' ? dailySpoonCount : dailyEnergy;
   const energyTier = getEnergyTier(spoons);
   const gradientStyle = GARDEN_GRADIENTS[energyTier];
-  const allGoals = goalsProp ?? contextGoals ?? [];
+  const allGoals = useMemo(() => goalsProp ?? contextGoals ?? [], [goalsProp, contextGoals]);
 
   /** Last log entry for a goal (for "last tended" in goal viewer). */
   const lastTendedForGoal = useCallback((goalId) => {
@@ -189,9 +190,14 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
     [allGoals, logs, lastCheckInDate, weekAssignments]
   );
 
-  const ROUTINE_CATEGORIES = ['💪 Wellness', '📁 Life Admin', '🧹 Household', '🧼 Care & Hygiene'];
-  const unplacedGoals = allGoals.filter((g) => g.type !== 'routine' && (!g.position3D || !Array.isArray(g.position3D)));
-  const unplacedDecorations = decorations.filter((d) => !d.position3D || !Array.isArray(d.position3D));
+  const unplacedGoals = useMemo(
+    () => allGoals.filter((g) => g.type !== 'routine' && (!g.position3D || !Array.isArray(g.position3D))),
+    [allGoals]
+  );
+  const unplacedDecorations = useMemo(
+    () => decorations.filter((d) => !d.position3D || !Array.isArray(d.position3D)),
+    [decorations]
+  );
   const unplacedRoutineCategories = useMemo(() => {
     const routineGoals = allGoals.filter((g) => g.type === 'routine');
     const byCategory = {};
@@ -204,10 +210,13 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
       .filter(([, members]) => members.every((m) => !m.position3D || !Array.isArray(m.position3D)))
       .map(([category, members]) => ({ id: `routine-group-${category}`, title: category, goalId: members[0].id }));
   }, [allGoals]);
-  const plantableSeeds = [
-    ...unplacedGoals.map((g) => ({ id: g.id, title: g.title || 'Untitled goal', goalId: g.id, goal: g })),
-    ...unplacedRoutineCategories.map((c) => ({ id: c.id, title: c.title, goalId: c.goalId, goal: allGoals.find((g) => g.id === c.goalId) })),
-  ];
+  const plantableSeeds = useMemo(
+    () => [
+      ...unplacedGoals.map((g) => ({ id: g.id, title: g.title || 'Untitled goal', goalId: g.id, goal: g })),
+      ...unplacedRoutineCategories.map((c) => ({ id: c.id, title: c.title, goalId: c.goalId, goal: allGoals.find((g) => g.id === c.goalId) })),
+    ],
+    [allGoals, unplacedGoals, unplacedRoutineCategories]
+  );
   /** Group plantable seeds by life domain (garden region) for legible planting list. */
   const plantableSeedsByRegion = useMemo(() => {
     const general = [];
@@ -225,7 +234,6 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
     const regions = SUPPORT_DOMAINS.filter((d) => byDomain[d.id]?.length).map((d) => ({ id: d.id, label: d.label, emoji: d.emoji, seeds: byDomain[d.id] }));
     return { regions, general };
   }, [plantableSeeds, allGoals]);
-  const firstUnplacedGoal = unplacedGoals[0];
   const firstUnplacedDecoration = unplacedDecorations[0];
   const gardenSummaryText = useMemo(() => {
     if (viewMode === 'garden') {
@@ -764,7 +772,7 @@ export default function GardenWalk({ goals: goalsProp, onGoalClick, onOpenGoalCr
                   const nextAt = stage === 'seed' ? 10 : stage === 'sprout' ? 50 : stage === 'bloom' ? 100 : null;
                   const totalMin = Number(viewingGoal.totalMinutes) || 0;
                   const lastTended = lastTendedForGoal(viewingGoal.id);
-                  const { state: goalState, lastActivityAt } = getGoalGardenState(viewingGoal, logs, (goal, ctx) => getProjectHealthState(goal, ctx ?? {}));
+                  const { state: goalState } = getGoalGardenState(viewingGoal, logs, (goal, ctx) => getProjectHealthState(goal, ctx ?? {}));
                   const stateLabel = getGardenStateLabel(goalState);
                   return (
                     <div className="mb-4 p-3 rounded-xl bg-stone-50 border border-stone-100">

@@ -5,7 +5,7 @@
  */
 
 import { inferTaskTimingType } from './energyDictionaryService';
-import { getTimingFitScore } from './insightsReflectionService';
+import { getTimingFitScore, getAbandonRiskForHour } from './insightsReflectionService';
 
 /**
  * @param {{ todayTasks: Array<{ goalId: string, goal: object }>, items?: Array<{ hour?: string, goalId: string, goal: object, ritualTitle?: string, subtaskId?: string }> }} options
@@ -24,10 +24,14 @@ export function pickStarterTask({ todayTasks = [], items = [], learnedEnergyProf
     const spoonCost = goal?.spoonCost ?? 1;
     const taskType = inferTaskTimingType(goal ?? item);
     const timingScore = learnedEnergyProfile ? getTimingFitScore(learnedEnergyProfile, taskType, currentHour) : 0;
-    return { ...item, estimatedMinutes, spoonCost, timingScore };
+    const abandonRisk = learnedEnergyProfile ? getAbandonRiskForHour(learnedEnergyProfile, currentHour) : 0;
+    return { ...item, estimatedMinutes, spoonCost, timingScore, abandonRisk };
   });
 
   const sorted = [...withMeta].sort((a, b) => {
+    const aComposite = (a.timingScore || 0) - (a.abandonRisk || 0);
+    const bComposite = (b.timingScore || 0) - (b.abandonRisk || 0);
+    if (aComposite !== bComposite) return bComposite - aComposite;
     if (a.timingScore !== b.timingScore) return b.timingScore - a.timingScore;
     if (a.spoonCost !== b.spoonCost) return (a.spoonCost ?? 1) - (b.spoonCost ?? 1);
     return (a.estimatedMinutes ?? 60) - (b.estimatedMinutes ?? 60);

@@ -153,7 +153,7 @@ export async function getAccessTokenSilently() {
 
     const response = await msal.acquireTokenSilent(silentRequest);
     return response?.accessToken || null;
-  } catch (err) {
+  } catch (_err) {
     // If silent token acquisition fails, user needs to login again
     return null;
   }

@@ -3,9 +3,8 @@
  * Used by DailyPlanRitual for a guided, low-overwhelm sequence.
  */
 
-import { localISODate } from './dateUtils';
 import { getCalendarEventsForDate } from './scheduleAdapter';
-import { getAssignmentsForSlot, getGoalIdFromAssignment, getDurationMinutesFromAssignment } from './planAssignmentUtils';
+import { getAssignmentsForSlot, getDurationMinutesFromAssignment } from './planAssignmentUtils';
 import { getBestNextStepForGoal } from './nextStepService';
 import { getActiveProjects } from './projectSupportService';
 

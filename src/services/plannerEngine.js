@@ -56,8 +56,8 @@ export function optimizeDailySchedule(tasks, energyLevel = 'medium', learnedEner
 
   const schedule = {};
   const scoredDeepTasks = [...deepTasks].sort((a, b) => {
-    const aScore = learnedEnergyProfile ? getTimingFitScore(learnedEnergyProfile, 'deep_work', 10) : 0;
-    const bScore = learnedEnergyProfile ? getTimingFitScore(learnedEnergyProfile, 'deep_work', 10) : 0;
+    const aScore = learnedEnergyProfile ? getTimingFitScore(learnedEnergyProfile, inferTaskTimingType(a), 10) : 0;
+    const bScore = learnedEnergyProfile ? getTimingFitScore(learnedEnergyProfile, inferTaskTimingType(b), 10) : 0;
     if (aScore !== bScore) return bScore - aScore;
     return (Number(b?.estimatedMinutes) || 0) - (Number(a?.estimatedMinutes) || 0);
   });
@@ -72,16 +72,26 @@ export function optimizeDailySchedule(tasks, energyLevel = 'medium', learnedEner
 
   // 2. Assign High Energy tasks to Morning (9-12)
   if (energyLevel === 'high' || energyLevel === 'medium') {
+    const deepSlots = [9, 10, 11].sort((a, b) => {
+      const scoreA = learnedEnergyProfile ? getTimingFitScore(learnedEnergyProfile, 'deep_work', a) : 0;
+      const scoreB = learnedEnergyProfile ? getTimingFitScore(learnedEnergyProfile, 'deep_work', b) : 0;
+      return scoreB - scoreA;
+    });
     scoredDeepTasks.forEach((t, i) => {
-      const hour = 9 + i;
-      if (hour < 12) schedule[minutesToHour(hour * 60)] = t;
+      const hour = deepSlots[i] ?? null;
+      if (hour != null) schedule[minutesToHour(hour * 60)] = t;
     });
   }
 
   // 3. Assign remaining to afternoon
+  const quickSlots = [13, 14, 15, 16].sort((a, b) => {
+    const scoreA = learnedEnergyProfile ? getTimingFitScore(learnedEnergyProfile, 'admin', a) : 0;
+    const scoreB = learnedEnergyProfile ? getTimingFitScore(learnedEnergyProfile, 'admin', b) : 0;
+    return scoreB - scoreA;
+  });
   scoredQuickTasks.forEach((t, i) => {
-    const hour = 13 + i;
-    if (hour < 17) schedule[minutesToHour(hour * 60)] = t;
+    const hour = quickSlots[i] ?? null;
+    if (hour != null) schedule[minutesToHour(hour * 60)] = t;
   });
 
   return schedule;
@@ -119,7 +129,7 @@ function minutesToHour(mins) {
  * Get events that overlap a given date (YYYY-MM-DD).
  * Supports: { start, end } (ISO) or { dayIndex, start, end } (start/end "HH:mm", dayIndex 0=Sun).
  */
-function getEventsForDate(dateStr, calendarEvents, weekStartDate) {
+function getEventsForDate(dateStr, calendarEvents, _weekStartDate) {
   if (!Array.isArray(calendarEvents) || calendarEvents.length === 0) return [];
   const d = new Date(dateStr + 'T12:00:00');
   const dayIndex = d.getDay(); // 0 Sun .. 6 Sat

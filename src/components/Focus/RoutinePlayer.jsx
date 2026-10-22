@@ -16,7 +16,7 @@ function getSteps(routine) {
     : [{ title: routine.title || 'Step', estimatedMinutes: Math.max(1, Math.min(120, Number(routine.duration) || 5)) }];
   return steps.map((s) => ({
     title: typeof s.title === 'string' ? s.title : 'Step',
-    estimatedMinutes: Math.max(1, Math.min(120, Number(s.estimatedMinutes) ?? Number(s.duration) ?? 5)),
+    estimatedMinutes: Math.max(1, Math.min(120, Number.isFinite(Number(s.estimatedMinutes)) ? Number(s.estimatedMinutes) : Number.isFinite(Number(s.duration)) ? Number(s.duration) : 5)),
   }));
 }
 
@@ -25,7 +25,9 @@ function playChime() {
     const audio = new Audio(CHIME_SOUND);
     audio.volume = 0.4;
     audio.play().catch(() => {});
-  } catch (_) {}
+  } catch (_) {
+    // Ignore audio startup failures and keep the routine moving.
+  }
 }
 
 export default function RoutinePlayer({ routine, onClose }) {

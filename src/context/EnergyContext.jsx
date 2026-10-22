@@ -26,6 +26,19 @@ function appendBehaviorEvent(history, event) {
   return next.slice(-MAX_BEHAVIOR_EVENTS);
 }
 
+function createBehaviorEvent(type, payload = {}) {
+  const { date: rawDate, hour: rawHour, ...rest } = payload ?? {};
+  const stamp = rawDate ? new Date(rawDate) : new Date();
+  const hour = Number.isFinite(Number(rawHour)) ? Number(rawHour) : stamp.getHours();
+  return {
+    id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `behavior-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+    type,
+    date: stamp.toISOString(),
+    hour: Math.max(0, Math.min(23, hour)),
+    ...rest,
+  };
+}
+
 export function EnergyProvider({ children }) {
   const [dailyEnergy, setDailyEnergy] = useState(DEFAULT_SPARKS);
   const [currentEnergy, setCurrentEnergy] = useState(DEFAULT_SPARKS);
@@ -57,33 +70,34 @@ export function EnergyProvider({ children }) {
 
   const recordFocusBehavior = useCallback((phase, payload = {}) => {
     const normalizedPhase = phase === 'complete' || phase === 'abandon' || phase === 'start' ? phase : 'start';
-    const stamp = payload?.date ? new Date(payload.date) : new Date();
-    const hour = Number.isFinite(Number(payload?.hour)) ? Number(payload.hour) : stamp.getHours();
-    const event = {
-      id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `behavior-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-      type: `focus_${normalizedPhase}`,
-      date: stamp.toISOString(),
-      hour: Math.max(0, Math.min(23, hour)),
+    const event = createBehaviorEvent(`focus_${normalizedPhase}`, {
       goalId: payload?.goalId ?? null,
       title: payload?.title ?? '',
       taskType: payload?.taskType ?? null,
       planned: payload?.planned === true,
       minutes: Number.isFinite(Number(payload?.minutes)) ? Number(payload.minutes) : null,
       spoonCount: Number.isFinite(Number(payload?.spoonCount)) ? Number(payload.spoonCount) : null,
-    };
+    });
     setBehaviorHistory((prev) => appendBehaviorEvent(prev, event));
   }, []);
 
   const recordCheckInBehavior = useCallback((payload = {}) => {
-    const stamp = payload?.date ? new Date(payload.date) : new Date();
-    const event = {
-      id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `behavior-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-      type: 'checkin',
-      date: stamp.toISOString(),
-      hour: stamp.getHours(),
+    const event = createBehaviorEvent('checkin', {
       spoonCount: Number.isFinite(Number(payload?.spoonCount)) ? Number(payload.spoonCount) : null,
       energyLevel: Number.isFinite(Number(payload?.energyLevel)) ? Number(payload.energyLevel) : null,
-    };
+    });
+    setBehaviorHistory((prev) => appendBehaviorEvent(prev, event));
+  }, []);
+
+  const recordTaskOutcomeBehavior = useCallback((payload = {}) => {
+    const event = createBehaviorEvent('task_complete', {
+      goalId: payload?.goalId ?? null,
+      title: payload?.title ?? '',
+      taskType: payload?.taskType ?? null,
+      minutes: Number.isFinite(Number(payload?.minutes)) ? Number(payload.minutes) : null,
+      scheduledHour: Number.isFinite(Number(payload?.scheduledHour)) ? Number(payload.scheduledHour) : null,
+      completed: payload?.completed !== false,
+    });
     setBehaviorHistory((prev) => appendBehaviorEvent(prev, event));
   }, []);
 
@@ -96,6 +110,7 @@ export function EnergyProvider({ children }) {
     behaviorHistory,
     recordFocusBehavior,
     recordCheckInBehavior,
+    recordTaskOutcomeBehavior,
     restMode: currentEnergy < 1,
     sparksMin: SPARKS_MIN,
     sparksMax: SPARKS_MAX,

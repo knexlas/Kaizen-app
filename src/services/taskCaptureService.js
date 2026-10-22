@@ -11,7 +11,13 @@ const PROJECT_REGEX = /\b(project|launch|roadmap|migration|redesign|website|app|
 const HABIT_REGEX = /\b(habit|routine|daily|weekly|every day|every morning|every evening|every night|every week|each week|\d+\s*x\s*(?:a|per)?\s*week)\b/i;
 const SOMEDAY_REGEX = /\b(someday|maybe later|for later|one day|eventually|someday maybe|later maybe)\b/i;
 const NOTE_REGEX = /\b(note|idea|brain dump|thought|remember|journal|reflection|brainstorm)\b/i;
+const INCUBATE_REGEX = /\b(inbox|triage|incubate|parking lot|hold for later|not now)\b/i;
+const SOCIAL_REGEX = /\b(reply to|reply|follow up|text back|message|group chat|check family group|reach out|friend check-in|call mom|call dad|call friend)\b/i;
+const LIFE_DOMAIN_REGEX = /\b(help me keep|stay on top of|social life|home upkeep|health admin|finances|life admin|errands|logistics|partner connection|pets)\b/i;
 const LISTISH_REGEX = /\b(ideas|tasks|things|notes)\b|,|\/|\s+and\s+/i;
+const LOCATION_REGEX = /\b(?:at|@)\s+([A-Z][\w' -]+(?:'s)?(?:\s+[A-Z][\w' -]+)*)/;
+const PARTICIPANT_REGEX = /\b(with|w\/)\s+([A-Z][\w' -]+(?:\s+[A-Z][\w' -]+)*)/i;
+const WAITING_FOR_REGEX = /\b(waiting for|blocked on|pending|awaiting)\b/i;
 
 function normalizeEnergyCost(raw) {
   const value = Number(raw);
@@ -102,6 +108,37 @@ export function parseScheduledFromText(text) {
   };
 }
 
+function parseLocationAndParticipants(text) {
+  if (!text || typeof text !== 'string') return {};
+  const locationMatch = text.match(LOCATION_REGEX);
+  const participantsMatch = text.match(PARTICIPANT_REGEX);
+  return {
+    ...(locationMatch?.[1] ? { location: locationMatch[1].trim() } : {}),
+    ...(participantsMatch?.[2] ? { participants: [participantsMatch[2].trim()] } : {}),
+  };
+}
+
+function parseWaitingSupport(text) {
+  if (!text || typeof text !== 'string') return null;
+  const lower = text.toLowerCase();
+  if (!WAITING_FOR_REGEX.test(lower)) return null;
+  const waitingType = /\b(reply|response|person|client|from)\b/.test(lower)
+    ? 'person'
+    : /\b(document|file|form|paperwork|invoice)\b/.test(lower)
+      ? 'document'
+      : /\bdecision|approval|sign off|sign-off\b/.test(lower)
+        ? 'decision'
+        : 'other';
+  const parsed = parseScheduledFromText(text);
+  return {
+    waitingType,
+    waitingOn: text.replace(/^.*?(waiting for|blocked on|pending|awaiting)\s*/i, '').trim().slice(0, 80),
+    holdUntil: parsed?.scheduledDate ?? null,
+    followUpDate: parsed?.scheduledDate ?? null,
+    note: 'Captured as waiting-for item.',
+  };
+}
+
 function deriveScheduledFromStartTime(startTime) {
   if (!startTime || typeof startTime !== 'string') return null;
   try {
@@ -122,14 +159,18 @@ function toLegacyType(captureKind) {
 
 function getRouteForCaptureKind(captureKind) {
   switch (captureKind) {
+    case 'social_followup':
+      return 'social_bucket';
     case 'project':
       return 'project_planner';
+    case 'life_domain':
+      return 'life_domains';
     case 'calendar_event':
       return 'schedule_event';
     case 'note':
     case 'someday':
     case 'compost':
-      return 'compost';
+      return 'inbox';
     case 'habit':
     case 'task':
     case 'scheduled_item':
@@ -142,6 +183,8 @@ function getConfirmationLabel(captureKind) {
   switch (captureKind) {
     case 'project':
       return 'Open project planner';
+    case 'life_domain':
+      return 'Create support domain';
     case 'habit':
       return 'Add habit';
     case 'calendar_event':
@@ -151,8 +194,11 @@ function getConfirmationLabel(captureKind) {
     case 'someday':
       return 'Save for later';
     case 'note':
-    case 'compost':
       return 'Send to inbox';
+    case 'compost':
+      return 'Incubate in inbox';
+    case 'social_followup':
+      return 'Add to social follow-up';
     case 'task':
     default:
       return 'Add task';
@@ -167,8 +213,11 @@ function inferCaptureKind({ raw, text, title, recurrence, scheduledDate, schedul
   const looksHabit = Boolean(recurrence) || HABIT_REGEX.test(lower);
   const looksSomeday = SOMEDAY_REGEX.test(lower);
   const looksNote = NOTE_REGEX.test(lower);
+  const looksIncubate = INCUBATE_REGEX.test(lower);
   const looksListish = LISTISH_REGEX.test(lower);
   const looksTask = TASK_VERB_REGEX.test(lower);
+  const looksSocial = SOCIAL_REGEX.test(lower);
+  const looksLifeDomain = LIFE_DOMAIN_REGEX.test(lower);
   const looksEvent = isLikelyCalendarEventTitle(title || text);
   const looksScheduledTask = isLikelyScheduledTaskTitle(title || text);
 
@@ -180,7 +229,10 @@ function inferCaptureKind({ raw, text, title, recurrence, scheduledDate, schedul
   }
 
   if (looksProject) return { captureKind: 'project', confidence: 'high' };
+  if (looksLifeDomain) return { captureKind: 'life_domain', confidence: 'high' };
   if (looksHabit) return { captureKind: 'habit', confidence: recurrence ? 'high' : 'medium' };
+  if (looksSocial) return { captureKind: 'social_followup', confidence: 'high' };
+  if (looksIncubate) return { captureKind: 'compost', confidence: 'high' };
   if (looksSomeday) return { captureKind: 'someday', confidence: 'high' };
   if (looksNote) return { captureKind: 'note', confidence: 'high' };
   if (!looksTask && looksListish) return { captureKind: 'note', confidence: 'low' };
@@ -189,7 +241,7 @@ function inferCaptureKind({ raw, text, title, recurrence, scheduledDate, schedul
 }
 
 function normalizeCaptureKind(rawKind) {
-  return ['task', 'habit', 'project', 'someday', 'note', 'scheduled_item', 'calendar_event', 'compost'].includes(rawKind)
+  return ['task', 'habit', 'project', 'someday', 'note', 'scheduled_item', 'calendar_event', 'compost', 'social_followup', 'life_domain'].includes(rawKind)
     ? rawKind
     : null;
 }
@@ -200,8 +252,8 @@ function normalizeCaptureKind(rawKind) {
  * @returns {{
  *   type: 'goal'|'calendar_event',
  *   title: string,
- *   captureKind: 'task'|'habit'|'project'|'someday'|'note'|'scheduled_item'|'calendar_event',
- *   route: 'quick_goal'|'project_planner'|'schedule_event'|'compost',
+ *   captureKind: 'task'|'habit'|'project'|'someday'|'note'|'scheduled_item'|'calendar_event'|'social_followup',
+ *   route: 'quick_goal'|'project_planner'|'schedule_event'|'inbox'|'social_bucket',
  *   confirmationLabel: string,
  *   confidence: 'high'|'medium'|'low',
  *   isAmbiguous: boolean,
@@ -246,13 +298,16 @@ export function normalizeTaskCapture(input, originalText) {
   const captureKind = inferred.captureKind;
   const confidence = inferred.confidence;
   const route = getRouteForCaptureKind(captureKind);
+  const resolvedRoute = confidence === 'low' ? 'inbox' : route;
   const context = raw.context === 'work' ? 'work' : raw.context === 'personal' ? 'personal' : undefined;
+  const parsedContext = parseLocationAndParticipants(originalText || title);
+  const waitingSupport = parseWaitingSupport(originalText || title);
 
   return {
     type: toLegacyType(captureKind),
     title: title || 'New capture',
     captureKind,
-    route,
+    route: resolvedRoute,
     confidence,
     isAmbiguous: confidence === 'low',
     confirmationLabel: getConfirmationLabel(captureKind),
@@ -265,6 +320,9 @@ export function normalizeTaskCapture(input, originalText) {
     ...(endTime ? { endTime } : {}),
     ...(scheduledDate ? { scheduledDate } : {}),
     ...(scheduledTime ? { scheduledTime } : {}),
+    ...(typeof raw.location === 'string' && raw.location.trim() ? { location: raw.location.trim() } : parsedContext.location ? { location: parsedContext.location } : {}),
+    ...(Array.isArray(raw.participants) && raw.participants.length > 0 ? { participants: raw.participants } : parsedContext.participants ? { participants: parsedContext.participants } : {}),
+    ...(waitingSupport ? { waitingSupport } : {}),
   };
 }
 
@@ -278,6 +336,10 @@ export function overrideCaptureClassification(capture, nextCaptureKind) {
         ? 'project'
         : nextCaptureKind === 'habit'
           ? 'habit'
+          : nextCaptureKind === 'social_followup'
+            ? 'social_followup'
+          : nextCaptureKind === 'life_domain'
+            ? 'life_domain'
           : nextCaptureKind === 'someday'
             ? 'someday'
             : nextCaptureKind === 'note'

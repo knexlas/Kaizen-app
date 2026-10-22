@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useGarden } from '../../context/GardenContext';
 import { useDialog } from '../../context/DialogContext';
 import { tweakMilestones, generateProficiencyEstimates, suggestProjectForGoal } from '../../services/geminiService';
-import { getGoalSupportDomain, resolveSupportSuggestions, createFromSupportSuggestion } from '../../services/domainSupportService';
+import { resolveSupportSuggestions, createFromSupportSuggestion } from '../../services/domainSupportService';
 import ProficiencyArc from './ProficiencyArc';
 import ProjectDetailView from '../Projects/ProjectDetailView';
 
@@ -61,7 +61,7 @@ export default function GoalEditor({ open, goal, onClose, onSave, addGoal, addSu
 
   useEffect(() => {
     if (goal) setShowProjectEditForm(false);
-  }, [goal?.id]);
+  }, [goal]);
 
   useEffect(() => {
     if (goal) {

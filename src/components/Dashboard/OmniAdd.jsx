@@ -24,6 +24,8 @@ const CAPTURE_OPTIONS = [
   { id: 'task', label: 'Task' },
   { id: 'habit', label: 'Habit' },
   { id: 'project', label: 'Project' },
+  { id: 'life_domain', label: 'Domain' },
+  { id: 'social_followup', label: 'Social' },
   { id: 'note', label: 'Note' },
   { id: 'someday', label: 'Later' },
   { id: 'calendar_event', label: 'Event' },
@@ -36,6 +38,8 @@ function getCaptureSummary(capture) {
   switch (capture?.captureKind) {
     case 'project':
       return 'This looks like a project and should go to Project Planner.';
+    case 'life_domain':
+      return 'This looks like a life domain. I can create lightweight support structure for it.';
     case 'habit':
       return 'This looks like a habit or recurring practice.';
     case 'calendar_event':
@@ -49,6 +53,8 @@ function getCaptureSummary(capture) {
     case 'task':
     default:
       return 'This looks like a task you can act on.';
+    case 'social_followup':
+      return 'This looks like social follow-up. It will go to your social bucket.';
   }
 }
 
@@ -60,11 +66,24 @@ function buildRecurrencePayload(recurrence) {
   return { type: 'daily' };
 }
 
+function readSharedTextFromUrl() {
+  if (typeof window === 'undefined') return '';
+  try {
+    const url = new URL(window.location.href);
+    return url.searchParams.get('share_text') || url.searchParams.get('sharedText') || '';
+  } catch {
+    return '';
+  }
+}
+
 export default function OmniAdd({
   onOpenGoalCreator,
   onOpenScheduleEvent,
   onOpenBrainDump,
   onParsedRoute,
+  requestOpenSignal = 0,
+  prefillText = '',
+  showFloatingTrigger = true,
 }) {
   const { googleUser } = useGarden();
   const uid = googleUser?.uid;
@@ -91,6 +110,50 @@ export default function OmniAdd({
     setEnergyCost(1);
     setLearnedFromHistory(false);
     requestAnimationFrame(() => inputRef.current?.focus());
+  }, [open]);
+
+  useEffect(() => {
+    if (!requestOpenSignal) return;
+    setOpen(true);
+    if (prefillText && String(prefillText).trim()) {
+      setInput(String(prefillText));
+      setDraftCapture(null);
+    }
+  }, [requestOpenSignal, prefillText]);
+
+  useEffect(() => {
+    const shared = readSharedTextFromUrl();
+    if (!shared || !shared.trim()) return;
+    setOpen(true);
+    setInput(shared.trim());
+    setDraftCapture(null);
+  }, []);
+
+  useEffect(() => {
+    const handler = (e) => {
+      const text = String(e?.detail?.text ?? '').trim();
+      if (!text) return;
+      setOpen(true);
+      setInput(text);
+      setDraftCapture(null);
+    };
+    window.addEventListener('kaizen:share-text', handler);
+    return () => window.removeEventListener('kaizen:share-text', handler);
+  }, []);
+
+  useEffect(() => {
+    const handleGlobalKey = (e) => {
+      if (open) return;
+      const inInput = e.target?.closest?.('input, textarea, [contenteditable="true"]');
+      if (inInput) return;
+      const openOmni = (e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'o';
+      if (openOmni) {
+        e.preventDefault();
+        setOpen(true);
+      }
+    };
+    document.addEventListener('keydown', handleGlobalKey);
+    return () => document.removeEventListener('keydown', handleGlobalKey);
   }, [open]);
 
   useEffect(() => {
@@ -172,6 +235,13 @@ export default function OmniAdd({
     setDraftCapture(overrideCaptureClassification(draftCapture, nextKind));
   };
 
+  const hasDraftDetails = Boolean(
+    draftCapture?.scheduledDate
+    || draftCapture?.scheduledTime
+    || draftCapture?.location
+    || (Array.isArray(draftCapture?.participants) && draftCapture.participants.length > 0)
+  );
+
   const handleSendToInbox = async () => {
     const fallback = draftCapture
       ? overrideCaptureClassification(draftCapture, 'note')
@@ -182,22 +252,37 @@ export default function OmniAdd({
     close();
   };
 
+  const handlePasteFromClipboard = async () => {
+    try {
+      if (!navigator?.clipboard?.readText) return;
+      const text = await navigator.clipboard.readText();
+      if (!text || !text.trim()) return;
+      setInput(text.trim());
+      setDraftCapture(null);
+      requestAnimationFrame(() => inputRef.current?.focus());
+    } catch {
+      // Clipboard can fail without permissions; silently ignore.
+    }
+  };
+
   return (
     <>
-      <motion.button
-        type="button"
-        onClick={() => setOpen(true)}
-        className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[90] w-14 h-14 rounded-full flex items-center justify-center text-2xl font-light text-white shadow-lg focus:outline-none focus:ring-4 focus:ring-moss-500/40 select-none"
-        style={{
-          background: 'linear-gradient(145deg, #5a7a2a 0%, #4a5d23 100%)',
-          boxShadow: '0 8px 24px -4px rgba(74, 93, 35, 0.45), 0 0 0 1px rgba(255,255,255,0.08) inset',
-        }}
-        whileHover={{ scale: 1.06 }}
-        whileTap={{ scale: 0.96 }}
-        aria-label="Capture something"
-      >
-        +
-      </motion.button>
+      {showFloatingTrigger && (
+        <motion.button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[90] w-14 h-14 rounded-full flex items-center justify-center text-2xl font-light text-white shadow-lg focus:outline-none focus:ring-4 focus:ring-moss-500/40 select-none"
+          style={{
+            background: 'linear-gradient(145deg, #5a7a2a 0%, #4a5d23 100%)',
+            boxShadow: '0 8px 24px -4px rgba(74, 93, 35, 0.45), 0 0 0 1px rgba(255,255,255,0.08) inset',
+          }}
+          whileHover={{ scale: 1.06 }}
+          whileTap={{ scale: 0.96 }}
+          aria-label="Capture something"
+        >
+          +
+        </motion.button>
+      )}
 
       <AnimatePresence>
         {open && (
@@ -252,6 +337,15 @@ export default function OmniAdd({
                   <p className="font-sans text-xs text-stone-500">
                     Press Enter to classify it. Most captures only need one confirmation.
                   </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handlePasteFromClipboard}
+                      className="px-3 py-1.5 rounded-lg font-sans text-xs font-medium border border-stone-200 bg-white text-stone-600 hover:bg-stone-100"
+                    >
+                      Paste from clipboard
+                    </button>
+                  </div>
                 </div>
 
                 {draftCapture ? (
@@ -263,7 +357,7 @@ export default function OmniAdd({
                       <p className="font-sans text-sm text-stone-700">{getCaptureSummary(draftCapture)}</p>
                       {draftCapture.isAmbiguous && (
                         <p className="font-sans text-xs text-stone-500">
-                          This one is a little fuzzy, so inbox is the safe fallback.
+                          This is a little ambiguous, so inbox triage is recommended.
                         </p>
                       )}
                     </div>
@@ -292,15 +386,33 @@ export default function OmniAdd({
                         })}
                     </div>
 
+                    {hasDraftDetails && (
+                      <div className="rounded-xl border border-stone-200 bg-white/90 px-3 py-2">
+                        <p className="font-sans text-[11px] font-semibold uppercase tracking-[0.16em] text-stone-400">
+                          Added details
+                        </p>
+                        <p className="mt-1 font-sans text-xs text-stone-600">
+                          {[
+                            draftCapture.scheduledDate ? `Date ${draftCapture.scheduledDate}` : null,
+                            draftCapture.scheduledTime ? `Time ${draftCapture.scheduledTime}` : null,
+                            draftCapture.location ? `Location ${draftCapture.location}` : null,
+                            Array.isArray(draftCapture.participants) && draftCapture.participants.length > 0
+                              ? `${draftCapture.participants.length} participant${draftCapture.participants.length === 1 ? '' : 's'}`
+                              : null,
+                          ].filter(Boolean).join(' • ')}
+                        </p>
+                      </div>
+                    )}
+
                     <div className="flex flex-wrap gap-2">
                       <button
                         type="submit"
                         disabled={isParsing}
                         className="px-4 py-2.5 rounded-xl font-sans text-sm font-semibold bg-moss-600 text-white hover:bg-moss-700 disabled:opacity-60"
                       >
-                        {draftCapture.confirmationLabel}
+                        {draftCapture.route === 'inbox' ? 'Send to inbox' : draftCapture.confirmationLabel}
                       </button>
-                      {draftCapture.captureKind !== 'note' && draftCapture.captureKind !== 'someday' && (
+                      {draftCapture.route !== 'inbox' && (
                         <button
                           type="button"
                           onClick={handleSendToInbox}
@@ -335,11 +447,54 @@ export default function OmniAdd({
                     onClick={() => setShowDetails((prev) => !prev)}
                     className="font-sans text-sm font-medium text-stone-600 hover:text-stone-800"
                   >
-                    {showDetails ? 'Hide details' : 'Refine details'}
+                    {showDetails ? 'Hide details' : 'Edit details'}
                   </button>
 
                   {showDetails && (
                     <div className="mt-4 space-y-4">
+                      {draftCapture && (
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                          <label className="font-sans text-xs text-stone-600">
+                            Date
+                            <input
+                              type="date"
+                              value={draftCapture.scheduledDate ?? ''}
+                              onChange={(e) => setDraftCapture((prev) => ({ ...(prev ?? {}), scheduledDate: e.target.value || undefined }))}
+                              className="mt-1 w-full rounded-lg border border-stone-200 px-2 py-1.5 text-sm"
+                            />
+                          </label>
+                          <label className="font-sans text-xs text-stone-600">
+                            Time
+                            <input
+                              type="time"
+                              value={draftCapture.scheduledTime ?? ''}
+                              onChange={(e) => setDraftCapture((prev) => ({ ...(prev ?? {}), scheduledTime: e.target.value || undefined }))}
+                              className="mt-1 w-full rounded-lg border border-stone-200 px-2 py-1.5 text-sm"
+                            />
+                          </label>
+                          <label className="font-sans text-xs text-stone-600">
+                            Location
+                            <input
+                              type="text"
+                              value={draftCapture.location ?? ''}
+                              onChange={(e) => setDraftCapture((prev) => ({ ...(prev ?? {}), location: e.target.value || undefined }))}
+                              placeholder="Optional"
+                              className="mt-1 w-full rounded-lg border border-stone-200 px-2 py-1.5 text-sm"
+                            />
+                          </label>
+                          <label className="font-sans text-xs text-stone-600">
+                            Participants
+                            <input
+                              type="text"
+                              value={Array.isArray(draftCapture.participants) ? draftCapture.participants.join(', ') : ''}
+                              onChange={(e) => setDraftCapture((prev) => ({ ...(prev ?? {}), participants: e.target.value ? e.target.value.split(',').map((v) => v.trim()).filter(Boolean) : undefined }))}
+                              placeholder="Optional"
+                              className="mt-1 w-full rounded-lg border border-stone-200 px-2 py-1.5 text-sm"
+                            />
+                          </label>
+                        </div>
+                      )}
+
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-sans text-xs text-stone-500">Energy</span>
                         {ENERGY_COST_OPTIONS.map((opt) => (
@@ -451,7 +606,7 @@ export default function OmniAdd({
 
                 <div className="mt-5 flex items-center justify-between gap-3 border-t border-stone-200 pt-4">
                   <div className="font-sans text-xs text-stone-500">
-                    Need a structured flow instead?
+                    Need a structured destination?
                   </div>
                   <div className="flex flex-wrap gap-2 justify-end">
                     <button

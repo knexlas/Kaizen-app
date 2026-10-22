@@ -97,3 +97,10 @@ The current default direction now follows a calmer utility-surface rule:
 - Spirit planning reactions and helper lines on work surfaces now prefer direct language over metaphor-heavy copy.
 
 This keeps the Garden identity intact while making work surfaces feel calmer and more premium by default.
+
+## Phase 5 status (execution-first pass)
+
+- Utility-surface overlays now default to calmer visual tone and optional icon suppression by intensity.
+- Focus completion flow now closes faster on calm modes and keeps celebration visuals optional.
+- Helper copy on work surfaces is shorter and more direct.
+- Reward system and Garden progression remain intact; delight intensity increases only in playful mode.

@@ -176,6 +176,7 @@ export function buildGoalFromCapture({
   isFixed,
   context,
   recurrence,
+  waitingSupport,
 } = {}) {
   const isHabit = captureKind === 'habit';
   const baseGoal = buildGoalFromDraftPlan({
@@ -191,6 +192,7 @@ export function buildGoalFromCapture({
     ...(isFixed === true ? { isFixed: true } : {}),
     ...(context ? { context } : {}),
     ...(recurrence ? { recurrence } : {}),
+    ...(waitingSupport && typeof waitingSupport === 'object' ? { _waitingSupport: waitingSupport } : {}),
     ...(isHabit ? { rituals: [] } : {}),
     captureSource: 'omni_add',
   };

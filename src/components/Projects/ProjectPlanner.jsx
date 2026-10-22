@@ -11,8 +11,6 @@ import {
   getProjectHealthLabel,
   getDeadlinesAtRisk,
   getPlannedHoursPerProjectThisWeek,
-  getProjectEstimatedHours,
-  getProjectCompletedHours,
   getProjectClient,
   isProjectBillable,
   isProjectUnplanned,
@@ -31,16 +29,6 @@ import {
   getWeekCapacityHours,
 } from '../../services/projectCockpitService';
 import { getProjectPlannerPresetConfig, getPlannerPreset, PLANNER_PRESET_IDS } from '../../constants/plannerPresets';
-
-/** Parse "Week 1-2" or "Week 3" into 0-based week indices { start, end }. */
-function parseWeekRange(weekRangeStr, totalWeeks = 14) {
-  if (!weekRangeStr || typeof weekRangeStr !== 'string') return { start: 0, end: totalWeeks - 1 };
-  const m = weekRangeStr.trim().match(/Week\s*(\d+)(?:\s*[-–]\s*(\d+))?/i);
-  if (!m) return { start: 0, end: totalWeeks - 1 };
-  const start = Math.max(0, parseInt(m[1], 10) - 1);
-  const end = m[2] ? Math.min(totalWeeks - 1, parseInt(m[2], 10) - 1) : start;
-  return { start: Math.min(start, end), end };
-}
 
 const skillGoals = (goals) => (goals || []).filter((g) => g.type === 'kaizen' && !g._projectGoal);
 
@@ -229,8 +217,6 @@ export default function ProjectPlanner({
     [weekAssignments, goals, logs]
   );
   const blockedProjects = activeProjects.filter((g) => getProjectHealth(g, healthContext).state === PROJECT_HEALTH_STATES.BLOCKED);
-  const stuckProjects = activeProjects.filter((g) => getProjectHealth(g, healthContext).state === PROJECT_HEALTH_STATES.STUCK);
-  const atRiskProjects = deadlinesAtRisk;
   const filteredProjects = useMemo(() => {
     if (projectFilter === 'all') return activeProjects;
     return activeProjects.filter((g) => {
@@ -622,8 +608,11 @@ export default function ProjectPlanner({
                     {needsAttention.notTouchedRecently.length > 0 && (
                       <li>Not touched recently: {needsAttention.notTouchedRecently.map((x) => x.label).join(', ')}</li>
                     )}
+                    {needsAttention.waitingOn?.length > 0 && (
+                      <li>Waiting on dependencies: {needsAttention.waitingOn.map((x) => x.label).join(', ')}</li>
+                    )}
                     {needsAttention.overplannedWeek && <li>Overplanned week</li>}
-                    {needsAttention.noNextStep.length === 0 && needsAttention.overdueUnscheduled.length === 0 && needsAttention.deadlineRisk.length === 0 && needsAttention.notTouchedRecently.length === 0 && !needsAttention.overplannedWeek && (
+                    {needsAttention.noNextStep.length === 0 && needsAttention.overdueUnscheduled.length === 0 && needsAttention.deadlineRisk.length === 0 && needsAttention.notTouchedRecently.length === 0 && (needsAttention.waitingOn?.length ?? 0) === 0 && !needsAttention.overplannedWeek && (
                       <li className="text-stone-500 dark:text-stone-400">Nothing flagged.</li>
                     )}
                   </ul>

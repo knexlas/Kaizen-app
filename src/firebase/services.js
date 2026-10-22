@@ -254,7 +254,7 @@ export async function addEnergyRecord(record) {
  * @param {Object} data - { stones: number, valence: 'drain'|'charge', journal: string }
  * @returns {Promise<Object>} Placeholder insight
  */
-export async function analyzeEnergyPattern(data) {
+export async function analyzeEnergyPattern(_data) {
   // TODO: Call Gemini API with data.journal, data.valence, data.stones
   await new Promise((r) => setTimeout(r, 300));
   return { ok: true, message: 'Pattern analysis (Gemini placeholder)' };

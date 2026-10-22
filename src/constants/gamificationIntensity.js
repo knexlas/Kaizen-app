@@ -44,6 +44,8 @@ export function getGamificationConfig(userSettings) {
       showRewardBonusDetails: false,
       showRewardGrowthLine: false,
       showFocusSuccessCurrency: false,
+      showUtilitySurfaceIcon: false,
+      utilitySurfaceTone: 'slate',
       /** Only critical unblock/recover interventions. */
       helperFrequency: 'reduced',
       /** Small avatar, no auto-open dialogue. */
@@ -61,6 +63,8 @@ export function getGamificationConfig(userSettings) {
       showRewardBonusDetails: false,
       showRewardGrowthLine: false,
       showFocusSuccessCurrency: false,
+      showUtilitySurfaceIcon: true,
+      utilitySurfaceTone: 'slate',
       helperFrequency: 'normal',
       spiritPresence: 'calm',
       metaphorWording: false,
@@ -74,6 +78,8 @@ export function getGamificationConfig(userSettings) {
       showRewardBonusDetails: true,
       showRewardGrowthLine: true,
       showFocusSuccessCurrency: true,
+      showUtilitySurfaceIcon: true,
+      utilitySurfaceTone: 'moss',
       helperFrequency: 'normal',
       spiritPresence: 'rich',
       metaphorWording: true,

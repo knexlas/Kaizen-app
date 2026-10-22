@@ -9,24 +9,16 @@ import WoodenSpoon from '../WoodenSpoon';
 import { buildReward } from '../../services/dopamineEngine';
 import { pickStarterTask } from '../../services/startAssist';
 import { localISODate, diffDays, weekdayIndexMon0, jsDayFromMon0, getWeekId, daysUntilDeadline } from '../../services/dateUtils';
-import StartNowModal from '../StartAssist/StartNowModal';
-import GentleRestartModal from '../Onboarding/GentleRestartModal';
-import AccessibilitySettingsModal from '../Settings/AccessibilitySettingsModal';
-import GoalCreator from '../Goals/GoalCreator';
-import ProjectPlanner from '../Projects/ProjectPlanner';
-import HorizonsGantt from '../Horizons/HorizonsGantt';
-import GoalEditor from '../Goals/GoalEditor';
 import TimeSlicer, { HOURS, MAX_SLOTS_BY_WEATHER, getAssignmentsForHour } from './TimeSlicer';
 import { getCurrentSlotKey } from './CompassWidget';
 import CommandPalette from './CommandPalette';
 import OmniAdd from './OmniAdd';
 import WeeklyMap from './WeeklyMap';
 import MochiSpiritWithDialogue, { DefaultSpiritSvg, getSpiritGreeting, getPlanReaction } from './MochiSpirit';
-import SpiritChat from './SpiritChat';
-import CompostHeap from './CompostHeap';
 import { draftPlanFromNote, generateNextThreeSteps, rewriteTaskAsExecutable } from '../../domains/planning/services/planningAiService';
 import { generateSpiritInsight, generateMorningBriefing, generateHabitSynergy } from '../../domains/assistant/services/spiritAssistantService';
-import { generateWeeklyPlan, generateMonthlyPlan, generateMonthlyPlanTasks, rebalanceMonthQuota, parseOmniAddInput } from '../../services/geminiService';
+import { generateWeeklyPlan, generateMonthlyPlan, generateMonthlyPlanTasks, rebalanceMonthQuota } from '../../domains/planning/services/planningGenerationService';
+import { parseOmniAddInput } from '../../domains/capture/services/captureAiService';
 import { importICSFile, downloadICS, CALENDAR_PROVIDERS } from '../../services/calendarSyncService';
 import { fetchOutlookEvents } from '../../services/microsoftCalendarService';
 import { getStoredBriefing, setStoredBriefing } from '../../services/spiritBriefingStorage';
@@ -44,25 +36,15 @@ import { getPlannedHoursByScope } from '../../utils/plannedHoursAggregation';
 import NextStepPrompt from './NextStepPrompt';
 import { useTinyStepSuggestions, isAssignmentFixed } from './NextTinyStep';
 import HabitStackHandoffPrompt from './HabitStackHandoffPrompt';
-import MorningCheckIn from './MorningCheckIn';
 import EveningWindDown from './EveningWindDown';
-import HabitNurseryModal from './HabitNurseryModal';
-import FocusSession from '../Focus/FocusSession';
-import TeaCeremony from '../Focus/TeaCeremony';
-import SettingsView from './SettingsView';
-import RoutinesManager from './RoutinesManager';
+import FocusScaffoldCard from '../Focus/FocusScaffoldCard';
+import PlannerRoutineSupportList from './PlannerRoutineSupportList';
 import { PlanDayDrawer, buildBacklogTasks, getPlanItemsForDate, formatHourKey } from '../CommandCenter/StagingArea';
-import SpiritBuilder from '../Onboarding/SpiritBuilder';
 import SpiritGuideTour, { SHORT_TOUR_STEPS } from '../Onboarding/SpiritGuideTour';
-import SpiritOrigins from '../Onboarding/SpiritOrigins';
 import TourHighlight from '../Onboarding/TourHighlight';
 import FeatureTooltip from '../Onboarding/FeatureTooltip';
 import SupportSuggestionCard from './SupportSuggestionCard';
 import { PremiumPlannerShell, PremiumSection, PremiumSectionHeader, PremiumActionRow } from './PremiumPlannerPrimitives';
-import PlanDayPanel from './PlanDayPanel';
-import PlanMonthPanel from './PlanMonthPanel';
-import PlanWeekPanel from './PlanWeekPanel';
-import DailyPlanRitual from './DailyPlanRitual';
 import AiActionChips from '../Spirit/AiActionChips';
 import { getGoalSupportDomain, resolveSupportSuggestions, getActiveSupportDomainForWeek, getWeeklyPrompt, getSuggestionTemplate, createFromSupportSuggestion } from '../../services/domainSupportService';
 import { fetchGoogleEvents, createGoogleEvent } from '../../services/googleCalendarService';
@@ -75,10 +57,72 @@ import { getGamificationIntensity, getGamificationConfig, shouldShowHelperForInt
 import { getRitualForToday } from './GardenDashboard.shared';
 import { usePlanningSnapshot } from '../../domains/planning/hooks/usePlanningSnapshot';
 import { useLearnedEnergyProfile } from '../../domains/vitality/hooks/useLearnedEnergyProfile';
+import { buildTodayAssistantActions } from '../../domains/assistant/services/todayAssistantActions';
+import { MAINTENANCE_BLOCK_TEMPLATES, suggestMaintenanceTemplates } from '../../domains/recovery/services/maintenanceBlockService';
+import { buildRoutinePatternSuggestions } from '../../domains/recovery/services/routinePatternSuggestionService';
+import { buildRestartResumeModel } from '../../domains/recovery/services/restartResumeService';
+import {
+  loadInterruptionMemory,
+  saveInterruptionMemory,
+  recordInterruptionSnapshot,
+  buildInterruptionResumeSummary,
+} from '../../domains/recovery/services/interruptionMemoryService';
+import { buildTaskInitiationSupport, shouldShowTaskInitiationSupport } from '../../domains/assistant/services/taskInitiationSupportService';
+import { getWaitingItemsDue, WAITING_TYPES } from '../../domains/recovery/services/waitingSupportService';
+import { LIFE_DOMAIN_TEMPLATES, buildLifeDomainFromIntent, buildDomainSupportPlan, computeLifeDomainHealth } from '../../domains/recovery/services/lifeDomainService';
+import { getProtectedTimeSignals } from '../../domains/recovery/services/protectedTimeService';
 
 const GardenWalk = lazy(() => import('../Garden/GardenWalk'));
 const JournalView = lazy(() => import('./JournalView'));
 const AnalyticsView = lazy(() => import('./AnalyticsView'));
+const StartNowModal = lazy(() => import('../StartAssist/StartNowModal'));
+const GentleRestartModal = lazy(() => import('../Onboarding/GentleRestartModal'));
+const AccessibilitySettingsModal = lazy(() => import('../Settings/AccessibilitySettingsModal'));
+const GoalCreator = lazy(() => import('../Goals/GoalCreator'));
+const ProjectPlanner = lazy(() => import('../Projects/ProjectPlanner'));
+const HorizonsGantt = lazy(() => import('../Horizons/HorizonsGantt'));
+const GoalEditor = lazy(() => import('../Goals/GoalEditor'));
+const SpiritChat = lazy(() => import('./SpiritChat'));
+const CompostHeap = lazy(() => import('./CompostHeap'));
+const MorningCheckIn = lazy(() => import('./MorningCheckIn'));
+const HabitNurseryModal = lazy(() => import('./HabitNurseryModal'));
+const FocusSession = lazy(() => import('../Focus/FocusSession'));
+const TeaCeremony = lazy(() => import('../Focus/TeaCeremony'));
+const SettingsView = lazy(() => import('./SettingsView'));
+const RoutinesManager = lazy(() => import('./RoutinesManager'));
+const SpiritBuilder = lazy(() => import('../Onboarding/SpiritBuilder'));
+const SpiritOrigins = lazy(() => import('../Onboarding/SpiritOrigins'));
+const PlanDayPanel = lazy(() => import('./PlanDayPanel'));
+const PlanMonthPanel = lazy(() => import('./PlanMonthPanel'));
+const PlanWeekPanel = lazy(() => import('./PlanWeekPanel'));
+const PlannerManageHub = lazy(() => import('./PlannerManageHub'));
+const DailyPlanRitual = lazy(() => import('./DailyPlanRitual'));
+
+const TASK_START_PREFS_KEY = 'kaizen:task-start-support-prefs';
+const LOW_FRICTION_MODE_KEY = 'kaizen:low-friction-mode';
+const PLANNER_SUPPORT_EXPLAINERS = {
+  review: 'Review load, confidence, deadlines, and weekly risk before you change the plan.',
+  projects: 'Use Projects for milestones, structure, and project decomposition.',
+  systems: 'Use Systems for routines, maintenance, and recurring support.',
+};
+
+function LoadingSurface({ label = 'Loading surface...', fullscreen = false }) {
+  if (fullscreen) {
+    return (
+      <div className="fixed inset-0 z-[70] flex items-center justify-center bg-stone-950/10 backdrop-blur-sm">
+        <div className="rounded-[28px] border border-stone-200/80 bg-white/92 px-5 py-4 shadow-xl dark:border-slate-600/80 dark:bg-slate-900/92">
+          <p className="font-sans text-sm text-stone-600 dark:text-stone-300">{label}</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-[28px] border border-stone-200/80 bg-white/82 p-6 shadow-sm dark:border-slate-600/80 dark:bg-slate-800/78">
+      <p className="font-sans text-sm text-stone-500 dark:text-stone-300">{label}</p>
+    </div>
+  );
+}
 
 // --- Icons ---
 const SunIcon = () => (
@@ -164,7 +208,7 @@ class ScheduleErrorBoundary extends Component {
 }
 
 function GardenDashboard() {
-  const { goals, weeklyEvents, logs, spiritPoints, addGoal, updateGoalProgress, updateUserSettings, updateGoalMilestone, editGoal, deleteGoal, addSubtask, updateSubtask, deleteSubtask, updateSubtaskProgress, toggleMilestone, updateMilestone, addMilestone, deleteMilestone, promoteTaskToThisWeek, lastCheckInDate, completeMorningCheckIn, dailyEnergyModifier, dailySpoonCount, addLog, logMetric, googleUser, connectCalendar, disconnectCalendar, googleToken, updateWeeklyEvents, weeklyNorthStarId, cloudSaveStatus, spiritConfig, setSpiritConfig, compost, addToCompost, removeFromCompost, soilNutrients, consumeSoilNutrients, earnEmbers, addWater, today, assignments, setAssignments, gentleResetToToday, archiveStalePlanItems, compostStaleSeeds, runCriticalMassCheck, eveningMode, setEveningMode, userSettings, addRitualCategory, saveDayPlanForDate, loadDayPlan, weekAssignments, monthlyQuotas, addMonthlyQuota, updateMonthlyQuota, msUser, msToken, connectOutlook, disconnectOutlook, refreshOutlookToken, tourStep, setTourStep, pausedDays, needsRescheduling, rescheduleNeedsReschedulingItem, clearDaySchedule, spawnedVolumeBlocks, removeSpawnedVolumeBlock, stagingTaskStatus, setStagingTaskStatus } = useGarden();
+  const { goals, weeklyEvents, logs, spiritPoints, addGoal, updateGoalProgress, updateUserSettings, updateGoalMilestone, editGoal, deleteGoal, addSubtask, updateSubtask, deleteSubtask, updateSubtaskProgress, toggleMilestone, updateMilestone, addMilestone, deleteMilestone, promoteTaskToThisWeek, lastCheckInDate, lastSundayRitualDate, completeMorningCheckIn, dailyEnergyModifier, dailySpoonCount, addLog, logMetric, googleUser, connectCalendar, disconnectCalendar, googleToken, updateWeeklyEvents, weeklyNorthStarId, cloudSaveStatus, spiritConfig, setSpiritConfig, compost, addToCompost, removeFromCompost, soilNutrients, consumeSoilNutrients, earnEmbers, addWater, today, assignments, setAssignments, gentleResetToToday, archiveStalePlanItems, compostStaleSeeds, runCriticalMassCheck, eveningMode, setEveningMode, userSettings, addRitualCategory, saveDayPlanForDate, loadDayPlan, weekAssignments, monthlyQuotas, addMonthlyQuota, updateMonthlyQuota, msUser, msToken, connectOutlook, disconnectOutlook, refreshOutlookToken, tourStep, setTourStep, pausedDays, needsRescheduling, rescheduleNeedsReschedulingItem, clearDaySchedule, spawnedVolumeBlocks, removeSpawnedVolumeBlock, stagingTaskStatus, setStagingTaskStatus, maintenanceBlocks = [], addMaintenanceBlock, updateMaintenanceBlock, deleteMaintenanceBlock, socialFollowUps = [], addSocialFollowUp, updateSocialFollowUp, routines = [], recurringSupportState = {}, pauseRoutineTemporarily, softenRoutineIntensity, markRoutineSupportState, waitingSupportState = {}, setGoalWaitingSupport, resolveGoalWaitingSupport, lifeDomains = [], addLifeDomain, deleteLifeDomain, routineSupportPlacements = [], removeRoutineSupportPlacement } = useGarden();
   const { pushReward, lastGardenImpact, clearLastGardenImpact } = useReward();
   const { showConfirm } = useDialog();
   const { darkMode: themeDarkMode, setDarkModeOverride } = useTheme();
@@ -277,10 +321,26 @@ function GardenDashboard() {
   const [horizonsView, setHorizonsView] = useState('planning'); // 'planning' | 'metrics'
   const [plannerPlanDayDateStr, setPlannerPlanDayDateStr] = useState(null); // day chosen in Planner to open PlanDayDrawer
   const [plannerScheduleDrawerPreSelect, setPlannerScheduleDrawerPreSelect] = useState(null); // pre-select task when opening schedule drawer from Horizons
-  const [plannerViewMode, setPlannerViewMode] = useState('week'); // 'day' | 'week' | 'month' — Week default
+  const [plannerViewMode, setPlannerViewMode] = useState('week'); // 'day' | 'week' | 'month'
   const [plannerDayExpanded, setPlannerDayExpanded] = useState(false); // Day lens starts collapsed
   const [plannerProjectsOpen, setPlannerProjectsOpen] = useState(false); // collapsible Projects & milestones
   const [plannerRoutinesOpen, setPlannerRoutinesOpen] = useState(false); // collapsible Routines
+  const [plannerMaintenanceOpen, setPlannerMaintenanceOpen] = useState(false); // collapsible maintenance blocks
+  const [taskStartPrefs, setTaskStartPrefs] = useState(() => {
+    try {
+      const raw = localStorage.getItem(TASK_START_PREFS_KEY);
+      const parsed = raw ? JSON.parse(raw) : {};
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+      return {};
+    }
+  });
+  const [taskStartPanelOpen, setTaskStartPanelOpen] = useState(false);
+  const [showFocusScaffold, setShowFocusScaffold] = useState(false);
+  const [lowFrictionModeEnabled, setLowFrictionModeEnabled] = useState(false);
+  const [lowFrictionStayDate, setLowFrictionStayDate] = useState(null);
+  const [lowFrictionDismissedDate, setLowFrictionDismissedDate] = useState(null);
+  const [interruptionMemory, setInterruptionMemory] = useState(() => loadInterruptionMemory());
   const [rebalanceQuotaId, setRebalanceQuotaId] = useState(null);
   const [pendingPlan, setPendingPlan] = useState(null); // { quota, blocks } for Monthly Rebalance review
   const [pendingWeekPlan, setPendingWeekPlan] = useState(null); // { [dateStr]: dayAssigns } for Suggest my week review
@@ -309,8 +369,14 @@ function GardenDashboard() {
   const showChat = activeModal === 'chat';
   const showCompost = activeModal === 'compost';
   const [showScheduleEventModal, setShowScheduleEventModal] = useState(false);
-  const [scheduleEventPrefill, setScheduleEventPrefill] = useState(null); // { title?, startTime?, endTime? }
+  const [omniAddPrefillText, setOmniAddPrefillText] = useState('');
+  const [omniAddRequestOpenSignal, setOmniAddRequestOpenSignal] = useState(0);
+  const [scheduleEventPrefill, setScheduleEventPrefill] = useState(null); // { title?, startTime?, endTime?, location?, participants?, originalText? }
   const [showDailyPlanRitual, setShowDailyPlanRitual] = useState(false);
+  const [showTodaySupportSheet, setShowTodaySupportSheet] = useState(false);
+  const [plannerSupportDrawer, setPlannerSupportDrawer] = useState(null); // 'review' | 'projects' | 'systems' | 'manage' | null
+  const [plannerSystemsMode, setPlannerSystemsMode] = useState('overview'); // 'overview' | 'routines'
+  const [showPlannerRoutineSuggestions, setShowPlannerRoutineSuggestions] = useState(false);
   const [ritualDayPlan, setRitualDayPlan] = useState({});
   const [scheduleEventTitle, setScheduleEventTitle] = useState('');
   const [scheduleEventDate, setScheduleEventDate] = useState(() => localISODate());
@@ -319,6 +385,9 @@ function GardenDashboard() {
   const [scheduleEventDurationCustom, setScheduleEventDurationCustom] = useState(false);
   const [scheduleEventEndTime, setScheduleEventEndTime] = useState('10:00');
   const [scheduleEventSaving, setScheduleEventSaving] = useState(false);
+  const [scheduleEventLocation, setScheduleEventLocation] = useState('');
+  const [scheduleEventParticipants, setScheduleEventParticipants] = useState('');
+  const [scheduleEventSourceText, setScheduleEventSourceText] = useState('');
   const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
   const [isMobileNav, setIsMobileNav] = useState(false);
   const [justFinishedSession, setJustFinishedSession] = useState(false);
@@ -332,7 +401,7 @@ function GardenDashboard() {
   const [hasSeenTour, setHasSeenTour] = useState(() => getTourSeen());
   const [useShortTourSteps, setUseShortTourSteps] = useState(false);
   const [showSpiritOrigins, setShowSpiritOrigins] = useState(false);
-  const [plannerShowSecondary, setPlannerShowSecondary] = useState(false);
+  const plannerShowSecondary = false;
   const [dismissedCurrentTaskStripKey, setDismissedCurrentTaskStripKey] = useState(null);
   const plannerPresetDefaultsAppliedRef = useRef(false);
   const isLegacyTourActive = showTour || (typeof tourStep === 'number' && tourStep > 0 && tourStep < 5);
@@ -345,12 +414,50 @@ function GardenDashboard() {
   useEffect(() => {
     if (!hydrated || !userSettings || plannerPresetDefaultsAppliedRef.current) return;
     const tabConfig = getPlannerTabPresetConfig(userSettings);
-    setPlannerViewMode((prev) => (tabConfig.defaultView ?? prev));
-    setPlannerShowSecondary((prev) => (tabConfig.showSecondaryDefault ?? prev));
+    setPlannerViewMode((prev) => ((tabConfig.defaultView === 'day' || tabConfig.defaultView === 'month' || tabConfig.defaultView === 'week') ? tabConfig.defaultView : prev));
     setPlannerProjectsOpen((prev) => (tabConfig.expandProjectsDefault ?? prev));
     setPlannerRoutinesOpen((prev) => (tabConfig.expandRoutinesDefault ?? prev));
     plannerPresetDefaultsAppliedRef.current = true;
   }, [hydrated, userSettings]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(TASK_START_PREFS_KEY, JSON.stringify(taskStartPrefs ?? {}));
+    } catch {
+      // ignore preference persistence failures
+    }
+  }, [taskStartPrefs]);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(LOW_FRICTION_MODE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        setLowFrictionModeEnabled(parsed.enabled === true);
+        setLowFrictionStayDate(typeof parsed.stayDate === 'string' ? parsed.stayDate : null);
+        setLowFrictionDismissedDate(typeof parsed.dismissedDate === 'string' ? parsed.dismissedDate : null);
+      }
+    } catch {
+      // ignore read errors
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(LOW_FRICTION_MODE_KEY, JSON.stringify({
+        enabled: lowFrictionModeEnabled,
+        stayDate: lowFrictionStayDate,
+        dismissedDate: lowFrictionDismissedDate,
+      }));
+    } catch {
+      // ignore write errors
+    }
+  }, [lowFrictionModeEnabled, lowFrictionStayDate, lowFrictionDismissedDate]);
+
+  useEffect(() => {
+    saveInterruptionMemory(interruptionMemory);
+  }, [interruptionMemory]);
 
   const openModal = useCallback((modalKey) => setActiveModal(modalKey), []);
   const closeModal = useCallback((modalKey = null) => {
@@ -706,9 +813,9 @@ function GardenDashboard() {
   const plannerViewMeta = useMemo(() => {
     if (plannerViewMode === 'day') {
       return {
-        title: 'Plan today',
-        description: 'Choose what fits today, then shape the exact order only when it helps.',
-        primaryActionLabel: plannerActionBusy === 'day' ? 'Planning...' : 'Suggest day plan',
+        title: 'Build today',
+        description: 'Choose what fits today, then open the day planner only when you need to place or adjust specific blocks.',
+        primaryActionLabel: plannerActionBusy === 'day' ? 'Shaping...' : 'Shape today',
       };
     }
     if (plannerViewMode === 'month') {
@@ -737,6 +844,18 @@ function GardenDashboard() {
     const t = setTimeout(() => setPlannerUndoOffer(null), 9000);
     return () => clearTimeout(t);
   }, [plannerUndoOffer]);
+
+  useEffect(() => {
+    if (activeTab !== 'planner' && plannerSupportDrawer) {
+      setPlannerSupportDrawer(null);
+    }
+  }, [activeTab, plannerSupportDrawer]);
+
+  useEffect(() => {
+    if (plannerSupportDrawer !== 'systems' && plannerSystemsMode !== 'overview') {
+      setPlannerSystemsMode('overview');
+    }
+  }, [plannerSupportDrawer, plannerSystemsMode]);
 
   const handleUndoPlannerChip = useCallback(async () => {
     if (!plannerUndoOffer || typeof saveDayPlanForDate !== 'function') return;
@@ -909,7 +1028,7 @@ function GardenDashboard() {
     try {
       const startHour = learnedEnergyProfile?.focusWindow?.startHour ?? hourFromTimeStr(userSettings?.dayStart, 9);
       const endHour = learnedEnergyProfile?.focusWindow?.endHour ?? hourFromTimeStr(userSettings?.dayEnd, 22);
-      const dates = plannerViewMode === 'day' && today ? [today] : plannerWeekDates;
+      const dates = plannerWeekDates;
       const focusGoal = (weeklyNorthStarId && (goals ?? []).find((g) => g.id === weeklyNorthStarId))
         || (goals ?? []).find((g) => g?.id && g.type !== 'routine')
         || null;
@@ -942,7 +1061,7 @@ function GardenDashboard() {
     } finally {
       setPlannerChipBusy(null);
     }
-  }, [loadDayPlan, saveDayPlanForDate, userSettings?.dayStart, userSettings?.dayEnd, plannerViewMode, today, plannerWeekDates, weeklyNorthStarId, goals, findFirstFreeHourKey, pushReward, offerPlannerUndo, learnedEnergyProfile]);
+  }, [loadDayPlan, saveDayPlanForDate, userSettings?.dayStart, userSettings?.dayEnd, plannerWeekDates, weeklyNorthStarId, goals, findFirstFreeHourKey, pushReward, offerPlannerUndo, learnedEnergyProfile]);
 
   const handlePlannerChipRescheduleOne = useCallback(async () => {
     if (typeof loadDayPlan !== 'function' || typeof saveDayPlanForDate !== 'function') return;
@@ -951,7 +1070,7 @@ function GardenDashboard() {
     try {
       const startHour = hourFromTimeStr(userSettings?.dayStart, 9);
       const endHour = hourFromTimeStr(userSettings?.dayEnd, 22);
-      const dateOrder = plannerViewMode === 'day' && today ? [today] : plannerWeekDates;
+      const dateOrder = plannerWeekDates;
       const dayPlans = await Promise.all(dateOrder.map(async (dateStr) => ({ dateStr, assigns: (await loadDayPlan(dateStr)) ?? {} })));
       const busiest = dayPlans
         .map((d) => ({ ...d, keys: Object.keys(d.assigns || {}).filter((k) => !!d.assigns[k]) }))
@@ -988,7 +1107,7 @@ function GardenDashboard() {
     } finally {
       setPlannerChipBusy(null);
     }
-  }, [loadDayPlan, saveDayPlanForDate, userSettings?.dayStart, userSettings?.dayEnd, plannerViewMode, today, plannerWeekDates, findFirstFreeHourKey, pushReward, offerPlannerUndo]);
+  }, [loadDayPlan, saveDayPlanForDate, userSettings?.dayStart, userSettings?.dayEnd, plannerWeekDates, findFirstFreeHourKey, pushReward, offerPlannerUndo]);
 
   const handlePlannerChipSplitUrgent = useCallback(async () => {
     if (typeof loadDayPlan !== 'function' || typeof saveDayPlanForDate !== 'function') return;
@@ -1201,8 +1320,31 @@ function GardenDashboard() {
       if (!result || !result.title) return;
       const capture = normalizeTaskCapture(result, result?.rawText ?? result?.title);
 
-      if (capture.route === 'compost') {
+      if (capture.route === 'inbox' || capture.route === 'compost') {
         await addToCompost(capture.rawText || capture.title);
+        pushReward?.({ message: 'Captured to inbox for triage.', tone: 'moss', icon: '📥', durationMs: 2200 });
+        return;
+      }
+
+      if (capture.route === 'social_bucket' || capture.captureKind === 'social_followup') {
+        addSocialFollowUp?.({ text: capture.rawText || capture.title, source: 'omniadd' });
+        pushReward?.({ message: 'Added to social follow-up bucket.', tone: 'moss', icon: '💬', durationMs: 2200 });
+        return;
+      }
+
+      if (capture.route === 'life_domains' || capture.captureKind === 'life_domain') {
+        const domain = buildLifeDomainFromIntent(capture.rawText || capture.title);
+        const created = addLifeDomain?.(domain);
+        const support = buildDomainSupportPlan(created ?? domain);
+        if (Array.isArray(support.maintenanceTemplates) && support.maintenanceTemplates.length > 0 && typeof addMaintenanceBlock === 'function') {
+          support.maintenanceTemplates.slice(0, 2).forEach((template) => {
+            addMaintenanceBlock({ templateId: template.id, ...template });
+          });
+        }
+        if (support.followUpBucket === 'social_followups' && typeof addSocialFollowUp === 'function') {
+          addSocialFollowUp({ text: `${(created ?? domain).title}: follow-up check-in`, source: 'life_domain', status: 'pending' });
+        }
+        pushReward?.({ message: `Domain support created for ${(created ?? domain).title}.`, tone: 'moss', icon: '🧭', durationMs: 2400 });
         return;
       }
 
@@ -1240,7 +1382,14 @@ function GardenDashboard() {
           }
         }
 
-        setScheduleEventPrefill({ title: capture.title, startTime: capture.startTime, endTime: capture.endTime });
+        setScheduleEventPrefill({
+          title: capture.title,
+          startTime: capture.startTime,
+          endTime: capture.endTime,
+          location: capture.location,
+          participants: capture.participants,
+          originalText: capture.rawText,
+        });
         if (capture.scheduledDate) setScheduleEventDate(capture.scheduledDate);
         if (capture.scheduledTime) setScheduleEventTime(capture.scheduledTime);
         setShowScheduleEventModal(true);
@@ -1254,8 +1403,12 @@ function GardenDashboard() {
         isFixed: capture.isFixed,
         context: capture.context,
         recurrence: capture.recurrence,
+        waitingSupport: capture.waitingSupport,
       });
       addGoal(goal);
+      if (capture.waitingSupport && goal?.id && typeof setGoalWaitingSupport === 'function') {
+        setGoalWaitingSupport(goal.id, capture.waitingSupport);
+      }
 
       const firstSubtaskId = Array.isArray(goal.subtasks) ? goal.subtasks[0]?.id : null;
       if (firstSubtaskId && capture.captureKind !== 'habit' && !(capture.captureKind === 'scheduled_item' && capture.scheduledDate)) {
@@ -1285,7 +1438,7 @@ function GardenDashboard() {
         durationMs: 2400,
       });
     },
-    [addCaptureAssignmentToDayPlan, addGoal, addToCompost, pushReward, setStagingTaskStatus]
+    [addCaptureAssignmentToDayPlan, addGoal, addToCompost, addSocialFollowUp, pushReward, setStagingTaskStatus, addLifeDomain, addMaintenanceBlock]
   );
 
   const handleOmniAddParsedRoute = useCallback(
@@ -1294,6 +1447,11 @@ function GardenDashboard() {
     },
     [routeNormalizedCapture]
   );
+
+  const requestOmniAddOpen = useCallback((text = '') => {
+    setOmniAddPrefillText(String(text || '').trim());
+    setOmniAddRequestOpenSignal((v) => v + 1);
+  }, []);
 
   const handleCaptureFromPalette = useCallback(
     async (rawText) => {
@@ -1416,6 +1574,9 @@ function GardenDashboard() {
     if (showScheduleEventModal) {
       if (scheduleEventPrefill?.title) {
         setScheduleEventTitle(scheduleEventPrefill.title);
+        setScheduleEventLocation(scheduleEventPrefill.location ?? '');
+        setScheduleEventParticipants(Array.isArray(scheduleEventPrefill.participants) ? scheduleEventPrefill.participants.join(', ') : '');
+        setScheduleEventSourceText(scheduleEventPrefill.originalText ?? '');
 
         let dateStr = localISODate();
         let startHHMM = '09:00';
@@ -1449,6 +1610,9 @@ function GardenDashboard() {
         }
       } else {
         setScheduleEventTitle('');
+        setScheduleEventLocation('');
+        setScheduleEventParticipants('');
+        setScheduleEventSourceText('');
         setScheduleEventDate(localISODate());
         setScheduleEventTime('09:00');
         setScheduleEventDurationMinutes(60);
@@ -1478,6 +1642,10 @@ function GardenDashboard() {
         });
         const startTime = start.toISOString();
         const endTime = end.toISOString();
+        const participants = scheduleEventParticipants
+          .split(',')
+          .map((item) => item.trim())
+          .filter(Boolean);
 
         // 1) Always save a local blocking event into the day plan (duration-aware)
         if (typeof loadDayPlan === 'function' && typeof saveDayPlanForDate === 'function') {
@@ -1494,6 +1662,9 @@ function GardenDashboard() {
             fixed: true,
             isFixed: true,
             source: googleToken ? 'google' : 'local',
+            ...(scheduleEventLocation ? { location: scheduleEventLocation } : {}),
+            ...(participants.length > 0 ? { participants } : {}),
+            ...(scheduleEventSourceText ? { originalText: scheduleEventSourceText } : {}),
           };
           if (next[slotKey] == null) next[slotKey] = localAssignment;
           else next[slotKey] = [...(Array.isArray(next[slotKey]) ? next[slotKey] : [next[slotKey]]), localAssignment];
@@ -1508,10 +1679,20 @@ function GardenDashboard() {
           end: endTime,
           type: 'leaf',
           source: googleToken ? 'google' : 'local',
+          ...(scheduleEventLocation ? { location: scheduleEventLocation } : {}),
+          ...(participants.length > 0 ? { participants } : {}),
+          ...(scheduleEventSourceText ? { originalText: scheduleEventSourceText } : {}),
         };
         if (googleToken) {
           try {
-            const created = await createGoogleEvent(googleToken, { title, startTime, endTime });
+            const created = await createGoogleEvent(googleToken, {
+              title,
+              startTime,
+              endTime,
+              location: scheduleEventLocation,
+              participants,
+              originalText: scheduleEventSourceText,
+            });
             weeklyEvent = {
               id: created?.id ?? weeklyEvent.id,
               title,
@@ -1543,6 +1724,9 @@ function GardenDashboard() {
       scheduleEventDate,
       scheduleEventTime,
       scheduleEventEndTime,
+      scheduleEventLocation,
+      scheduleEventParticipants,
+      scheduleEventSourceText,
       computeDurationFromStartAndEnd,
       googleToken,
       loadDayPlan,
@@ -1596,7 +1780,7 @@ function GardenDashboard() {
     [goals, plannerPlanDayDateStr]
   );
 
-  /** Planned hours summary for Plan tab (by scope: day / week / month). */
+  /** Planned hours summary for Plan tab (by scope: week / month). */
   const plannedHoursSummary = useMemo(
     () => getPlannedHoursByScope(weekAssignments ?? {}, goals ?? [], plannerViewMode),
     [weekAssignments, goals, plannerViewMode]
@@ -2001,71 +2185,17 @@ function GardenDashboard() {
       if (reward && typeof pushReward === 'function') pushReward(reward);
     }
     runStartFocus({ goal, minutes: mins, subtaskId });
+    setInterruptionMemory((prev) => recordInterruptionSnapshot(prev, {
+      lastIntent: `Continue ${goal?.title ?? 'task'}`,
+      lastTaskTitle: goal?.title ?? null,
+      lastGoalId: goal?.id ?? null,
+      lastSubtaskId: subtaskId ?? null,
+      lastFocusState: 'starting',
+      lastContextNote: null,
+    }));
     setShowStartNowModal(false);
     setStartNowCandidate(null);
   }, [pushReward, runStartFocus]);
-
-  /** Single-decision hero: state line + primary CTA + fallback. Reuses Compass (slot, storm) and NextTinyStep (current focus). */
-  const nowRecommendation = useMemo(() => {
-    const slotKey = getCurrentSlotKey(now);
-    const isStorm = weather === 'storm';
-    const assignment = slotKey ? getAssignmentsForHour(assignments, slotKey)[0] ?? null : null;
-    const goalId = assignment == null ? null : typeof assignment === 'string' ? assignment : assignment?.goalId ?? assignment?.parentGoalId;
-    const slotStatus = isStorm ? 'storm' : goalId && (goals ?? []).some((g) => g.id === goalId) ? 'assigned' : 'free';
-
-    if (needsMorningCheckIn) {
-      return {
-        stateLine: 'Set your energy for today',
-        recommendedPrimary: { type: 'set_energy', label: "Set today's energy", onClick: () => setShowMorningCheckInModal(true) },
-        recommendedFallback: { label: 'View my day', onClick: () => document.getElementById('tour-timeline')?.scrollIntoView({ behavior: 'smooth' }) },
-      };
-    }
-    if (isStorm) {
-      return {
-        stateLine: `${slotKey ?? 'Now'} · Storm`,
-        recommendedPrimary: { type: 'rest', label: 'Rest / Take shelter', onClick: () => {} },
-        recommendedFallback: { label: 'View my day', onClick: () => document.getElementById('tour-timeline')?.scrollIntoView({ behavior: 'smooth' }) },
-      };
-    }
-    if (isOverloaded) {
-      return {
-        stateLine: 'Today looks full',
-        recommendedPrimary: {
-          type: 'lighten',
-          label: 'Lighten my plan',
-          onClick: () => {
-            document.getElementById('tour-timeline')?.scrollIntoView({ behavior: 'smooth' });
-            setLoadLightenedMessage('Today looks full. You can move items to compost or drag to another day.');
-            setShowSpiritDialogue(true);
-          },
-        },
-        recommendedFallback: { label: 'View my day', onClick: () => document.getElementById('tour-timeline')?.scrollIntoView({ behavior: 'smooth' }) },
-      };
-    }
-    const spoons = todaySpoonCount ?? 0;
-    const stateLine = slotKey
-      ? `${spoons} spoon${spoons !== 1 ? 's' : ''} · ${slotKey} ${slotStatus === 'assigned' ? '— scheduled' : slotStatus === 'free' ? 'free' : ''}`
-      : 'No plan yet';
-    const primaryTask = currentFocusItem?.goal ? { goal: currentFocusItem.goal, goalId: currentFocusItem.goalId, subtaskId: currentFocusItem.subtaskId } : null;
-    return {
-      stateLine: stateLine.trim() || `${spoons} spoon${spoons !== 1 ? 's' : ''}`,
-      recommendedPrimary: primaryTask
-        ? { type: 'start', label: `Start ${currentFocusItem?.title ?? 'task'}`, task: currentFocusItem, onClick: () => handleStartNowStart(primaryTask, 5) }
-        : { type: 'start', label: 'Start now', onClick: handleHelpMeStart },
-      recommendedFallback: { label: 'Low energy? Set spoons', onClick: () => setShowMorningCheckInModal(true) },
-    };
-  }, [
-    now,
-    weather,
-    assignments,
-    goals,
-    needsMorningCheckIn,
-    isOverloaded,
-    todaySpoonCount,
-    currentFocusItem,
-    handleStartNowStart,
-    handleHelpMeStart,
-  ]);
 
   const currentTaskStrip = useMemo(() => {
     if (needsMorningCheckIn) return null;
@@ -2109,7 +2239,7 @@ function GardenDashboard() {
     }
     return {
       lead: 'No tasks lined up yet.',
-      follow: 'Use Plan today to pick a light, realistic path.',
+      follow: 'Use Plan today to place one clear next step.',
     };
   }, [currentFocusItem, nextUpItems]);
 
@@ -2225,6 +2355,40 @@ function GardenDashboard() {
     learnedAdminRecommendation,
     learnedLowEnergyRecommendation,
     todaySpoonCount,
+  ]);
+
+  const taskStartPreferenceStyle = useMemo(() => {
+    if (!todayPrimaryTask?.goalId) return taskStartPrefs?.globalStyle ?? 'tiny_step';
+    return taskStartPrefs?.styleByGoalId?.[todayPrimaryTask.goalId] ?? taskStartPrefs?.globalStyle ?? 'tiny_step';
+  }, [todayPrimaryTask?.goalId, taskStartPrefs]);
+
+  const taskStartDismissedForGoal = useMemo(() => {
+    if (!todayPrimaryTask?.goalId) return false;
+    return Boolean(taskStartPrefs?.dismissedByGoalId?.[todayPrimaryTask.goalId]);
+  }, [todayPrimaryTask?.goalId, taskStartPrefs]);
+
+  const taskStartHelp = useMemo(() => {
+    if (!todayPrimaryTask?.title) return null;
+    const shouldShow = shouldShowTaskInitiationSupport({
+      taskTitle: todayPrimaryTask.title,
+      isLowEnergy: typeof dailyEnergy === 'number' && dailyEnergy <= 4,
+      noNextStep: (needsAttention?.noNextStep?.length ?? 0) > 0,
+      reopenCount: 0,
+      postponeCount: Array.isArray(needsRescheduling) ? needsRescheduling.length : 0,
+      dismissed: taskStartDismissedForGoal,
+    });
+    if (!shouldShow) return null;
+    return buildTaskInitiationSupport({
+      taskTitle: todayPrimaryTask.title,
+      preferredStyle: taskStartPreferenceStyle,
+    });
+  }, [
+    todayPrimaryTask?.title,
+    dailyEnergy,
+    needsAttention?.noNextStep,
+    needsRescheduling,
+    taskStartDismissedForGoal,
+    taskStartPreferenceStyle,
   ]);
 
   const todayMustDoLane = useMemo(() => {
@@ -2425,58 +2589,63 @@ function GardenDashboard() {
       ...todayMustDoLane.support.map((item) => item.title),
     ].filter(Boolean).length;
 
-    const realisticLine = needsMorningCheckIn
-      ? 'Realistic first move: set your energy, then keep the day narrow.'
-      : tasksVisible > 0
-        ? `Realistic today: ${tasksVisible} clear task${tasksVisible === 1 ? '' : 's'} is enough.`
-        : 'Realistic today: start with one task, not a full rebuild of your life.';
+    const loadLabel = needsMorningCheckIn
+      ? 'Check in first'
+      : isOverloaded
+        ? 'Load needs relief'
+        : (todaySpoonCount ?? 0) <= 2
+          ? 'Gentle pace'
+          : 'Load fits today';
 
-    let summary = 'Best move: build a calm day around one clear task.';
     let recommendation = todayPrimaryTask?.title
       ? `Start with ${todayPrimaryTask.title}.`
-      : 'Pick one defined task before you add anything else.';
+      : 'Nothing is placed yet. Start with one task that would make today feel steadier.';
+    let reasonLine = todayTimingGuidance?.primaryLine ?? 'One clear task makes the day easier to hold.';
     let primaryAction = todayPrimaryTask
       ? { label: todayPrimaryTask.ctaLabel ?? 'Start first task', onClick: todayPrimaryTask.onClick, disabled: false }
       : { label: 'Plan today', onClick: handleOpenDailyPlanRitual, disabled: false };
 
     if (needsMorningCheckIn) {
-      summary = 'Best move: set your energy before you commit to the day.';
-      recommendation = 'Once energy is set, keep the first step small and clear.';
+      recommendation = 'Set energy first, then choose the first small step.';
+      reasonLine = 'Set energy first. Then choose one small task.';
       primaryAction = { label: "Set today's energy", onClick: () => setShowMorningCheckInModal(true), disabled: false };
     } else if (isOverloaded) {
-      summary = 'Best move: lighten the day before you try to push through it.';
       recommendation = todayPrimaryTask?.title
-        ? `Keep ${todayPrimaryTask.title} as the anchor and reduce the rest.`
-        : 'Reduce the plan until one task stands out.';
+        ? `Keep ${todayPrimaryTask.title} as the anchor. Move the rest if needed.`
+        : 'Too much is placed for today. Keep one anchor task and move the rest.';
+      reasonLine = 'A lighter plan can still move the day forward.';
       primaryAction = { label: plannerActionBusy === 'day' ? 'Lightening...' : 'Lighten today', onClick: handleLightenTodayPlan, disabled: plannerActionBusy === 'day' };
-    }
-
-    let avoidLine = 'Avoid opening five things at once.';
-    if (needsMorningCheckIn) {
-      avoidLine = 'Avoid planning from guesswork. Set energy first.';
-    } else if (isOverloaded) {
-      avoidLine = 'Avoid adding more before the plan fits.';
-    } else if ((todaySpoonCount ?? 0) <= 2) {
-      avoidLine = 'Avoid context switching. Keep the day tiny.';
-    } else if (!todayPrimaryTask) {
-      avoidLine = 'Avoid treating every task like a priority.';
-    }
-
-    if (!needsMorningCheckIn && todayTimingGuidance?.avoidLine) {
-      avoidLine = `${avoidLine} ${todayTimingGuidance.avoidLine}`;
     }
 
     return {
       statusLabel: todayEnergyStatus.label,
       statusDetail: todayEnergyStatus.detail,
-      summary,
+      loadLabel,
       recommendation,
-      timingLine: todayTimingGuidance?.primaryLine ?? null,
-      realisticLine,
-      avoidLine,
-      recoveryTimingLine: todayTimingGuidance?.recoveryLine ?? null,
+      reasonLine,
       primaryAction,
-      secondaryActions: [
+      secondaryAction: {
+        label: showTodaySupportSheet ? 'Close review' : 'Review day',
+        onClick: () => setShowTodaySupportSheet((prev) => !prev),
+        disabled: false,
+      },
+      reviewSections: [
+        todayTimingGuidance?.primaryLine ? { key: 'why', title: 'Why this', body: todayTimingGuidance.primaryLine } : null,
+        {
+          key: 'tight',
+          title: 'If today feels tight',
+          body: needsMorningCheckIn
+            ? 'Set energy first, then choose one small task.'
+            : isOverloaded
+              ? 'Keep one anchor task and move or defer the rest.'
+              : tasksVisible > 0
+                ? `Keep it to ${tasksVisible} clear task${tasksVisible === 1 ? '' : 's'} and let the rest wait.`
+                : 'Choose one task first and let the rest wait.',
+        },
+        todayTimingGuidance?.recoveryLine ? { key: 'lower-energy', title: 'Lower-energy option', body: todayTimingGuidance.recoveryLine } : null,
+        todayTimingGuidance?.avoidLine ? { key: 'timing', title: 'Timing note', body: todayTimingGuidance.avoidLine } : null,
+      ].filter(Boolean),
+      supportActions: [
         {
           label: plannerActionBusy === 'day' ? 'Lightening...' : 'Lighten today',
           onClick: handleLightenTodayPlan,
@@ -2501,7 +2670,34 @@ function GardenDashboard() {
     todayEnergyStatus,
     handleSuggestTodayPlan,
     todayTimingGuidance,
+    showTodaySupportSheet,
   ]);
+
+  const todayHeroMetaChips = useMemo(() => {
+    if (needsMorningCheckIn) return ['Check in first'];
+
+    const chips = [];
+    if (typeof todaySpoonCount === 'number') {
+      chips.push(`${todaySpoonCount} spoon${todaySpoonCount === 1 ? '' : 's'}`);
+    }
+
+    const slotKey = getCurrentSlotKey(now);
+    if (weather === 'storm') {
+      chips.push('Protect margin');
+    } else if (slotKey) {
+      const assignment = getAssignmentsForHour(assignments, slotKey)[0] ?? null;
+      const goalId = assignment == null ? null : typeof assignment === 'string' ? assignment : assignment?.goalId ?? assignment?.parentGoalId;
+      chips.push(goalId ? `${slotKey} scheduled` : `${slotKey} free`);
+    }
+
+    if (todayHero.loadLabel) {
+      chips.push(todayHero.loadLabel);
+    }
+
+    return chips
+      .filter((value, index, array) => value && array.indexOf(value) === index)
+      .slice(0, 3);
+  }, [needsMorningCheckIn, todaySpoonCount, now, weather, assignments, todayHero.loadLabel]);
 
   const todayProgressFooter = useMemo(() => {
     const progressLine =
@@ -2526,6 +2722,19 @@ function GardenDashboard() {
       gardenLine: lastGardenImpact?.text ? `Garden update: ${lastGardenImpact.text}` : null,
     };
   }, [continuitySummary, needsMorningCheckIn, isOverloaded, todayPrimaryTask, lastGardenImpact]);
+
+  const todayChiefStart = useMemo(() => {
+    return {
+      metaChips: todayHeroMetaChips,
+      recommendation: todayHero.recommendation,
+      reasonLine: todayHero.reasonLine,
+      dominantAction: todayHero.primaryAction,
+      supportingAction: todayHero.secondaryAction,
+    };
+  }, [
+    todayHero,
+    todayHeroMetaChips,
+  ]);
 
   const handleAssistantProtectFocusBlock = useCallback(async () => {
     if (!today || typeof loadDayPlan !== 'function' || typeof saveDayPlanForDate !== 'function') return false;
@@ -2733,8 +2942,27 @@ function GardenDashboard() {
         pushReward?.({ message: 'Could not turn that note into a plan yet.', tone: 'slate', icon: '!', sound: null });
         return true;
       }
-      addGoal(buildGoalFromDraftPlan(draft));
-      pushReward?.({ message: `Built a draft plan from "${draft.title}".`, tone: 'moss', icon: 'S', durationMs: 2400 });
+      const projectPlan = {
+        title: draft.title,
+        summary: `Drafted from note: ${noteText.slice(0, 120)}`,
+        phases: [
+          {
+            title: 'Phase 1',
+            weekRange: 'Week 1',
+            tasks: (Array.isArray(draft.steps) ? draft.steps : []).map((step) => ({
+              title: step,
+              type: 'task',
+              estimatedHours: 0.5,
+            })),
+            milestone: 'Initial decomposition complete',
+          },
+        ],
+      };
+      setProjectPlannerPrefill({ prefillTitle: draft.title, prefillParentGoalId: '' });
+      setProjectPlannerImportedPlan({ plan: projectPlan, description: noteText, deadline: '' });
+      setProjectPlannerFocusGoalId(null);
+      setShowProjectPlanner(true);
+      pushReward?.({ message: `Drafted "${draft.title}" in Project Planner.`, tone: 'moss', icon: 'S', durationMs: 2400 });
       return true;
     } catch (error) {
       console.warn('Assistant note to plan failed', error);
@@ -2743,7 +2971,7 @@ function GardenDashboard() {
     } finally {
       setAssistantActionBusy(null);
     }
-  }, [compost, addGoal, pushReward]);
+  }, [compost, pushReward]);
 
   const handleAssistantMakeExecutable = useCallback(async (payload = {}) => {
     setAssistantActionBusy('MAKE_EXECUTABLE');
@@ -2797,6 +3025,65 @@ function GardenDashboard() {
         return handleAssistantBreakIntoSteps(payload);
       case 'NOTE_TO_PLAN':
         return handleAssistantNoteToPlan(payload);
+      case 'ADD_MAINTENANCE_BLOCK': {
+        const templateId = payload?.templateId;
+        const template = MAINTENANCE_BLOCK_TEMPLATES.find((item) => item.id === templateId) ?? null;
+        if (!template || typeof addMaintenanceBlock !== 'function') return false;
+        addMaintenanceBlock({ templateId: template.id, ...template });
+        pushReward?.({
+          message: `${template.title} added as recurring support.`,
+          tone: 'moss',
+          icon: '🧩',
+          durationMs: 2200,
+        });
+        return true;
+      }
+      case 'ADD_SOCIAL_CATCHUP_BLOCK': {
+        const template = MAINTENANCE_BLOCK_TEMPLATES.find((item) => item.id === 'social_catchup');
+        if (!template || typeof addMaintenanceBlock !== 'function') return false;
+        addMaintenanceBlock({ templateId: template.id, ...template });
+        pushReward?.({
+          message: 'Social catch-up block added.',
+          tone: 'moss',
+          icon: '💬',
+          durationMs: 2200,
+        });
+        return true;
+      }
+      case 'ENTER_LOW_FRICTION_MODE':
+        setLowFrictionModeEnabled(true);
+        setLowFrictionStayDate(today ?? null);
+        setLowFrictionDismissedDate(null);
+        pushReward?.({ message: 'Low-friction mode is on for today.', tone: 'moss', icon: '✓', durationMs: 2000 });
+        return true;
+      case 'ADD_ROUTINE_STRUCTURE': {
+        const suggestion = payload?.suggestion;
+        if (!suggestion?.actionPayload) return false;
+        const actionPayload = suggestion.actionPayload;
+        if (actionPayload.type === 'maintenance_template') {
+          const template = MAINTENANCE_BLOCK_TEMPLATES.find((item) => item.id === actionPayload.templateId);
+          if (!template || typeof addMaintenanceBlock !== 'function') return false;
+          addMaintenanceBlock({ templateId: template.id, ...template });
+          pushReward?.({ message: `${template.title} added.`, tone: 'moss', icon: '🧩', durationMs: 2200 });
+          return true;
+        }
+        if (actionPayload.type === 'custom_block' && actionPayload.block && typeof addMaintenanceBlock === 'function') {
+          addMaintenanceBlock(actionPayload.block);
+          pushReward?.({ message: 'Support block added.', tone: 'moss', icon: '🧩', durationMs: 2200 });
+          return true;
+        }
+        if (actionPayload.type === 'soften_routine' && actionPayload.routineId && typeof softenRoutineIntensity === 'function') {
+          softenRoutineIntensity(actionPayload.routineId);
+          pushReward?.({ message: 'Routine softened for now.', tone: 'moss', icon: '🍃', durationMs: 2200 });
+          return true;
+        }
+        if (actionPayload.type === 'pause_routine' && actionPayload.routineId && typeof pauseRoutineTemporarily === 'function') {
+          pauseRoutineTemporarily(actionPayload.routineId, actionPayload.days ?? 7);
+          pushReward?.({ message: 'Routine paused for a week.', tone: 'moss', icon: '⏸', durationMs: 2200 });
+          return true;
+        }
+        return false;
+      }
       case 'MAKE_EXECUTABLE':
         return handleAssistantMakeExecutable(payload);
       case 'MINIMUM_VIABLE_DAY':
@@ -2807,6 +3094,21 @@ function GardenDashboard() {
           return true;
         }
         handleHelpMeStart();
+        return true;
+      case 'WAITING_REVIEW':
+        document.getElementById('today-waiting-open-loops')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        return true;
+      case 'REVIEW_LIFE_DOMAINS':
+        document.getElementById('planner-life-domains')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        return true;
+      case 'DEFEND_PROTECTED_TIME':
+        document.getElementById('planner-protected-time')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        pushReward?.({
+          message: 'Keeping protected time. Move work/admin before replacing recovery.',
+          tone: 'moss',
+          icon: '🛡',
+          durationMs: 2200,
+        });
         return true;
       default:
         return false;
@@ -2819,6 +3121,14 @@ function GardenDashboard() {
     handleAssistantPullForward,
     handleAssistantBreakIntoSteps,
     handleAssistantNoteToPlan,
+    addMaintenanceBlock,
+    softenRoutineIntensity,
+    pauseRoutineTemporarily,
+    today,
+    setLowFrictionModeEnabled,
+    setLowFrictionStayDate,
+    setLowFrictionDismissedDate,
+    pushReward,
     handleAssistantMakeExecutable,
     handleAssistantMinimumViableDay,
     todayPrimaryTask,
@@ -2826,6 +3136,137 @@ function GardenDashboard() {
     goals,
     handleHelpMeStart,
   ]);
+
+  const handleRestartResumeAction = useCallback(async (action) => {
+    if (action === 'resume_gently') {
+      handleHelpMeStart();
+      return;
+    }
+    if (action === 'shrink_plan') {
+      await handleAssistantMinimumViableDay({ goalId: todayPrimaryTask?.goalId ?? null });
+      return;
+    }
+    if (action === 'start_focus_5') {
+      if (todayPrimaryTask?.goalId) {
+        handleStartNowStart(
+          { goal: (goals ?? []).find((goal) => goal.id === todayPrimaryTask.goalId), goalId: todayPrimaryTask.goalId, subtaskId: todayPrimaryTask.subtaskId },
+          5
+        );
+      } else {
+        handleHelpMeStart();
+      }
+      return;
+    }
+    if (action === 'move_rest') {
+      await handleLightenTodayPlan();
+    }
+  }, [
+    handleHelpMeStart,
+    handleAssistantMinimumViableDay,
+    todayPrimaryTask,
+    handleStartNowStart,
+    goals,
+    handleLightenTodayPlan,
+  ]);
+
+  const applyTaskStartSuggestion = useCallback((text) => {
+    const suggestionText = String(text ?? '').trim();
+    if (!suggestionText) return;
+    if (todayPrimaryTask?.goalId) {
+      addSubtask(todayPrimaryTask.goalId, { title: suggestionText, estimatedHours: 0.1 });
+    } else {
+      addGoal(buildGoalFromDraftPlan({ title: suggestionText, steps: [suggestionText], estimatedMinutes: 10, type: 'routine' }));
+    }
+    pushReward?.({ message: 'Starter step saved.', tone: 'moss', icon: '✓', durationMs: 1800 });
+  }, [todayPrimaryTask?.goalId, addSubtask, addGoal, pushReward]);
+
+  const setTaskStartStyle = useCallback((style) => {
+    const nextStyle = ['tiny_step', 'script', 'prepare', 'timer_start', 'low_energy', 'body_double'].includes(style) ? style : 'tiny_step';
+    setTaskStartPrefs((prev) => ({
+      ...(prev ?? {}),
+      globalStyle: nextStyle,
+      styleByGoalId: {
+        ...((prev ?? {}).styleByGoalId ?? {}),
+        ...(todayPrimaryTask?.goalId ? { [todayPrimaryTask.goalId]: nextStyle } : {}),
+      },
+    }));
+  }, [todayPrimaryTask?.goalId]);
+
+  const dismissTaskStartHelp = useCallback((dontShowForGoal = false) => {
+    setTaskStartPanelOpen(false);
+    setShowFocusScaffold(false);
+    if (!dontShowForGoal || !todayPrimaryTask?.goalId) return;
+    setTaskStartPrefs((prev) => ({
+      ...(prev ?? {}),
+      dismissedByGoalId: {
+        ...((prev ?? {}).dismissedByGoalId ?? {}),
+        [todayPrimaryTask.goalId]: true,
+      },
+    }));
+  }, [todayPrimaryTask?.goalId]);
+
+  const markTaskStartFeedback = useCallback((helpful) => {
+    setTaskStartPrefs((prev) => ({
+      ...(prev ?? {}),
+      feedback: [
+        ...(((prev ?? {}).feedback ?? []).slice(-40)),
+        {
+          goalId: todayPrimaryTask?.goalId ?? null,
+          helpful: Boolean(helpful),
+          at: new Date().toISOString(),
+        },
+      ],
+    }));
+    pushReward?.({
+      message: helpful ? 'Thanks, I will use this style more.' : 'Got it. I will keep this quieter.',
+      tone: 'moss',
+      icon: '✓',
+      durationMs: 1600,
+    });
+  }, [todayPrimaryTask?.goalId, pushReward]);
+
+  const parkPrimaryTaskAsWaiting = useCallback(() => {
+    if (!todayPrimaryTask?.goalId || typeof setGoalWaitingSupport !== 'function') return;
+    const holdUntil = new Date(Date.now() + (2 * 24 * 60 * 60 * 1000)).toISOString().slice(0, 10);
+    setGoalWaitingSupport(todayPrimaryTask.goalId, {
+      waitingType: WAITING_TYPES.PERSON,
+      waitingOn: 'reply or decision',
+      holdUntil,
+      followUpDate: holdUntil,
+      note: 'Parked from Today assistant surface.',
+    });
+    pushReward?.({ message: 'Parked safely. I will resurface it later.', tone: 'moss', icon: '🕊', durationMs: 2200 });
+  }, [todayPrimaryTask?.goalId, setGoalWaitingSupport, pushReward]);
+
+  const nudgeWaitingLater = useCallback((item, days = 2) => {
+    if (!item?.itemId || typeof setGoalWaitingSupport !== 'function') return;
+    const nextDate = new Date(Date.now() + (Math.max(1, days) * 24 * 60 * 60 * 1000)).toISOString().slice(0, 10);
+    setGoalWaitingSupport(item.itemId, {
+      waitingType: item.waitingType,
+      waitingOn: item.waitingOn,
+      holdUntil: nextDate,
+      followUpDate: nextDate,
+      note: item.note,
+    });
+  }, [setGoalWaitingSupport]);
+
+  const handleOpenFocusScaffold = useCallback(() => {
+    if (!taskStartHelp) return;
+    setTaskStartPanelOpen(true);
+    setShowFocusScaffold(true);
+  }, [taskStartHelp]);
+
+  const handleStartFromScaffold = useCallback((minutes = 3) => {
+    if (todayPrimaryTask?.goalId) {
+      handleStartNowStart(
+        { goal: (goals ?? []).find((goal) => goal.id === todayPrimaryTask.goalId), goalId: todayPrimaryTask.goalId, subtaskId: todayPrimaryTask.subtaskId },
+        minutes
+      );
+    } else {
+      handleHelpMeStart();
+    }
+    setShowFocusScaffold(false);
+  }, [todayPrimaryTask, goals, handleStartNowStart, handleHelpMeStart]);
 
   const todayAssistantSignals = useMemo(() => getAssistantOperatorSignals({
     dayPlan: assignments ?? {},
@@ -2839,40 +3280,153 @@ function GardenDashboard() {
     learnedEnergyProfile,
   }), [assignments, goals, logs, weekAssignments, userSettings, dailyEnergy, compost, events, learnedEnergyProfile]);
 
-  const todayAssistantActions = useMemo(() => {
-    const actions = [];
-    const seen = new Set();
-    const addAction = (id, label, tone = null, payload = {}) => {
-      if (seen.has(id)) return;
-      seen.add(id);
-      actions.push({ id, label, tone, payload });
-    };
+  const maintenanceTemplateSuggestions = useMemo(
+    () => suggestMaintenanceTemplates({ compost, logs, maintenanceBlocks }),
+    [compost, logs, maintenanceBlocks]
+  );
+  const activeProjectCount = useMemo(
+    () => getActiveProjects(goals ?? []).length,
+    [goals]
+  );
+  const socialBacklog = useMemo(
+    () => (Array.isArray(socialFollowUps)
+      ? socialFollowUps.filter((item) => {
+          if (item?.status === 'done') return false;
+          if (!item?.snoozedUntil) return true;
+          const until = new Date(item.snoozedUntil).getTime();
+          return Number.isFinite(until) ? until <= Date.now() : true;
+        })
+      : []),
+    [socialFollowUps]
+  );
+  const waitingItemsDue = useMemo(() => {
+    const fromState = getWaitingItemsDue(waitingSupportState, { today });
+    const known = new Set(fromState.map((item) => `${item.itemType}:${item.itemId}`));
+    const fromGoals = (goals ?? [])
+      .filter((goal) => goal?._waitingSupport && goal?._waitingSupport !== null)
+      .map((goal) => ({
+        itemType: 'goal',
+        itemId: goal.id,
+        waitingType: goal._waitingSupport.waitingType ?? WAITING_TYPES.OTHER,
+        waitingOn: goal._waitingSupport.waitingOn ?? '',
+        holdUntil: goal._waitingSupport.holdUntil ?? null,
+        followUpDate: goal._waitingSupport.followUpDate ?? null,
+        note: goal._waitingSupport.note ?? '',
+        status: 'active',
+      }))
+      .filter((item) => !known.has(`${item.itemType}:${item.itemId}`))
+      .filter((item) => !item.holdUntil || item.holdUntil <= today);
+    return [...fromState, ...fromGoals].slice(0, 8);
+  }, [waitingSupportState, today, goals]);
+  const lifeDomainCards = useMemo(() => {
+    return (lifeDomains ?? []).map((domain) => ({
+      domain,
+      support: buildDomainSupportPlan(domain),
+      health: computeLifeDomainHealth(domain, { maintenanceBlocks, socialFollowUps }),
+    }));
+  }, [lifeDomains, maintenanceBlocks, socialFollowUps]);
+  const protectedTimeSignals = useMemo(
+    () => getProtectedTimeSignals({ weekAssignments, goals }),
+    [weekAssignments, goals]
+  );
+  const plannerReviewCount = useMemo(
+    () => plannerUpcomingDeadlines.length + (plannerLoad.ratio >= 0.85 ? 1 : 0),
+    [plannerUpcomingDeadlines.length, plannerLoad.ratio]
+  );
+  const plannerSystemsCount = useMemo(
+    () => (Array.isArray(routines) ? routines.length : 0) + (Array.isArray(maintenanceBlocks) ? maintenanceBlocks.length : 0) + (Array.isArray(lifeDomains) ? lifeDomains.length : 0),
+    [routines, maintenanceBlocks, lifeDomains]
+  );
+  const routinePatternSuggestions = useMemo(
+    () => buildRoutinePatternSuggestions({
+      socialFollowUps,
+      compost,
+      maintenanceBlocks,
+      needsRescheduling,
+      stagingTaskStatus,
+      weekAssignments,
+      lastSundayRitualDate,
+      routines,
+      recurringSupportState,
+    }),
+    [socialFollowUps, compost, maintenanceBlocks, needsRescheduling, stagingTaskStatus, weekAssignments, lastSundayRitualDate, routines, recurringSupportState]
+  );
+  const todayContextCounters = useMemo(() => ([
+    {
+      key: 'inbox',
+      label: 'Inbox',
+      count: Array.isArray(compost) ? compost.length : 0,
+      onClick: () => openModal('compost'),
+    },
+    {
+      key: 'waiting',
+      label: 'Waiting',
+      count: waitingItemsDue.length,
+      onClick: () => setShowTodaySupportSheet(true),
+    },
+    {
+      key: 'routines',
+      label: 'Routines',
+      count: Array.isArray(routines) ? routines.length : 0,
+      onClick: () => setShowTodaySupportSheet(true),
+    },
+    {
+      key: 'projects',
+      label: 'Projects',
+      count: activeProjectCount,
+      onClick: () => setShowProjectPlanner(true),
+    },
+  ]), [compost, waitingItemsDue.length, routines, activeProjectCount, openModal]);
+  const restartResume = useMemo(
+    () => buildRestartResumeModel({
+      today,
+      assignments,
+      logs,
+      goals,
+      compost,
+      needsRescheduling,
+      todayPrimaryTask,
+      dailyEnergy,
+      now: new Date(),
+    }),
+    [today, assignments, logs, goals, compost, needsRescheduling, todayPrimaryTask, dailyEnergy]
+  );
+  const interruptionSummary = useMemo(
+    () => buildInterruptionResumeSummary(interruptionMemory, (goalId) => (goals ?? []).find((g) => g.id === goalId)?.title ?? null),
+    [interruptionMemory, goals]
+  );
+  const lowFrictionTriggered = useMemo(() => {
+    const lowEnergy = typeof dailyEnergy === 'number' && dailyEnergy <= 4;
+    const repeatedPostpone = Array.isArray(needsRescheduling) && needsRescheduling.length >= 3;
+    const drifted = Boolean(restartResume?.relevant);
+    const overloaded = isOverloaded;
+    const backlogHeavy = (compost?.length ?? 0) >= 8;
+    return lowEnergy || repeatedPostpone || drifted || overloaded || backlogHeavy;
+  }, [dailyEnergy, needsRescheduling, restartResume?.relevant, isOverloaded, compost?.length]);
+  const lowFrictionModeActive = useMemo(() => {
+    if (!lowFrictionModeEnabled) return false;
+    if (lowFrictionStayDate && today && lowFrictionStayDate !== today) return false;
+    return true;
+  }, [lowFrictionModeEnabled, lowFrictionStayDate, today]);
+  const shouldSuggestLowFriction = useMemo(() => {
+    if (!today) return false;
+    if (!lowFrictionTriggered) return false;
+    if (lowFrictionModeActive) return false;
+    return lowFrictionDismissedDate !== today;
+  }, [today, lowFrictionTriggered, lowFrictionModeActive, lowFrictionDismissedDate]);
 
-    if (isOverloaded) {
-      addAction('MINIMUM_VIABLE_DAY', 'Minimum viable day', 'warn', { goalId: todayPrimaryTask?.goalId ?? null });
-      addAction('LIGHTEN_TODAY', 'Lighten today', 'primary');
-      addAction('MOVE_LOW_ENERGY_LATER', 'Move low-energy tasks later');
-    } else {
-      addAction('PROTECT_FOCUS_BLOCK', 'Protect focus block', 'primary');
-      if (todayPrimaryTask?.goalId) addAction('PULL_FORWARD_TASK', 'Pull one task forward', null, { goalId: todayPrimaryTask.goalId });
-    }
-
-    if (weekCapacity?.overload || todayAssistantSignals.some((signal) => signal.actionId === 'REBALANCE_WEEK')) {
-      addAction('REBALANCE_WEEK', 'Rebalance this week');
-    }
-    if ((needsAttention?.noNextStep?.length ?? 0) > 0) {
-      addAction('BREAK_NEXT_3_STEPS', 'Break blocked goal into 3 steps', null, { goalId: needsAttention.noNextStep[0]?.goal?.id ?? null });
-    }
-    if ((compost?.length ?? 0) > 0) {
-      addAction('NOTE_TO_PLAN', 'Turn note into plan', null, { title: compost[0]?.text ?? '' });
-    }
-    if (todayPrimaryTask?.title) {
-      addAction('MAKE_EXECUTABLE', 'Make task executable', null, { title: todayPrimaryTask.title, goalId: todayPrimaryTask.goalId ?? null });
-      addAction('START_FOCUS_5', 'Start 5-min focus');
-    }
-
-    return actions.slice(0, 6);
-  }, [isOverloaded, todayPrimaryTask, weekCapacity, todayAssistantSignals, needsAttention, compost]);
+  const todayAssistantActions = useMemo(() => buildTodayAssistantActions({
+    isOverloaded,
+    todayPrimaryTask,
+    needsAttention,
+    compost,
+    maintenanceSuggestion: maintenanceTemplateSuggestions[0] ?? null,
+    socialBacklogCount: socialBacklog.length,
+    routinePatternSuggestions,
+    waitingCount: waitingItemsDue.length,
+    lifeDomainCount: lifeDomainCards.length,
+    protectedTimeRisk: protectedTimeSignals.creepRisk,
+  }), [isOverloaded, todayPrimaryTask, needsAttention, compost, maintenanceTemplateSuggestions, socialBacklog.length, routinePatternSuggestions, waitingItemsDue.length, lifeDomainCards.length, protectedTimeSignals.creepRisk]);
 
   const LAST_OPEN_DATE_KEY = 'kaizen_last_open_date';
   const GENTLE_RESTART_DISMISSED_KEY = 'kaizen_gentle_restart_dismissed_date';
@@ -3140,6 +3694,14 @@ function GardenDashboard() {
         date: new Date(),
         minutes: timeSpentMinutes,
       });
+      setInterruptionMemory((prev) => recordInterruptionSnapshot(prev, {
+        lastTaskTitle: goalTitle,
+        lastGoalId: taskId ?? null,
+        lastSubtaskId: activeSession?.subtaskId ?? null,
+        lastFocusState: 'complete',
+        lastSessionMinutes: timeSpentMinutes,
+        lastContextNote: activeSession?.subtaskId ? 'Completed the latest focus step.' : 'Completed a focus block.',
+      }));
       if (soilNutrients > 0 && consumeSoilNutrients(1)) {
         earnEmbers(2);
         pushReward({ message: 'Compost paid off.', tone: 'moss', icon: '♻️✨', durationMs: 2800, variableBonus: { embers: 2 } });
@@ -3243,6 +3805,14 @@ function GardenDashboard() {
         date: new Date(),
         minutes: timeSpentMinutes,
       });
+      setInterruptionMemory((prev) => recordInterruptionSnapshot(prev, {
+        lastTaskTitle: goalTitle,
+        lastGoalId: taskId ?? null,
+        lastSubtaskId: activeSession?.subtaskId ?? null,
+        lastFocusState: 'complete',
+        lastSessionMinutes: timeSpentMinutes,
+        lastContextNote: 'Finished a focus block and chained to next step.',
+      }));
       if (soilNutrients > 0 && consumeSoilNutrients(1)) {
         earnEmbers(2);
         pushReward({ message: 'Compost paid off.', tone: 'moss', icon: '♻️✨', durationMs: 2800, variableBonus: { embers: 2 } });
@@ -3339,6 +3909,15 @@ function GardenDashboard() {
       date: new Date(),
       minutes: durationMinutes,
     });
+    setInterruptionMemory((prev) => recordInterruptionSnapshot(prev, {
+      lastTaskTitle: goalTitle,
+      lastGoalId: taskId ?? null,
+      lastSubtaskId: completedTask?.subtaskId ?? log?.subtaskId ?? null,
+      lastFocusState: 'complete',
+      lastSessionMinutes: durationMinutes,
+      lastContextNote: log?.note ? `Last note: ${String(log.note).slice(0, 180)}` : 'Focus session logged.',
+      lastNote: log?.note ? String(log.note).slice(0, 400) : (prev?.lastNote ?? null),
+    }));
     if (soilNutrients > 0 && consumeSoilNutrients(1)) {
       earnEmbers(2);
       pushReward({ message: 'Compost paid off.', tone: 'moss', icon: '♻️✨', durationMs: 2800, variableBonus: { embers: 2 } });
@@ -3464,6 +4043,15 @@ function GardenDashboard() {
         planned: Boolean(activeSession.planContext),
         spoonCount: todaySpoonCount ?? dailySpoonCount,
       });
+      setInterruptionMemory((prev) => recordInterruptionSnapshot(prev, {
+        lastIntent: `Focus on ${activeSession.title}`,
+        lastTaskTitle: activeSession.title,
+        lastGoalId: activeSession.id ?? null,
+        lastSubtaskId: activeSession.subtaskId ?? null,
+        lastFocusState: 'active',
+        lastSessionStartedAt: new Date().toISOString(),
+        lastContextNote: activeSession?.planContext?.slotKey ? `Planned slot ${activeSession.planContext.slotKey}` : null,
+      }));
     }
   }, [pushReward, activeSession, recordFocusBehavior, todaySpoonCount, dailySpoonCount]);
 
@@ -3472,6 +4060,15 @@ function GardenDashboard() {
       const taskTitle = activeSession?.title;
       const planContext = activeSession?.planContext;
       const goalId = activeSession?.id;
+      if (activeSession && outcome?.action === 'reschedule') {
+        setInterruptionMemory((prev) => recordInterruptionSnapshot(prev, {
+          lastTaskTitle: activeSession.title,
+          lastGoalId: activeSession.id ?? null,
+          lastSubtaskId: activeSession.subtaskId ?? null,
+          lastFocusState: 'paused',
+          lastContextNote: 'Paused and moved to later today.',
+        }));
+      }
       if (activeSession && !outcome?.action) {
         recordFocusBehavior('abandon', {
           goalId: activeSession.id,
@@ -3480,6 +4077,15 @@ function GardenDashboard() {
           planned: Boolean(activeSession.planContext),
           spoonCount: todaySpoonCount ?? dailySpoonCount,
         });
+        setInterruptionMemory((prev) => recordInterruptionSnapshot(prev, {
+          lastTaskTitle: activeSession.title,
+          lastGoalId: activeSession.id ?? null,
+          lastSubtaskId: activeSession.subtaskId ?? null,
+          lastFocusState: 'abandoned',
+          lastContextNote: outcome?.action === 'reschedule'
+            ? 'Paused and rescheduled.'
+            : 'Paused before completion.',
+        }));
       }
       setActiveSession(null);
 
@@ -3523,27 +4129,31 @@ function GardenDashboard() {
     const completedGoal = completedTask?.id ? goals?.find((g) => g.id === completedTask.id) : null;
     const vineOptions = completedGoal?.subtasks ?? [];
     return (
-      <TeaCeremony
-        task={completedTask}
-        subtasks={vineOptions}
-        onComplete={handleTeaComplete}
-      />
+      <Suspense fallback={<LoadingSurface label="Preparing tea ceremony..." fullscreen />}>
+        <TeaCeremony
+          task={completedTask}
+          subtasks={vineOptions}
+          onComplete={handleTeaComplete}
+        />
+      </Suspense>
     );
   }
 
   if (activeSession) {
     const durationSeconds = (activeSession.sessionDurationMinutes ?? 25) * 60;
     return (
-      <FocusSession
-        key={`focus-${activeSession.id ?? ''}-${activeSession.subtaskId ?? 'g'}`}
-        activeTask={activeSession}
-        durationSeconds={durationSeconds}
-        goals={goals}
-        onComplete={handleSessionComplete}
-        onExit={handleFocusExit}
-        onStart={handleFocusSessionStart}
-        onStartNextStep={handleStartNextStep}
-      />
+      <Suspense fallback={<LoadingSurface label="Preparing focus session..." fullscreen />}>
+        <FocusSession
+          key={`focus-${activeSession.id ?? ''}-${activeSession.subtaskId ?? 'g'}`}
+          activeTask={activeSession}
+          durationSeconds={durationSeconds}
+          goals={goals}
+          onComplete={handleSessionComplete}
+          onExit={handleFocusExit}
+          onStart={handleFocusSessionStart}
+          onStartNextStep={handleStartNextStep}
+        />
+      </Suspense>
     );
   }
 
@@ -3552,7 +4162,9 @@ function GardenDashboard() {
       <AnimatePresence>
         {showSpiritOrigins && (
           <div className="fixed inset-0 z-50 overflow-auto">
-            <SpiritOrigins onComplete={handleSpiritBorn} onSkip={handleSpiritSkip} />
+            <Suspense fallback={<LoadingSurface label="Opening spirit studio..." fullscreen />}>
+              <SpiritOrigins onComplete={handleSpiritBorn} onSkip={handleSpiritSkip} />
+            </Suspense>
           </div>
         )}
       </AnimatePresence>
@@ -3574,46 +4186,48 @@ function GardenDashboard() {
 
       <AnimatePresence>
         {showMorningCheckInModal && (
-          <MorningCheckIn
-            goals={goals}
-            logMetric={logMetric}
-            yesterdayPlan={yesterdayPlan}
-            initialEnergyLevel={todaySpoonCount ?? dailyEnergy ?? 5}
-            mode={needsMorningCheckIn ? 'checkin' : 'adjust'}
-            onDismiss={() => setShowMorningCheckInModal(false)}
-            onComplete={(modifier, energyLevel) => {
-              const level = energyLevel ?? modifier ?? 3;
-              completeMorningCheckIn(level);
-              recordCheckInBehavior({ spoonCount: level, energyLevel: dailyEnergy, date: new Date() });
-              if (typeof compostStaleSeeds === 'function') compostStaleSeeds();
-              setShowMorningCheckInModal(false);
-              generateMorningBriefing(goals, today).then((items) => {
-                if (Array.isArray(items) && items.length > 0) setMorningBriefing(items);
-              });
-              if (needsMorningCheckIn) {
-                if (tourStep === 1) setTourStep(2);
-                requestSpiritWisdom(false);
-                const hasAnyAssignment = HOURS.some((h) => getAssignmentsForHour(assignments, h).length > 0);
-                let planSummary = null;
-                if (!hasAnyAssignment) {
-                  const eventsForPlan = Array.isArray(weeklyEvents) ? weeklyEvents : [];
-                  const slotCount = level >= 1 && level <= 10 ? level : (level >= 1 && level <= 5 ? (level <= 2 ? 2 + (level - 1) * 2 : level === 3 ? 6 : level === 4 ? 8 : 10) : 6);
-                  const startHour = hourFromTimeStr(userSettings?.dayStart, 8);
-                  const endHour = hourFromTimeStr(userSettings?.dayEnd, 22);
-                  const plan = generateDailyPlan(goals, slotCount, eventsForPlan, { stormBufferMinutes: 30, startHour, endHour, learnedEnergyProfile });
-                  setAssignments(plan);
-                  planSummary = { slotCount: Object.keys(plan).length };
+          <Suspense fallback={<LoadingSurface label="Loading morning check-in..." fullscreen />}>
+            <MorningCheckIn
+              goals={goals}
+              logMetric={logMetric}
+              yesterdayPlan={yesterdayPlan}
+              initialEnergyLevel={todaySpoonCount ?? dailyEnergy ?? 5}
+              mode={needsMorningCheckIn ? 'checkin' : 'adjust'}
+              onDismiss={() => setShowMorningCheckInModal(false)}
+              onComplete={(modifier, energyLevel) => {
+                const level = energyLevel ?? modifier ?? 3;
+                completeMorningCheckIn(level);
+                recordCheckInBehavior({ spoonCount: level, energyLevel: dailyEnergy, date: new Date() });
+                if (typeof compostStaleSeeds === 'function') compostStaleSeeds();
+                setShowMorningCheckInModal(false);
+                generateMorningBriefing(goals, today).then((items) => {
+                  if (Array.isArray(items) && items.length > 0) setMorningBriefing(items);
+                });
+                if (needsMorningCheckIn) {
+                  if (tourStep === 1) setTourStep(2);
+                  requestSpiritWisdom(false);
+                  const hasAnyAssignment = HOURS.some((h) => getAssignmentsForHour(assignments, h).length > 0);
+                  let planSummary = null;
+                  if (!hasAnyAssignment) {
+                    const eventsForPlan = Array.isArray(weeklyEvents) ? weeklyEvents : [];
+                    const slotCount = level >= 1 && level <= 10 ? level : (level >= 1 && level <= 5 ? (level <= 2 ? 2 + (level - 1) * 2 : level === 3 ? 6 : level === 4 ? 8 : 10) : 6);
+                    const startHour = hourFromTimeStr(userSettings?.dayStart, 8);
+                    const endHour = hourFromTimeStr(userSettings?.dayEnd, 22);
+                    const plan = generateDailyPlan(goals, slotCount, eventsForPlan, { stormBufferMinutes: 30, startHour, endHour, learnedEnergyProfile });
+                    setAssignments(plan);
+                    planSummary = { slotCount: Object.keys(plan).length };
+                  }
+                  const reaction = getPlanReaction(level, planSummary);
+                  setCheckInReactionMessage(reaction);
+                  setShowSpiritDialogue(true);
+                  setTimeout(() => {
+                    setCheckInReactionMessage(null);
+                    setShowSpiritDialogue(false);
+                  }, 6000);
                 }
-                const reaction = getPlanReaction(level, planSummary);
-                setCheckInReactionMessage(reaction);
-                setShowSpiritDialogue(true);
-                setTimeout(() => {
-                  setCheckInReactionMessage(null);
-                  setShowSpiritDialogue(false);
-                }, 6000);
-              }
-            }}
-          />
+              }}
+            />
+          </Suspense>
         )}
       </AnimatePresence>
       <EveningWindDown
@@ -3634,21 +4248,13 @@ function GardenDashboard() {
           isDark ? 'border-slate-700 bg-slate-800/80' : `border-stone-200 ${skyBg}`
         }`}
       >
-        <div className="max-w-4xl mx-auto px-4 flex items-center justify-between gap-3 h-12">
+        <div className="max-w-6xl mx-auto px-4 py-3">
+          <div className="grid items-center gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,34rem)_auto]">
           {/* Left: Date, Weather, Sync status */}
           <div className={`flex flex-wrap items-center gap-2 font-sans text-sm min-w-0 ${isDark ? 'text-slate-300' : 'text-stone-600'}`}>
             <p className={`font-serif text-xl md:text-2xl mr-1 ${isDark ? 'text-slate-100' : 'text-stone-900'}`}>
               {new Date(today + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}
             </p>
-            <button
-              type="button"
-              onClick={handleOpenDailyPlanRitual}
-              className={`py-1.5 px-3 rounded-lg font-sans text-xs font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-moss-500/40 ${
-                isDark ? 'bg-moss-800/60 text-moss-200 hover:bg-moss-700/60' : 'bg-moss-100 text-moss-800 hover:bg-moss-200'
-              }`}
-            >
-              Plan today
-            </button>
             <div className="flex items-center gap-1.5">
               <WeatherIcon />
               <span>{forecast}</span>
@@ -3825,8 +4431,43 @@ function GardenDashboard() {
             </div>
           </div>
 
+          <div className="min-w-0">
+            <button
+              type="button"
+              onClick={() => requestOmniAddOpen()}
+              className={`group w-full rounded-[26px] border px-4 py-3.5 text-left shadow-[0_18px_48px_-28px_rgba(15,23,42,0.28)] transition focus:outline-none focus:ring-2 focus:ring-moss-500/40 ${
+                isDark
+                  ? 'border-slate-600/50 bg-gradient-to-r from-slate-900/70 via-slate-900/55 to-slate-900/70 hover:from-slate-900/85 hover:via-slate-900/70 hover:to-slate-900/85'
+                  : 'border-stone-200/80 bg-gradient-to-r from-white via-stone-50/92 to-white hover:from-white hover:via-white hover:to-white'
+              }`}
+              aria-label="Open capture"
+            >
+              <div className="flex items-center gap-3">
+                <span
+                  className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-lg shadow-inner ${
+                    isDark ? 'bg-moss-900/55 text-moss-200 ring-1 ring-moss-700/40' : 'bg-moss-100 text-moss-800 ring-1 ring-moss-200'
+                  }`}
+                  aria-hidden
+                >
+                  +
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className={`font-sans text-sm font-semibold tracking-[0.01em] ${isDark ? 'text-stone-100' : 'text-stone-900'}`}>
+                    Type, paste, or share anything
+                  </p>
+                  <p className="mt-0.5 font-sans text-xs text-stone-500 dark:text-stone-400">
+                    One quick guess, one confirmation.
+                  </p>
+                </div>
+                <span className="hidden shrink-0 rounded-full border border-stone-200/70 bg-white/70 px-2.5 py-1 font-sans text-[11px] font-medium text-stone-500 dark:border-slate-600 dark:bg-slate-800/60 dark:text-stone-400 md:inline">
+                  Ctrl/Cmd+Shift+O
+                </span>
+              </div>
+            </button>
+          </div>
+
           {/* Right: top-nav toolbelt (quick actions). */}
-          <div className="flex items-center justify-end gap-2 h-12 shrink-0">
+          <div className="flex items-center justify-end gap-2 shrink-0">
             <button
               id="mochi-chat-btn"
               type="button"
@@ -3897,6 +4538,7 @@ function GardenDashboard() {
             </div>
           </div>
         </div>
+        </div>
       </header>
       )}
 
@@ -3928,7 +4570,7 @@ function GardenDashboard() {
                 onClick={() => setActiveTab('today')}
                 className="shrink-0 px-3 py-1.5 rounded-lg font-sans text-xs font-medium border border-moss-300 text-moss-700 dark:text-moss-300 dark:border-moss-600 hover:bg-moss-50 dark:hover:bg-moss-900/30 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
               >
-                Open Now
+                Open Today
               </button>
             )}
             <button
@@ -3965,13 +4607,103 @@ function GardenDashboard() {
         </div>
       ) : activeTab === 'settings' ? (
         <main className="flex-1 w-full min-w-0 px-3 sm:px-4 py-6 sm:py-8 max-w-2xl mx-auto relative pb-28 sm:pb-24 pt-14 safe-area-pb">
-          <SettingsView onReplayTour={() => { setShowTour(true); setActiveTab('today'); }} />
+          <Suspense fallback={<LoadingSurface label="Loading settings..." />}>
+            <SettingsView onReplayTour={() => { setShowTour(true); setActiveTab('today'); }} />
+          </Suspense>
         </main>
       ) : (
       <main className={`flex-1 w-full min-w-0 px-3 sm:px-4 py-6 sm:py-8 ${activeTab === 'planner' ? 'max-w-[1400px]' : 'max-w-5xl'} mx-auto relative pb-28 sm:pb-24 safe-area-pb`}>
         {activeTab === 'today' && (
           <>
-            <div className="flex flex-col gap-5 h-full">
+            {shouldSuggestLowFriction && (
+              <section className={`mb-4 rounded-2xl border px-4 py-4 ${isDark ? 'border-slate-600/50 bg-slate-800/70' : 'border-stone-200 bg-white/90'}`}>
+                <p className="font-sans text-xs uppercase tracking-wide text-stone-500">Suggestion</p>
+                <p className="mt-1 font-sans text-sm text-stone-700 dark:text-stone-200">
+                  You look overloaded. Low-friction mode can reduce choices and keep one clear next move.
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => { setLowFrictionModeEnabled(true); setLowFrictionStayDate(today ?? null); setLowFrictionDismissedDate(null); }}
+                    className="rounded-lg bg-moss-600 px-3 py-2 font-sans text-sm font-medium text-white hover:bg-moss-700"
+                  >
+                    Turn on low-friction mode
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLowFrictionDismissedDate(today ?? null)}
+                    className="rounded-lg border border-stone-200 px-3 py-2 font-sans text-sm text-stone-600 hover:bg-stone-100 dark:border-slate-600 dark:text-stone-300 dark:hover:bg-slate-700/60"
+                  >
+                    Dismiss for now
+                  </button>
+                </div>
+              </section>
+            )}
+
+            {lowFrictionModeActive && (
+              <section className={`mb-5 rounded-3xl border px-5 py-5 ${isDark ? 'border-slate-600/50 bg-slate-800/70' : 'border-stone-200/80 bg-white/95'}`}>
+                <p className="font-sans text-xs uppercase tracking-[0.14em] text-stone-500">Don’t-make-me-think mode</p>
+                <h1 className="mt-2 font-serif text-2xl text-stone-900 dark:text-stone-100">Here’s the next thing.</h1>
+                <p className="mt-1 font-sans text-sm text-stone-600 dark:text-stone-300">
+                  One task, one support move, one low-pressure option.
+                </p>
+
+                <div className={`mt-4 rounded-2xl border px-4 py-4 ${isDark ? 'border-slate-600/50 bg-slate-900/30' : 'border-stone-200 bg-stone-50/80'}`}>
+                  <p className="font-sans text-[11px] uppercase tracking-wide text-stone-500">Main task</p>
+                  <p className="mt-1 font-sans text-base font-semibold text-stone-900 dark:text-stone-100">
+                    {todayMustDoLane?.primary?.title ?? 'Pick one small task'}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (todayMustDoLane?.primary?.onClick) todayMustDoLane.primary.onClick();
+                      else handleHelpMeStart();
+                    }}
+                    className="mt-3 rounded-xl bg-moss-600 px-3 py-2 font-sans text-sm font-medium text-white hover:bg-moss-700"
+                  >
+                    {todayMustDoLane?.primary?.ctaLabel ?? 'Start this'}
+                  </button>
+                </div>
+
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    onClick={() => handleRestartResumeAction('shrink_plan')}
+                    className="rounded-xl border border-stone-200 px-3 py-2 text-left font-sans text-sm text-stone-700 hover:bg-stone-100 dark:border-slate-600 dark:text-stone-200 dark:hover:bg-slate-700/60"
+                  >
+                    <span className="block text-[11px] uppercase tracking-wide text-stone-500">Support action</span>
+                    Shrink the plan
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleRestartResumeAction('start_focus_5')}
+                    className="rounded-xl border border-stone-200 px-3 py-2 text-left font-sans text-sm text-stone-700 hover:bg-stone-100 dark:border-slate-600 dark:text-stone-200 dark:hover:bg-slate-700/60"
+                  >
+                    <span className="block text-[11px] uppercase tracking-wide text-stone-500">Low-pressure alternative</span>
+                    3-5 minute version
+                  </button>
+                </div>
+
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => { setLowFrictionModeEnabled(false); setLowFrictionStayDate(null); }}
+                    className="rounded-lg border border-stone-200 px-3 py-1.5 font-sans text-xs text-stone-600 hover:bg-stone-100 dark:border-slate-600 dark:text-stone-300 dark:hover:bg-slate-700/60"
+                  >
+                    Exit mode
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setLowFrictionModeEnabled(true); setLowFrictionStayDate(today ?? null); }}
+                    className="rounded-lg border border-stone-200 px-3 py-1.5 font-sans text-xs text-stone-600 hover:bg-stone-100 dark:border-slate-600 dark:text-stone-300 dark:hover:bg-slate-700/60"
+                  >
+                    Stay in this mode for today
+                  </button>
+                </div>
+              </section>
+            )}
+
+            {!lowFrictionModeActive && <div className="flex flex-col gap-5 h-full">
               <TourHighlight step={1} tooltip="Start here. In one glance you should know what today can hold and what to do first.">
                 <section
                   id="guide-morning-checkin"
@@ -3984,20 +4716,26 @@ function GardenDashboard() {
                   <div className="flex flex-col gap-4">
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <p className="font-sans text-xs font-semibold uppercase tracking-[0.18em] text-stone-400 dark:text-stone-500">Today briefing</p>
-                        <h1 className="mt-2 font-serif text-2xl sm:text-3xl text-stone-900 dark:text-stone-100">
-                          {todayHero.statusLabel}
-                        </h1>
-                        {todayHero.statusDetail && (
-                          <p className="mt-1 font-sans text-sm text-stone-500 dark:text-stone-400">{todayHero.statusDetail}</p>
-                        )}
-                      </div>
-                      <div className={`rounded-2xl px-3 py-2 text-xs font-medium ${
-                        isOverloaded
-                          ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200'
-                          : 'bg-moss-100 text-moss-800 dark:bg-moss-900/30 dark:text-moss-200'
-                      }`}>
-                        {todayPathSummary.lead}
+                        <p className="font-sans text-xs font-semibold uppercase tracking-[0.18em] text-stone-400 dark:text-stone-500">Best next move</p>
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          {todayChiefStart.metaChips.map((chip) => {
+                            const isAlertChip = chip === 'Load needs relief' || chip === 'Check in first' || chip === 'Protect margin';
+                            return (
+                              <span
+                                key={chip}
+                                className={`rounded-full px-3 py-1.5 font-sans text-xs font-medium ${
+                                  isAlertChip
+                                    ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200'
+                                    : isDark
+                                      ? 'bg-slate-800/80 text-stone-200'
+                                      : 'bg-stone-100 text-stone-700'
+                                }`}
+                              >
+                                {chip}
+                              </span>
+                            );
+                          })}
+                        </div>
                       </div>
                     </div>
 
@@ -4006,67 +4744,148 @@ function GardenDashboard() {
                         ? 'border-slate-600/50 bg-slate-900/40'
                         : 'border-stone-200 bg-stone-50/80'
                     }`}>
-                      <p className="font-sans text-base sm:text-lg font-semibold text-stone-900 dark:text-stone-100">{todayHero.summary}</p>
-                      <p className="mt-1 font-sans text-sm text-stone-600 dark:text-stone-300">{todayHero.recommendation}</p>
-                      {todayHero.timingLine && (
-                        <p className="mt-2 font-sans text-sm text-moss-700 dark:text-moss-300">{todayHero.timingLine}</p>
-                      )}
-                      <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                        <div className={`rounded-xl px-3 py-2 ${isDark ? 'bg-slate-800/80' : 'bg-white/90'}`}>
-                          <p className="font-sans text-[11px] font-semibold uppercase tracking-wide text-stone-400 dark:text-stone-500">Realistic</p>
-                          <p className="mt-1 font-sans text-sm text-stone-700 dark:text-stone-200">{todayHero.realisticLine}</p>
-                        </div>
-                        <div className={`rounded-xl px-3 py-2 ${isDark ? 'bg-slate-800/80' : 'bg-white/90'}`}>
-                          <p className="font-sans text-[11px] font-semibold uppercase tracking-wide text-stone-400 dark:text-stone-500">Avoid</p>
-                          <p className="mt-1 font-sans text-sm text-stone-700 dark:text-stone-200">{todayHero.avoidLine}</p>
-                        </div>
-                      </div>
-                      {todayHero.recoveryTimingLine && (
-                        <div className={`mt-2 rounded-xl px-3 py-2 ${isDark ? 'bg-slate-800/80' : 'bg-white/90'}`}>
-                          <p className="font-sans text-[11px] font-semibold uppercase tracking-wide text-stone-400 dark:text-stone-500">Recovery move</p>
-                          <p className="mt-1 font-sans text-sm text-stone-700 dark:text-stone-200">{todayHero.recoveryTimingLine}</p>
-                        </div>
+                      <p className="font-sans text-base sm:text-lg font-semibold text-stone-900 dark:text-stone-100">{todayChiefStart.recommendation}</p>
+                      {todayChiefStart.reasonLine && (
+                        <p className="mt-2 font-sans text-sm text-stone-600 dark:text-stone-300">{todayChiefStart.reasonLine}</p>
                       )}
                     </div>
 
                     <div className="flex flex-col sm:flex-row gap-3">
                       <button
                         type="button"
-                        onClick={todayHero.primaryAction.onClick}
-                        disabled={todayHero.primaryAction.disabled}
+                        onClick={todayChiefStart.dominantAction.onClick}
+                        disabled={todayChiefStart.dominantAction.disabled}
                         className="flex-1 rounded-2xl bg-moss-600 px-4 py-3 font-sans text-sm font-semibold text-white shadow-sm transition hover:bg-moss-700 focus:outline-none focus:ring-2 focus:ring-moss-500/40 disabled:cursor-not-allowed disabled:opacity-70"
                       >
-                        {todayHero.primaryAction.label}
+                        {todayChiefStart.dominantAction.label}
                       </button>
-                      {todayHero.secondaryActions.map((action) => (
-                        <button
-                          key={action.label}
-                          type="button"
-                          onClick={action.onClick}
-                          disabled={action.disabled}
-                          className={`rounded-2xl px-4 py-3 font-sans text-sm font-medium transition focus:outline-none focus:ring-2 focus:ring-moss-500/40 disabled:cursor-not-allowed disabled:opacity-70 ${
-                            isDark
-                              ? 'border border-slate-600/60 bg-slate-800/60 text-stone-200 hover:bg-slate-700/70'
-                              : 'border border-stone-200 bg-stone-50 text-stone-700 hover:bg-stone-100'
-                          }`}
-                        >
-                          {action.label}
-                        </button>
-                      ))}
+                      <button
+                        type="button"
+                        onClick={todayChiefStart.supportingAction.onClick}
+                        disabled={todayChiefStart.supportingAction.disabled}
+                        className={`rounded-2xl px-4 py-3 font-sans text-sm font-medium transition focus:outline-none focus:ring-2 focus:ring-moss-500/40 disabled:cursor-not-allowed disabled:opacity-70 ${
+                          isDark
+                            ? 'border border-slate-600/60 bg-slate-800/60 text-stone-200 hover:bg-slate-700/70'
+                            : 'border border-stone-200 bg-stone-50 text-stone-700 hover:bg-stone-100'
+                        }`}
+                      >
+                        {todayChiefStart.supportingAction.label}
+                      </button>
                     </div>
                   </div>
                 </section>
               </TourHighlight>
 
+              <section className={`rounded-3xl border px-5 py-4 ${isDark ? 'border-slate-600/50 bg-slate-800/60' : 'border-stone-200/80 bg-white/88'}`}>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="font-sans text-xs font-semibold uppercase tracking-[0.16em] text-stone-400 dark:text-stone-500">Context rail</p>
+                    <p className="mt-1 font-sans text-sm text-stone-600 dark:text-stone-300">Keep the day clean. Open extra context only when you need it.</p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {todayContextCounters.map((item) => (
+                      <button
+                        key={item.key}
+                        type="button"
+                        onClick={item.onClick}
+                        className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 font-sans text-xs font-medium transition focus:outline-none focus:ring-2 focus:ring-moss-500/40 ${
+                          isDark
+                            ? 'border-slate-600/60 bg-slate-900/35 text-stone-200 hover:bg-slate-800/80'
+                            : 'border-stone-200 bg-stone-50 text-stone-700 hover:bg-stone-100'
+                        }`}
+                      >
+                        <span>{item.label}</span>
+                        <span className={`inline-flex min-w-6 items-center justify-center rounded-full px-1.5 py-0.5 text-[11px] ${
+                          isDark ? 'bg-slate-700 text-stone-100' : 'bg-white text-stone-600'
+                        }`}>
+                          {item.count}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </section>
+
+              {showTodaySupportSheet && (
+                <>
+                <button
+                  type="button"
+                  aria-label="Close support sheet"
+                  className="fixed inset-0 z-[70] bg-stone-950/35 backdrop-blur-[3px]"
+                  onClick={() => setShowTodaySupportSheet(false)}
+                />
+                <div
+                  className={`fixed inset-x-0 bottom-0 z-[71] max-h-[84vh] overflow-y-auto rounded-t-[30px] border shadow-[0_24px_80px_-28px_rgba(15,23,42,0.55)] md:inset-y-6 md:right-6 md:left-auto md:w-[min(31rem,calc(100vw-3rem))] md:rounded-[30px] ${
+                    isDark
+                      ? 'border-slate-600/50 bg-gradient-to-b from-slate-900/98 via-slate-900/96 to-slate-950/98'
+                      : 'border-stone-200/80 bg-gradient-to-b from-white via-stone-50/96 to-stone-100/96'
+                  }`}
+                  role="dialog"
+                  aria-modal="true"
+                  aria-label="Today support"
+                >
+                <div className={`sticky top-0 z-10 mb-4 border-b px-4 pb-4 pt-3 backdrop-blur-xl ${
+                  isDark ? 'border-slate-700/70 bg-slate-950/75' : 'border-stone-200/80 bg-stone-50/88'
+                }`}>
+                  <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-stone-300 dark:bg-slate-700 md:hidden" aria-hidden />
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="font-sans text-[11px] font-semibold uppercase tracking-[0.2em] text-stone-400 dark:text-stone-500">Review day</p>
+                      <h2 className="mt-1 font-serif text-lg text-stone-900 dark:text-stone-100">Why this, and what to adjust if needed</h2>
+                      <p className="mt-1 font-sans text-sm text-stone-600 dark:text-stone-300">Open this when you want a little more context or you need to reshape the day.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowTodaySupportSheet(false)}
+                      className="rounded-full border border-stone-200 px-3 py-1.5 font-sans text-xs text-stone-600 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40 dark:border-slate-600 dark:text-stone-200 dark:hover:bg-slate-800/70"
+                    >
+                      Close
+                    </button>
+                  </div>
+                </div>
+                <div className="space-y-5 px-4 pb-4">
+              {todayHero.reviewSections.length > 0 && (
+                <section className={`rounded-3xl border px-5 py-5 ${isDark ? 'border-stone-600/50 bg-stone-800/70' : 'border-stone-200/80 bg-white/90'}`}>
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="font-sans text-xs font-semibold uppercase tracking-[0.16em] text-stone-400 dark:text-stone-500">Briefing notes</p>
+                      <h2 className="mt-2 font-serif text-xl text-stone-900 dark:text-stone-100">Support for today&apos;s recommendation</h2>
+                      <p className="mt-1 font-sans text-sm text-stone-500 dark:text-stone-400">Short context only, so it is easy to adjust the day without adding noise.</p>
+                    </div>
+                  </div>
+                  <div className="mt-4 grid gap-3">
+                    {todayHero.reviewSections.map((section) => (
+                      <div key={section.key} className={`rounded-2xl border px-4 py-4 ${isDark ? 'border-slate-600/50 bg-slate-900/35' : 'border-stone-200 bg-stone-50/80'}`}>
+                        <p className="font-sans text-[11px] font-semibold uppercase tracking-wide text-stone-400 dark:text-stone-500">{section.title}</p>
+                        <p className="mt-1 font-sans text-sm text-stone-700 dark:text-stone-200">{section.body}</p>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {todayHero.supportActions.map((action) => (
+                      <button
+                        key={action.label}
+                        type="button"
+                        onClick={action.onClick}
+                        disabled={action.disabled}
+                        className="rounded-xl border border-stone-200 px-3 py-2 font-sans text-sm text-stone-700 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40 disabled:opacity-70 dark:border-slate-600 dark:text-stone-200 dark:hover:bg-slate-700/60"
+                      >
+                        {action.label}
+                      </button>
+                    ))}
+                  </div>
+                </section>
+              )}
+
               <section className={`rounded-3xl border px-5 py-5 ${isDark ? 'border-slate-600/50 bg-slate-800/70' : 'border-stone-200/80 bg-white/90'}`}>
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <p className="font-sans text-xs font-semibold uppercase tracking-[0.16em] text-stone-400 dark:text-stone-500">Assistant actions</p>
+                    <p className="font-sans text-xs font-semibold uppercase tracking-[0.16em] text-stone-400 dark:text-stone-500">Assistant operator</p>
                     <h2 className="mt-2 font-serif text-xl text-stone-900 dark:text-stone-100">
-                      {todayAssistantSignals[0]?.message ?? 'I can make the plan easier with one tap.'}
+                      {todayAssistantSignals[0]?.message ?? 'One tap actions to update your plan right now.'}
                     </h2>
                     <p className="mt-1 font-sans text-sm text-stone-500 dark:text-stone-400">
-                      Action-first here. Use chat only when the plan change needs more explanation.
+                      Each action performs a concrete plan change. Chat is available for edge cases.
                     </p>
                   </div>
                   <button
@@ -4077,29 +4896,282 @@ function GardenDashboard() {
                     Open chat
                   </button>
                 </div>
-
-                {todayAssistantSignals.length > 1 && (
-                  <div className="mt-4 grid gap-2 md:grid-cols-2">
-                    {todayAssistantSignals.slice(1).map((signal) => (
-                      <div key={signal.id} className={`rounded-2xl px-3 py-3 ${
-                        signal.tone === 'amber'
-                          ? isDark ? 'bg-amber-900/20' : 'bg-amber-50'
-                          : isDark ? 'bg-slate-900/35' : 'bg-stone-50'
-                      }`}>
-                        <p className="font-sans text-sm text-stone-700 dark:text-stone-200">{signal.message}</p>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
                 <div className="mt-4">
                   <AiActionChips
                     actions={todayAssistantActions}
                     onAction={handleAssistantOperatorAction}
                     loadingAction={assistantActionBusy}
+                    variant="operator"
                   />
                 </div>
               </section>
+
+              {taskStartHelp && (
+                <section className={`rounded-3xl border px-5 py-5 ${isDark ? 'border-stone-600/50 bg-stone-800/70' : 'border-stone-200/80 bg-stone-50/80'}`}>
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="font-sans text-xs font-semibold uppercase tracking-[0.16em] text-stone-400 dark:text-stone-500">Start help</p>
+                      <h2 className="mt-2 font-serif text-lg text-stone-900 dark:text-stone-100">Make this easier to begin</h2>
+                      <p className="mt-1 font-sans text-sm text-stone-600 dark:text-stone-300">
+                        Optional support when starting feels sticky.
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setTaskStartPanelOpen((v) => !v)}
+                        className="rounded-xl border border-stone-200 px-3 py-2 font-sans text-sm text-stone-700 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40 dark:border-slate-600 dark:text-stone-200 dark:hover:bg-slate-700/60"
+                      >
+                        {taskStartPanelOpen ? 'Hide this' : 'Show me how to start'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => dismissTaskStartHelp(true)}
+                        className="rounded-xl px-3 py-2 font-sans text-sm text-stone-500 hover:text-stone-700 dark:text-stone-400 dark:hover:text-stone-200"
+                      >
+                        Don’t show for this task
+                      </button>
+                    </div>
+                  </div>
+
+                  {taskStartPanelOpen && (
+                    <div className="mt-4 space-y-3">
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        <button type="button" onClick={() => applyTaskStartSuggestion(taskStartHelp.tinyFirstStep)} className="rounded-xl border border-stone-200 bg-white px-3 py-2 text-left dark:border-slate-600 dark:bg-slate-800/70">
+                          <p className="font-sans text-xs uppercase tracking-wide text-stone-500">Tiny first step</p>
+                          <p className="mt-1 font-sans text-sm text-stone-800 dark:text-stone-200">{taskStartHelp.tinyFirstStep}</p>
+                        </button>
+                        <button type="button" onClick={() => applyTaskStartSuggestion(taskStartHelp.prepStep)} className="rounded-xl border border-stone-200 bg-white px-3 py-2 text-left dark:border-slate-600 dark:bg-slate-800/70">
+                          <p className="font-sans text-xs uppercase tracking-wide text-stone-500">What to prepare</p>
+                          <p className="mt-1 font-sans text-sm text-stone-800 dark:text-stone-200">{taskStartHelp.prepStep}</p>
+                        </button>
+                        <button type="button" onClick={() => applyTaskStartSuggestion(taskStartHelp.easierVersion)} className="rounded-xl border border-stone-200 bg-white px-3 py-2 text-left dark:border-slate-600 dark:bg-slate-800/70">
+                          <p className="font-sans text-xs uppercase tracking-wide text-stone-500">Easier version</p>
+                          <p className="mt-1 font-sans text-sm text-stone-800 dark:text-stone-200">{taskStartHelp.easierVersion}</p>
+                        </button>
+                        <button type="button" onClick={() => applyTaskStartSuggestion(taskStartHelp.goodEnoughTarget)} className="rounded-xl border border-stone-200 bg-white px-3 py-2 text-left dark:border-slate-600 dark:bg-slate-800/70">
+                          <p className="font-sans text-xs uppercase tracking-wide text-stone-500">Good enough for now</p>
+                          <p className="mt-1 font-sans text-sm text-stone-800 dark:text-stone-200">{taskStartHelp.goodEnoughTarget}</p>
+                        </button>
+                      </div>
+
+                      <div className="rounded-xl border border-stone-200 bg-white px-3 py-2 dark:border-slate-600 dark:bg-slate-800/70">
+                        <p className="font-sans text-xs uppercase tracking-wide text-stone-500">Starter script</p>
+                        <p className="mt-1 font-sans text-sm text-stone-800 dark:text-stone-200">{taskStartHelp.starterScript}</p>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={handleOpenFocusScaffold}
+                          className="rounded-lg bg-moss-600 px-3 py-1.5 font-sans text-xs font-medium text-white hover:bg-moss-700"
+                        >
+                          Guided 3-5 minute starter
+                        </button>
+                        <button type="button" onClick={() => setTaskStartStyle('tiny_step')} className="rounded-lg border border-stone-200 px-2.5 py-1.5 font-sans text-xs text-stone-700 dark:border-slate-600 dark:text-stone-200">Tiny steps</button>
+                        <button type="button" onClick={() => setTaskStartStyle('script')} className="rounded-lg border border-stone-200 px-2.5 py-1.5 font-sans text-xs text-stone-700 dark:border-slate-600 dark:text-stone-200">Script</button>
+                        <button type="button" onClick={() => setTaskStartStyle('prepare')} className="rounded-lg border border-stone-200 px-2.5 py-1.5 font-sans text-xs text-stone-700 dark:border-slate-600 dark:text-stone-200">Prepare</button>
+                        <button type="button" onClick={() => setTaskStartStyle('low_energy')} className="rounded-lg border border-stone-200 px-2.5 py-1.5 font-sans text-xs text-stone-700 dark:border-slate-600 dark:text-stone-200">Low-energy</button>
+                        <button type="button" onClick={() => setTaskStartStyle('body_double')} className="rounded-lg border border-stone-200 px-2.5 py-1.5 font-sans text-xs text-stone-700 dark:border-slate-600 dark:text-stone-200">Body double</button>
+                      </div>
+
+                      {showFocusScaffold && (
+                        <FocusScaffoldCard
+                          open={showFocusScaffold}
+                          taskTitle={todayPrimaryTask?.title ?? 'Start this task'}
+                          tinyStep={taskStartHelp.tinyFirstStep}
+                          prepStep={taskStartHelp.prepStep}
+                          encouragement={taskStartHelp.bodyDoubleLine}
+                          preferredMinutes={taskStartHelp.preferredStyle === 'timer_start' ? 5 : 3}
+                          onApplyTinyStep={() => applyTaskStartSuggestion(taskStartHelp.tinyFirstStep)}
+                          onApplyPrepStep={() => applyTaskStartSuggestion(taskStartHelp.prepStep)}
+                          onStart={handleStartFromScaffold}
+                          onDismiss={() => setShowFocusScaffold(false)}
+                        />
+                      )}
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button type="button" onClick={() => markTaskStartFeedback(true)} className="rounded-lg border border-stone-200 px-2.5 py-1.5 font-sans text-xs text-stone-700 dark:border-slate-600 dark:text-stone-200">This helps</button>
+                        <button type="button" onClick={() => markTaskStartFeedback(false)} className="rounded-lg border border-stone-200 px-2.5 py-1.5 font-sans text-xs text-stone-700 dark:border-slate-600 dark:text-stone-200">Not helpful</button>
+                        <button type="button" onClick={() => dismissTaskStartHelp(false)} className="rounded-lg px-2.5 py-1.5 font-sans text-xs text-stone-500 hover:text-stone-700 dark:text-stone-400 dark:hover:text-stone-200">Hide this</button>
+                      </div>
+                    </div>
+                  )}
+                </section>
+              )}
+
+              {waitingItemsDue.length > 0 && (
+                <section id="today-waiting-open-loops" className={`rounded-3xl border px-5 py-5 ${isDark ? 'border-stone-600/50 bg-stone-800/70' : 'border-stone-200/80 bg-stone-50/80'}`}>
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="font-sans text-xs font-semibold uppercase tracking-[0.16em] text-stone-400 dark:text-stone-500">Waiting / open loops</p>
+                      <h2 className="mt-2 font-serif text-lg text-stone-900 dark:text-stone-100">Parked items</h2>
+                      <p className="mt-1 font-sans text-sm text-stone-600 dark:text-stone-300">
+                        Parked is a valid state. These will resurface when they are actionable.
+                      </p>
+                    </div>
+                    {todayPrimaryTask?.goalId && (
+                      <button
+                        type="button"
+                        onClick={parkPrimaryTaskAsWaiting}
+                        className="rounded-xl border border-stone-200 px-3 py-2 font-sans text-sm text-stone-700 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40 dark:border-slate-600 dark:text-stone-200 dark:hover:bg-slate-700/60"
+                      >
+                        Park primary as waiting-for
+                      </button>
+                    )}
+                  </div>
+                  <div className="mt-4 space-y-2">
+                    {waitingItemsDue.map((item) => {
+                      const goal = (goals ?? []).find((g) => g.id === item.itemId);
+                      if (!goal) return null;
+                      return (
+                        <div key={`${item.itemType}:${item.itemId}`} className="rounded-xl border border-stone-200 bg-white px-3 py-2 dark:border-slate-600 dark:bg-slate-800/70">
+                          <p className="font-sans text-sm font-medium text-stone-800 dark:text-stone-200">{goal.title}</p>
+                          <p className="mt-0.5 font-sans text-xs text-stone-500 dark:text-stone-400">
+                            Waiting on {item.waitingOn || item.waitingType || 'dependency'}
+                            {item.followUpDate ? ` · follow up ${item.followUpDate}` : ''}
+                          </p>
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <button type="button" onClick={() => nudgeWaitingLater(item, 2)} className="rounded-lg border border-stone-200 px-2.5 py-1.5 font-sans text-xs text-stone-700 dark:border-slate-600 dark:text-stone-200">Nudge later (+2d)</button>
+                            <button type="button" onClick={() => resolveGoalWaitingSupport?.(item.itemId)} className="rounded-lg border border-stone-200 px-2.5 py-1.5 font-sans text-xs text-stone-700 dark:border-slate-600 dark:text-stone-200">Mark resolved</button>
+                            <button type="button" onClick={() => handleStartNowStart({ goal, goalId: goal.id, subtaskId: null }, 5)} className="rounded-lg bg-moss-600 px-2.5 py-1.5 font-sans text-xs font-medium text-white hover:bg-moss-700">Resume now</button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+              )}
+
+              {restartResume?.relevant && (
+                <section className={`rounded-3xl border px-5 py-5 ${isDark ? 'border-moss-700/40 bg-moss-900/20' : 'border-moss-200 bg-moss-50/70'}`}>
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="font-sans text-xs font-semibold uppercase tracking-[0.16em] text-moss-700 dark:text-moss-300">Resume from here</p>
+                      <h2 className="mt-2 font-serif text-xl text-stone-900 dark:text-stone-100">{restartResume.headline}</h2>
+                      <p className="mt-1 font-sans text-sm text-stone-600 dark:text-stone-300">{restartResume.reasonLine}</p>
+                      {interruptionSummary && (
+                        <p className="mt-1 font-sans text-sm text-stone-700 dark:text-stone-200">{interruptionSummary}</p>
+                      )}
+                      {restartResume.contextLine && (
+                        <p className="mt-1 font-sans text-xs text-stone-500 dark:text-stone-400">{restartResume.contextLine}</p>
+                      )}
+                    </div>
+                  </div>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleRestartResumeAction('resume_gently')}
+                      className="rounded-xl bg-moss-600 px-3 py-2 font-sans text-sm font-medium text-white hover:bg-moss-700 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
+                    >
+                      Resume gently
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleRestartResumeAction('shrink_plan')}
+                      className="rounded-xl border border-stone-200 px-3 py-2 font-sans text-sm text-stone-700 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40 dark:border-slate-600 dark:text-stone-200 dark:hover:bg-slate-700/60"
+                    >
+                      Shrink the plan
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleRestartResumeAction('start_focus_5')}
+                      className="rounded-xl border border-stone-200 px-3 py-2 font-sans text-sm text-stone-700 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40 dark:border-slate-600 dark:text-stone-200 dark:hover:bg-slate-700/60"
+                    >
+                      Start for 5 minutes
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleRestartResumeAction('move_rest')}
+                      className="rounded-xl border border-stone-200 px-3 py-2 font-sans text-sm text-stone-700 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40 dark:border-slate-600 dark:text-stone-200 dark:hover:bg-slate-700/60"
+                    >
+                      Move the rest
+                    </button>
+                    {interruptionMemory?.lastNote && (
+                      <button
+                        type="button"
+                        onClick={() => pushReward?.({ message: interruptionMemory.lastNote, tone: 'slate', icon: '📝', durationMs: 3200 })}
+                        className="rounded-xl border border-stone-200 px-3 py-2 font-sans text-sm text-stone-700 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40 dark:border-slate-600 dark:text-stone-200 dark:hover:bg-slate-700/60"
+                      >
+                        Show last note
+                      </button>
+                    )}
+                  </div>
+                </section>
+              )}
+
+              {socialBacklog.length > 0 && (
+                <section className={`rounded-3xl border px-5 py-5 ${isDark ? 'border-slate-600/50 bg-slate-800/70' : 'border-stone-200/80 bg-white/90'}`}>
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h2 className="font-serif text-xl text-stone-900 dark:text-stone-100">Social upkeep</h2>
+                      <p className="mt-1 font-sans text-sm text-stone-500 dark:text-stone-400">
+                        Keep relationships warm in batches, not constant interruptions.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleAssistantOperatorAction('ADD_SOCIAL_CATCHUP_BLOCK', { templateId: 'social_catchup' })}
+                      className="rounded-xl border border-stone-200 px-3 py-2 font-sans text-sm text-stone-700 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40 dark:border-slate-600 dark:text-stone-200 dark:hover:bg-slate-700/60"
+                    >
+                      Add catch-up block
+                    </button>
+                  </div>
+                  <div className="mt-3 space-y-2">
+                    {socialBacklog.slice(0, 4).map((item) => (
+                      <div key={item.id} className={`rounded-xl border px-3 py-2 flex items-center justify-between gap-3 ${isDark ? 'border-slate-600/50 bg-slate-900/30' : 'border-stone-200 bg-stone-50/80'}`}>
+                        <div className="min-w-0">
+                          <p className="font-sans text-sm text-stone-800 dark:text-stone-200 truncate">{item.text}</p>
+                        </div>
+                        <div className="shrink-0 flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => updateSocialFollowUp?.(item.id, { snoozedUntil: new Date(Date.now() + (2 * 24 * 60 * 60 * 1000)).toISOString() })}
+                            className="text-xs font-sans text-stone-500 hover:text-stone-700 dark:text-stone-400 dark:hover:text-stone-200"
+                          >
+                            Snooze
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => updateSocialFollowUp?.(item.id, { status: 'done' })}
+                            className="text-xs font-sans text-moss-700 hover:text-moss-800 dark:text-moss-300"
+                          >
+                            Done
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              {routinePatternSuggestions.length > 0 && (
+                <section className={`rounded-3xl border px-5 py-5 ${isDark ? 'border-slate-600/50 bg-slate-800/70' : 'border-stone-200/80 bg-white/90'}`}>
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h2 className="font-serif text-xl text-stone-900 dark:text-stone-100">Support structure suggestions</h2>
+                      <p className="mt-1 font-sans text-sm text-stone-500 dark:text-stone-400">
+                        Based on repeated friction patterns. Optional and adjustable.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="mt-3 space-y-2">
+                    {routinePatternSuggestions.map((suggestion) => (
+                      <div key={suggestion.id} className={`rounded-xl border px-3 py-3 ${isDark ? 'border-slate-600/50 bg-slate-900/30' : 'border-stone-200 bg-stone-50/80'}`}>
+                        <p className="font-sans text-sm font-medium text-stone-900 dark:text-stone-100">{suggestion.title}</p>
+                        <p className="mt-1 font-sans text-xs text-stone-600 dark:text-stone-300">{suggestion.body}</p>
+                        <button
+                          type="button"
+                          onClick={() => handleAssistantOperatorAction('ADD_ROUTINE_STRUCTURE', { suggestion })}
+                          className="mt-2 rounded-lg border border-stone-200 px-2.5 py-1.5 font-sans text-xs text-stone-700 hover:bg-stone-100 dark:border-slate-600 dark:text-stone-200 dark:hover:bg-slate-700/60"
+                        >
+                          {suggestion.actionLabel}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
 
               <section className={`rounded-3xl border px-5 py-5 ${isDark ? 'border-slate-600/50 bg-slate-800/70' : 'border-stone-200/80 bg-white/90'}`}>
                 <div className="flex flex-wrap items-center justify-between gap-3">
@@ -4170,29 +5242,15 @@ function GardenDashboard() {
                   </div>
                 </div>
               </section>
+                </div>
+                </div>
+              </>
+              )}
 
               <section className={`rounded-3xl border px-5 py-5 ${isDark ? 'border-slate-600/50 bg-slate-800/70' : 'border-stone-200/80 bg-white/90'}`}>
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <h2 className="font-serif text-xl text-stone-900 dark:text-stone-100">Day map</h2>
-                    <p className="mt-1 font-sans text-sm text-stone-500 dark:text-stone-400">{todayPathSummary.follow}</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab('planner')}
-                    className="rounded-xl border border-stone-200 px-3 py-2 font-sans text-sm text-stone-700 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40 dark:border-slate-600 dark:text-stone-200 dark:hover:bg-slate-700/60"
-                  >
-                    Open Plan
-                  </button>
-                </div>
-
-                <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-                  {todayMapBlocks.map((block) => (
-                    <div key={block.label} className={`rounded-2xl px-3 py-3 ${isDark ? 'bg-slate-900/35' : 'bg-stone-50'}`}>
-                      <p className="font-sans text-[11px] font-semibold uppercase tracking-wide text-stone-400 dark:text-stone-500">{block.label}</p>
-                      <p className="mt-1 font-sans text-sm text-stone-700 dark:text-stone-200">{block.detail}</p>
-                    </div>
-                  ))}
+                <div>
+                  <h2 className="font-serif text-xl text-stone-900 dark:text-stone-100">Day map</h2>
+                  <p className="mt-1 font-sans text-sm text-stone-500 dark:text-stone-400">{todayPathSummary.follow}</p>
                 </div>
 
                 <TourHighlight step={3} tooltip="This is the full day map. Use it after the briefing, not before.">
@@ -4240,13 +5298,22 @@ function GardenDashboard() {
                 </TourHighlight>
               </section>
 
-              {todayRecoveryItems.length > 0 && (
+              {showTodaySupportSheet && todayRecoveryItems.length > 0 && (
                 <section className={`rounded-3xl border px-5 py-5 ${
                   isDark ? 'border-amber-800/60 bg-amber-900/15' : 'border-amber-200 bg-amber-50/80'
                 }`}>
-                  <div>
-                    <h2 className="font-serif text-xl text-stone-900 dark:text-stone-100">Recovery and risks</h2>
-                    <p className="mt-1 font-sans text-sm text-stone-600 dark:text-stone-300">Only the things that need attention right now.</p>
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <h2 className="font-serif text-xl text-stone-900 dark:text-stone-100">Recovery and risks</h2>
+                      <p className="mt-1 font-sans text-sm text-stone-600 dark:text-stone-300">Only what needs attention right now.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => openModal('chat')}
+                      className="rounded-xl border border-stone-200 px-3 py-2 font-sans text-sm text-stone-700 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40 dark:border-slate-600 dark:text-stone-200 dark:hover:bg-slate-700/60"
+                    >
+                      Ask assistant
+                    </button>
                   </div>
                   <div className="mt-4 grid gap-3 lg:grid-cols-3">
                     {todayRecoveryItems.map((item) => (
@@ -4281,6 +5348,7 @@ function GardenDashboard() {
                 </section>
               )}
 
+              {showTodaySupportSheet && (
               <section className={`rounded-3xl border px-5 py-4 ${isDark ? 'border-slate-600/50 bg-slate-800/55' : 'border-stone-200/80 bg-stone-50/90'}`}>
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
@@ -4311,32 +5379,127 @@ function GardenDashboard() {
                   </div>
                 </div>
               </section>
-            </div>
+              )}
+            </div>}
           </>
         )}
         {activeTab === 'planner' && (
           <PremiumPlannerShell id="guide-planner-overview" className="w-full animate-in fade-in slide-in-from-bottom-2 duration-500 space-y-4">
-            <div className="px-1">
-              <p className="premium-kicker mb-1">Planner</p>
-              <h2 className="font-serif text-stone-900 dark:text-stone-100 text-xl font-semibold mb-1">{plannerViewMeta.title}</h2>
+            <div className={`rounded-[30px] border px-4 py-4 shadow-[0_20px_60px_-34px_rgba(15,23,42,0.35)] ${
+              isDark
+                ? 'border-slate-700/60 bg-gradient-to-br from-slate-900/88 via-slate-900/76 to-slate-800/72'
+                : 'border-stone-200/80 bg-gradient-to-br from-white via-stone-50/92 to-stone-100/75'
+            }`}>
+              <p className="premium-kicker mb-2">Planner studio</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="font-serif text-2xl font-semibold text-stone-900 dark:text-stone-100">{plannerViewMeta.title}</h2>
+                <span className={`inline-flex items-center rounded-full px-2.5 py-1 font-sans text-[11px] font-semibold uppercase tracking-[0.16em] ${
+                  isDark ? 'bg-slate-800/90 text-stone-300 ring-1 ring-slate-700/80' : 'bg-white/80 text-stone-500 ring-1 ring-stone-200/90'
+                }`}>
+                  {plannerViewMode}
+                </span>
+              </div>
               <p className="font-sans text-sm text-stone-500 dark:text-stone-400" title="Unscheduled → Assign to a day → Open Day Planner">
                 {plannerViewMeta.description}
               </p>
-              <div className="mt-2">
+              <div className="mt-3 flex flex-wrap items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => setPlannerShowSecondary((v) => !v)}
-                  className="font-sans text-xs text-stone-500 hover:text-stone-700 dark:text-stone-400 dark:hover:text-stone-200 focus:outline-none focus:ring-2 focus:ring-moss-500/40 rounded px-2 py-1 -ml-2"
+                  onClick={() => setPlannerSupportDrawer('review')}
+                  className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 font-sans text-xs font-medium transition focus:outline-none focus:ring-2 focus:ring-moss-500/40 ${
+                    plannerSupportDrawer === 'review'
+                      ? 'border-moss-500 bg-moss-600 text-white shadow-sm hover:bg-moss-700 dark:border-moss-500 dark:bg-moss-500 dark:text-slate-950 dark:hover:bg-moss-400'
+                      : 'border-stone-200 bg-white/75 text-stone-700 hover:bg-white dark:border-slate-600 dark:bg-slate-800/70 dark:text-stone-200 dark:hover:bg-slate-700/70'
+                  }`}
                 >
-                  {plannerShowSecondary ? 'Hide planning context' : 'Show planning context'}
+                  <span>Review</span>
+                  <span className={`inline-flex min-w-6 items-center justify-center rounded-full px-1.5 py-0.5 text-[11px] ${
+                    plannerSupportDrawer === 'review'
+                      ? 'bg-white/20 text-current dark:bg-slate-950/20'
+                      : 'bg-stone-100 text-stone-600 dark:bg-slate-700 dark:text-stone-100'
+                  }`}>
+                    {plannerReviewCount}
+                  </span>
                 </button>
                 <button
                   type="button"
-                  onClick={() => setShowProjectPlanner(true)}
-                  className="ml-2 py-1 px-2.5 rounded-lg font-sans text-xs font-medium border border-moss-400 dark:border-moss-500 text-moss-700 dark:text-moss-300 hover:bg-moss-50 dark:hover:bg-moss-900/30 focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors"
+                  onClick={() => setPlannerSupportDrawer('projects')}
+                  className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 font-sans text-xs font-medium transition focus:outline-none focus:ring-2 focus:ring-moss-500/40 ${
+                    plannerSupportDrawer === 'projects'
+                      ? 'border-moss-500 bg-moss-600 text-white shadow-sm hover:bg-moss-700 dark:border-moss-500 dark:bg-moss-500 dark:text-slate-950 dark:hover:bg-moss-400'
+                      : 'border-stone-200 bg-white/75 text-stone-700 hover:bg-white dark:border-slate-600 dark:bg-slate-800/70 dark:text-stone-200 dark:hover:bg-slate-700/70'
+                  }`}
                 >
-                  Open project planner
+                  <span>Projects</span>
+                  <span className={`inline-flex min-w-6 items-center justify-center rounded-full px-1.5 py-0.5 text-[11px] ${
+                    plannerSupportDrawer === 'projects'
+                      ? 'bg-white/20 text-current dark:bg-slate-950/20'
+                      : 'bg-stone-100 text-stone-600 dark:bg-slate-700 dark:text-stone-100'
+                  }`}>
+                    {activeProjectCount}
+                  </span>
                 </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPlannerSystemsMode('overview');
+                    setPlannerSupportDrawer('systems');
+                  }}
+                  className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 font-sans text-xs font-medium transition focus:outline-none focus:ring-2 focus:ring-moss-500/40 ${
+                    plannerSupportDrawer === 'systems'
+                      ? 'border-moss-500 bg-moss-600 text-white shadow-sm hover:bg-moss-700 dark:border-moss-500 dark:bg-moss-500 dark:text-slate-950 dark:hover:bg-moss-400'
+                      : 'border-stone-200 bg-white/75 text-stone-700 hover:bg-white dark:border-slate-600 dark:bg-slate-800/70 dark:text-stone-200 dark:hover:bg-slate-700/70'
+                  }`}
+                >
+                  <span>Systems</span>
+                  <span className={`inline-flex min-w-6 items-center justify-center rounded-full px-1.5 py-0.5 text-[11px] ${
+                    plannerSupportDrawer === 'systems'
+                      ? 'bg-white/20 text-current dark:bg-slate-950/20'
+                      : 'bg-stone-100 text-stone-600 dark:bg-slate-700 dark:text-stone-100'
+                  }`}>
+                    {plannerSystemsCount}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPlannerSupportDrawer('manage')}
+                  className={`ml-auto inline-flex items-center rounded-full border px-3 py-1.5 font-sans text-xs font-medium transition focus:outline-none focus:ring-2 focus:ring-moss-500/40 ${
+                    plannerSupportDrawer === 'manage'
+                      ? 'border-stone-900 bg-stone-900 text-white shadow-sm hover:bg-stone-800 dark:border-stone-100 dark:bg-stone-100 dark:text-slate-950 dark:hover:bg-stone-200'
+                      : 'border-stone-200 bg-white/75 text-stone-700 hover:bg-white dark:border-slate-600 dark:bg-slate-800/70 dark:text-stone-200 dark:hover:bg-slate-700/70'
+                  }`}
+                >
+                  Manage
+                </button>
+              </div>
+              <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                {[
+                  ['review', 'Review'],
+                  ['projects', 'Projects'],
+                  ['systems', 'Systems'],
+                ].map(([key, label]) => {
+                  const active = plannerSupportDrawer === key;
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => {
+                        if (key === 'systems') setPlannerSystemsMode('overview');
+                        setPlannerSupportDrawer(key);
+                      }}
+                      className={`rounded-2xl border px-3 py-2 text-left transition focus:outline-none focus:ring-2 focus:ring-moss-500/30 ${
+                        active
+                          ? 'border-moss-400 bg-moss-50/90 text-moss-900 dark:border-moss-500/80 dark:bg-moss-500/10 dark:text-moss-100'
+                          : 'border-stone-200/90 bg-white/70 text-stone-600 hover:bg-white dark:border-slate-700/80 dark:bg-slate-900/35 dark:text-stone-300 dark:hover:bg-slate-800/70'
+                      }`}
+                    >
+                      <p className="font-sans text-xs font-semibold uppercase tracking-[0.14em]">{label}</p>
+                      <p className={`mt-1 font-sans text-xs leading-relaxed ${active ? 'text-current' : 'text-stone-500 dark:text-stone-400'}`}>
+                        {PLANNER_SUPPORT_EXPLAINERS[key]}
+                      </p>
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
@@ -4357,15 +5520,17 @@ function GardenDashboard() {
             )}
             {/* Day | Week | Month planning lens — Week default */}
             <PremiumActionRow className="mb-4">
-              <div className="inline-flex rounded-lg border border-stone-200 dark:border-stone-600 bg-stone-100 dark:bg-stone-800/50 p-0.5">
+              <div className={`inline-flex rounded-full border p-1 ${
+                isDark ? 'border-slate-700/80 bg-slate-950/55' : 'border-stone-200/90 bg-white/80'
+              }`}>
                 {['day', 'week', 'month'].map((id) => (
                   <button
                     key={id}
                     type="button"
                     onClick={() => setPlannerViewMode(id)}
-                    className={`px-3 py-1.5 rounded-md font-sans text-sm transition-colors capitalize ${
+                    className={`px-3.5 py-1.5 rounded-full font-sans text-sm transition-colors capitalize ${
                       plannerViewMode === id
-                        ? 'bg-white dark:bg-stone-700 text-stone-900 dark:text-stone-100 shadow-sm font-medium'
+                        ? 'bg-stone-900 text-white shadow-sm font-medium dark:bg-stone-100 dark:text-slate-950'
                         : 'text-stone-500 dark:text-stone-400 hover:text-stone-700 dark:hover:text-stone-200'
                     }`}
                   >
@@ -4376,64 +5541,35 @@ function GardenDashboard() {
             </PremiumActionRow>
             <PremiumActionRow>
               {plannerViewMode === 'day' && (
-                <>
-                  <button
-                    type="button"
-                    onClick={handleSuggestTodayPlan}
-                    disabled={plannerActionBusy === 'day'}
-                    className="inline-flex items-center gap-2 py-2 px-3 rounded-xl font-sans text-sm font-semibold bg-moss-600 text-white hover:bg-moss-700 disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-moss-500/40 transition-colors"
-                  >
-                    {plannerViewMeta.primaryActionLabel}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleLightenTodayPlan}
-                    disabled={plannerActionBusy === 'day'}
-                    className="inline-flex items-center gap-2 py-2 px-3 rounded-xl font-sans text-sm font-medium border border-stone-300 dark:border-stone-600 text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800/70 disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-stone-400/30 transition-colors"
-                  >
-                    {plannerActionBusy === 'day' ? 'Lightening...' : 'Lighten today'}
-                  </button>
-                </>
+                <button
+                  type="button"
+                  onClick={handleSuggestTodayPlan}
+                  disabled={plannerActionBusy === 'day'}
+                  className="inline-flex items-center gap-2 py-2.5 px-4 rounded-xl font-sans text-sm font-semibold bg-moss-600 text-white hover:bg-moss-700 disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-moss-500 focus:ring-offset-2 transition-colors"
+                >
+                  {plannerViewMeta.primaryActionLabel}
+                </button>
               )}
               {plannerViewMode === 'week' && (
-                <>
-                  <button
-                    type="button"
-                    onClick={handleAutoPlanWeek}
-                    disabled={autoFillLoading || plannerActionBusy === 'week'}
-                    className="inline-flex items-center gap-2 py-2.5 px-4 rounded-xl font-sans text-sm font-semibold bg-moss-600 text-white hover:bg-moss-700 disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-moss-500 focus:ring-offset-2 transition-colors"
-                  >
-                    {plannerViewMeta.primaryActionLabel}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handlePlanWeek}
-                    className="inline-flex items-center gap-2 py-2 px-3 rounded-lg font-sans text-sm font-medium border border-stone-300 dark:border-stone-600 text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800/70 focus:outline-none focus:ring-2 focus:ring-stone-400/30 transition-colors"
-                    disabled={planningWeek}
-                  >
-                    {planningWeek ? 'Planning with AI...' : 'Plan with AI'}
-                  </button>
-                </>
+                <button
+                  type="button"
+                  onClick={handleAutoPlanWeek}
+                  disabled={autoFillLoading || plannerActionBusy === 'week'}
+                  className="inline-flex items-center gap-2 py-2.5 px-4 rounded-xl font-sans text-sm font-semibold bg-moss-600 text-white hover:bg-moss-700 disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-moss-500 focus:ring-offset-2 transition-colors"
+                >
+                  {plannerViewMeta.primaryActionLabel}
+                </button>
               )}
               {plannerViewMode === 'month' && (
-                <>
-                  <button
-                    type="button"
-                    onClick={handleShapeMonthWithAI}
-                    disabled={isGeneratingMonthPlan || plannerActionBusy === 'month'}
-                    className="inline-flex items-center gap-2 py-2 px-3 rounded-lg font-sans text-sm font-medium border border-stone-300 dark:border-stone-600 text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800/70 disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-stone-400/30 transition-colors"
-                    title="Advanced: distribute tasks across the month with AI"
-                  >
-                    {plannerViewMeta.primaryActionLabel}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setPlannerViewMode('week')}
-                    className="inline-flex items-center gap-2 py-2 px-3 rounded-lg font-sans text-sm font-medium border border-stone-300 dark:border-stone-600 text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800/70 focus:outline-none focus:ring-2 focus:ring-stone-400/30 transition-colors"
-                  >
-                    Open week planner
-                  </button>
-                </>
+                <button
+                  type="button"
+                  onClick={handleShapeMonthWithAI}
+                  disabled={isGeneratingMonthPlan || plannerActionBusy === 'month'}
+                  className="inline-flex items-center gap-2 py-2.5 px-4 rounded-xl font-sans text-sm font-semibold bg-moss-600 text-white hover:bg-moss-700 disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-moss-500 focus:ring-offset-2 transition-colors"
+                  title="Advanced: distribute tasks across the month with AI"
+                >
+                  {plannerViewMeta.primaryActionLabel}
+                </button>
               )}
             </PremiumActionRow>
 
@@ -4632,65 +5768,463 @@ function GardenDashboard() {
               />
 
             {plannerViewMode === 'day' && (
-              <PlanDayPanel
-                plannerTodayPlanItems={plannerTodayPlanItems}
-                plannerDayExpanded={plannerDayExpanded}
-                setPlannerDayExpanded={setPlannerDayExpanded}
-                setPlannerPlanDayDateStr={setPlannerPlanDayDateStr}
-                today={today}
-                setActiveTab={setActiveTab}
-                plannerTodayBacklogTasks={plannerTodayBacklogTasks}
-                handleQuickScheduleTodayTask={handleQuickScheduleTodayTask}
-                isPlanningDay={plannerActionBusy === 'day'}
-                onPlanTodayRitual={handleOpenDailyPlanRitual}
-              />
+              <Suspense fallback={<LoadingSurface label="Loading day planner..." />}>
+                <PlanDayPanel
+                  plannerTodayPlanItems={plannerTodayPlanItems}
+                  plannerDayExpanded={plannerDayExpanded}
+                  setPlannerDayExpanded={setPlannerDayExpanded}
+                  setPlannerPlanDayDateStr={setPlannerPlanDayDateStr}
+                  today={today}
+                  setActiveTab={setActiveTab}
+                  plannerTodayBacklogTasks={plannerTodayBacklogTasks}
+                  handleQuickScheduleTodayTask={handleQuickScheduleTodayTask}
+                  isPlanningDay={plannerActionBusy === 'day'}
+                  onPlanTodayRitual={handleOpenDailyPlanRitual}
+                />
+              </Suspense>
             )}
 
             {plannerViewMode === 'month' && (
-              <PlanMonthPanel
-                unscheduledMonthTasks={unscheduledMonthTasks}
-                setStagingTaskStatus={setStagingTaskStatus}
-                setPlannerViewMode={setPlannerViewMode}
-                vaultTasks={vaultTasks}
-                goals={goals}
-                logs={logs}
-                weekAssignments={weekAssignments}
-                weeklyEvents={weeklyEvents}
-                loadDayPlan={loadDayPlan}
-                setPlannerPlanDayDateStr={setPlannerPlanDayDateStr}
-                monthlyRoadmap={monthlyRoadmap}
-                handlePlanMonth={handlePlanMonth}
-                isGeneratingMonthPlan={isGeneratingMonthPlan}
-              />
+              <Suspense fallback={<LoadingSurface label="Loading month planner..." />}>
+                <PlanMonthPanel
+                  unscheduledMonthTasks={unscheduledMonthTasks}
+                  setStagingTaskStatus={setStagingTaskStatus}
+                  setPlannerViewMode={setPlannerViewMode}
+                  vaultTasks={vaultTasks}
+                  goals={goals}
+                  routines={routines}
+                  recurringSupportState={recurringSupportState}
+                  routineSupportPlacements={routineSupportPlacements}
+                  logs={logs}
+                  weekAssignments={weekAssignments}
+                  weeklyEvents={weeklyEvents}
+                  loadDayPlan={loadDayPlan}
+                  setPlannerPlanDayDateStr={setPlannerPlanDayDateStr}
+                  onOpenPlannerSystems={() => {
+                    setPlannerSystemsMode('overview');
+                    setPlannerSupportDrawer('systems');
+                  }}
+                  monthlyRoadmap={monthlyRoadmap}
+                  handlePlanMonth={handlePlanMonth}
+                  isGeneratingMonthPlan={isGeneratingMonthPlan}
+                />
+              </Suspense>
             )}
 
             {/* Week lens: Today strip + Unscheduled + This week */}
             {plannerViewMode === 'week' && (
-              <PlanWeekPanel
-                plannerTodayPlanItems={plannerTodayPlanItems}
-                today={today}
-                setPlannerPlanDayDateStr={setPlannerPlanDayDateStr}
-                goals={goals}
-                weeklyEvents={weeklyEvents}
-                weekAssignments={weekAssignments}
-                loadDayPlan={loadDayPlan}
-                saveDayPlanForDate={saveDayPlanForDate}
-                pausedDays={pausedDays}
-                needsRescheduling={needsRescheduling}
-                rescheduleNeedsReschedulingItem={rescheduleNeedsReschedulingItem}
-                clearDaySchedule={clearDaySchedule}
-                editGoal={editGoal}
-                spawnedVolumeBlocks={spawnedVolumeBlocks}
-                removeSpawnedVolumeBlock={removeSpawnedVolumeBlock}
-                setEditingGoal={setEditingGoal}
-                stagingTaskStatus={stagingTaskStatus}
-                setStagingTaskStatus={setStagingTaskStatus}
-                plannerScheduleDrawerPreSelect={plannerScheduleDrawerPreSelect}
-                setPlannerScheduleDrawerPreSelect={setPlannerScheduleDrawerPreSelect}
-                isPlanningWeek={autoFillLoading || planningWeek || plannerActionBusy === 'week'}
-              />
+              <Suspense fallback={<LoadingSurface label="Loading week planner..." />}>
+                <PlanWeekPanel
+                  plannerTodayPlanItems={plannerTodayPlanItems}
+                  today={today}
+                  setPlannerPlanDayDateStr={setPlannerPlanDayDateStr}
+                  goals={goals}
+                  weeklyEvents={weeklyEvents}
+                  routineSupportPlacements={routineSupportPlacements}
+                  weekAssignments={weekAssignments}
+                  loadDayPlan={loadDayPlan}
+                  saveDayPlanForDate={saveDayPlanForDate}
+                  pausedDays={pausedDays}
+                  needsRescheduling={needsRescheduling}
+                  rescheduleNeedsReschedulingItem={rescheduleNeedsReschedulingItem}
+                  clearDaySchedule={clearDaySchedule}
+                  editGoal={editGoal}
+                  spawnedVolumeBlocks={spawnedVolumeBlocks}
+                  removeSpawnedVolumeBlock={removeSpawnedVolumeBlock}
+                  setEditingGoal={setEditingGoal}
+                  stagingTaskStatus={stagingTaskStatus}
+                  setStagingTaskStatus={setStagingTaskStatus}
+                  plannerScheduleDrawerPreSelect={plannerScheduleDrawerPreSelect}
+                  setPlannerScheduleDrawerPreSelect={setPlannerScheduleDrawerPreSelect}
+                  removeRoutineSupportPlacement={removeRoutineSupportPlacement}
+                  isPlanningWeek={autoFillLoading || planningWeek || plannerActionBusy === 'week'}
+                />
+              </Suspense>
             )}
             </PremiumSection>
+
+            <AnimatePresence>
+              {plannerSupportDrawer && (
+                <>
+                  <motion.button
+                    type="button"
+                    aria-label="Close planner drawer"
+                    className="fixed inset-0 z-[70] bg-stone-950/35 backdrop-blur-[3px]"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    onClick={() => setPlannerSupportDrawer(null)}
+                  />
+                  <motion.aside
+                    initial={{ opacity: 0, y: 24 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: 24 }}
+                    transition={{ duration: 0.2, ease: 'easeOut' }}
+                    className={`fixed inset-x-0 bottom-0 z-[71] max-h-[86vh] overflow-y-auto rounded-t-[30px] border shadow-[0_24px_80px_-28px_rgba(15,23,42,0.55)] md:inset-y-6 md:right-6 md:left-auto md:w-[min(34rem,calc(100vw-3rem))] md:rounded-[30px] ${
+                      isDark
+                        ? 'border-slate-600/50 bg-gradient-to-b from-slate-900/98 via-slate-900/96 to-slate-950/98'
+                        : 'border-stone-200/80 bg-gradient-to-b from-white via-stone-50/96 to-stone-100/96'
+                    }`}
+                    role="dialog"
+                    aria-modal="true"
+                    aria-label={`Planner ${plannerSupportDrawer}`}
+                  >
+                    <div className={`sticky top-0 z-10 mb-4 border-b px-4 pb-4 pt-3 backdrop-blur-xl ${
+                      isDark ? 'border-slate-700/70 bg-slate-950/75' : 'border-stone-200/80 bg-stone-50/88'
+                    }`}>
+                      <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-stone-300 dark:bg-slate-700 md:hidden" aria-hidden />
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="font-sans text-[11px] font-semibold uppercase tracking-[0.2em] text-stone-400 dark:text-stone-500">
+                          {plannerSupportDrawer === 'review' ? 'Review' : plannerSupportDrawer === 'projects' ? 'Projects' : plannerSupportDrawer === 'manage' ? 'Manage' : plannerSystemsMode === 'routines' ? 'Routine manager' : 'Systems'}
+                          </p>
+                          <h3 className="mt-1 font-serif text-lg text-stone-900 dark:text-stone-100">
+                            {plannerSupportDrawer === 'review' ? 'Check load and timing' : plannerSupportDrawer === 'projects' ? 'Inspect project structure' : plannerSupportDrawer === 'manage' ? 'Manage goals and routines' : plannerSystemsMode === 'routines' ? 'Manage routines' : 'Support this week'}
+                          </h3>
+                          <p className="mt-1 font-sans text-sm text-stone-600 dark:text-stone-300">
+                            {plannerSupportDrawer === 'review'
+                              ? 'Review load, confidence, deadlines, and weekly risk without crowding the planner canvas.'
+                              : plannerSupportDrawer === 'projects'
+                                ? 'Open project structure only when you want milestones, decomposition, or deeper context.'
+                                : plannerSupportDrawer === 'manage'
+                                  ? 'Edit, archive, restore, or permanently remove items without leaving the planner.'
+                                : plannerSystemsMode === 'routines'
+                                  ? 'Edit titles, categories, and recurring settings here, then return to Systems when you want the lighter weekly support view.'
+                                  : 'Place one support at a time, and only adjust what would make this week easier to hold.'}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setPlannerSupportDrawer(null)}
+                          className="rounded-full border border-stone-200 px-3 py-1.5 font-sans text-xs text-stone-600 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40 dark:border-slate-600 dark:text-stone-200 dark:hover:bg-slate-800/70"
+                        >
+                          Close
+                        </button>
+                      </div>
+                    </div>
+
+                    {plannerSupportDrawer === 'review' && (
+                      <div className="space-y-4 px-4 pb-4">
+                        <div className="rounded-[24px] border border-stone-200/80 dark:border-stone-700/80 bg-white/80 dark:bg-stone-800/72 px-4 py-3 shadow-sm">
+                          <p className="font-sans text-sm text-stone-800 dark:text-stone-200">
+                            {plannerViewMode === 'day' && (
+                              <>Today: <span className="font-semibold tabular-nums">{plannedHoursSummary.totalMinutes ? (Math.round((plannedHoursSummary.totalMinutes / 60) * 10) / 10) : 0}h</span> planned</>
+                            )}
+                            {plannerViewMode === 'week' && (
+                              <>This week: <span className="font-semibold tabular-nums">{plannedHoursSummary.totalMinutes ? (Math.round((plannedHoursSummary.totalMinutes / 60) * 10) / 10) : 0}h</span> planned</>
+                            )}
+                            {plannerViewMode === 'month' && (
+                              <>This month: <span className="font-semibold tabular-nums">{plannedHoursSummary.totalMinutes ? (Math.round((plannedHoursSummary.totalMinutes / 60) * 10) / 10) : 0}h</span> planned</>
+                            )}
+                          </p>
+                          {plannedHoursSummary.byGoal.length > 0 && (
+                            <p className="mt-1.5 font-sans text-xs text-stone-500 dark:text-stone-400">
+                              By task: {plannedHoursSummary.byGoal.slice(0, 6).map((g) => `${g.title} ${Math.round((g.minutes / 60) * 10) / 10}h`).join(' · ')}
+                            </p>
+                          )}
+                        </div>
+
+                        {plannerViewMode === 'week' && (
+                          <div className="rounded-[24px] border border-stone-200/80 dark:border-stone-700/80 bg-white/80 dark:bg-stone-800/72 px-4 py-3 shadow-sm">
+                            <p className="font-sans text-sm font-medium text-stone-800 dark:text-stone-200">Week capacity</p>
+                            <p className="mt-1 font-sans text-xs text-stone-500 dark:text-stone-400">
+                              Available {weekCapacity.availableHours.toFixed(1)}h · Planned {weekCapacity.plannedHours.toFixed(1)}h · Remaining {weekCapacity.remainingHours.toFixed(1)}h
+                            </p>
+                            {weekCapacity.overload && (
+                              <p className="mt-1 font-sans text-xs text-amber-600 dark:text-amber-400">Week is overplanned</p>
+                            )}
+                          </div>
+                        )}
+
+                        <div className="rounded-[24px] border border-stone-200/80 dark:border-stone-700/80 bg-white/80 dark:bg-stone-800/72 px-4 py-3 shadow-sm">
+                          <div className="flex items-center justify-between gap-3 mb-2">
+                            <p className="font-sans text-sm font-medium text-stone-800 dark:text-stone-200">Planner Coach</p>
+                            <p className="font-sans text-xs text-stone-500 dark:text-stone-400 tabular-nums">
+                              {Math.round(plannerLoad.plannedHours * 10) / 10}h / {Math.round(plannerLoad.capacityHours * 10) / 10}h
+                            </p>
+                          </div>
+                          <div className="h-2 rounded-full bg-stone-200 dark:bg-stone-700 overflow-hidden mb-2">
+                            <div
+                              className={`h-full transition-all ${plannerLoad.ratio >= 1 ? 'bg-rose-500' : plannerLoad.ratio >= 0.85 ? 'bg-amber-500' : 'bg-moss-500'}`}
+                              style={{ width: `${plannerLoad.ratioPct}%` }}
+                            />
+                          </div>
+                          <p className={`font-sans text-xs mb-3 ${plannerLoad.tone}`}>{plannerLoad.status}</p>
+                          <div className="mb-3 rounded-lg border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-800/60 px-3 py-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="font-sans text-xs text-stone-600 dark:text-stone-300">Confidence to hit plan</span>
+                              <span className="font-sans text-xs font-semibold tabular-nums text-stone-800 dark:text-stone-100">{plannerConfidence.score}/100</span>
+                            </div>
+                            <div className="flex flex-wrap gap-1.5 mt-2">
+                              {plannerConfidence.badges.map((b) => (
+                                <span key={b.label} className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium border ${b.tone}`}>
+                                  {b.label}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={handlePlannerChipProtectFocus}
+                              disabled={plannerChipBusy != null}
+                              className="inline-flex items-center gap-2 py-1.5 px-3 rounded-lg font-sans text-xs font-semibold bg-moss-600 text-white hover:bg-moss-700 disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
+                            >
+                              {plannerChipBusy === 'protect' ? 'Working...' : 'Protect focus block'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={handlePlannerChipRescheduleOne}
+                              disabled={plannerChipBusy != null}
+                              className="inline-flex items-center gap-2 py-1.5 px-3 rounded-lg font-sans text-xs font-medium border border-stone-300 dark:border-stone-600 text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800/70 disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-stone-400/30"
+                            >
+                              {plannerChipBusy === 'reschedule' ? 'Working...' : 'Reschedule one block'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={handlePlannerChipSplitUrgent}
+                              disabled={plannerChipBusy != null}
+                              className="inline-flex items-center gap-2 py-1.5 px-3 rounded-lg font-sans text-xs font-medium border border-amber-300 dark:border-amber-700 text-amber-800 dark:text-amber-200 hover:bg-amber-50 dark:hover:bg-amber-900/20 disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-amber-400/30"
+                            >
+                              {plannerChipBusy === 'split' ? 'Working...' : 'Split urgent task'}
+                            </button>
+                          </div>
+                        </div>
+
+                        {plannerUpcomingDeadlines.length > 0 && (
+                          <div className="rounded-[24px] border border-stone-200/80 dark:border-stone-700/80 bg-white/80 dark:bg-stone-800/72 px-4 py-3 shadow-sm">
+                            <p className="font-sans text-xs uppercase tracking-wider text-stone-500 dark:text-stone-400 mb-2">Upcoming deadlines</p>
+                            <ul className="space-y-1.5">
+                              {plannerUpcomingDeadlines.map((item) => (
+                                <li key={item.id} className="flex items-center justify-between gap-2">
+                                  <span className="font-sans text-xs text-stone-700 dark:text-stone-300 truncate">{item.title}</span>
+                                  <span className={`font-sans text-[11px] shrink-0 ${item.daysLeft <= 3 ? 'text-rose-600 dark:text-rose-300 font-semibold' : 'text-stone-500 dark:text-stone-400'}`}>
+                                    {item.daysLeft === 0 ? 'today' : `${item.daysLeft}d`}
+                                  </span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {plannerSupportDrawer === 'projects' && (
+                      <div className="space-y-4 px-4 pb-4">
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => { setPlannerSupportDrawer(null); setShowProjectPlanner(true); }}
+                            className="rounded-lg bg-moss-600 px-3 py-2 font-sans text-sm font-medium text-white hover:bg-moss-700 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
+                          >
+                            Open project planner
+                          </button>
+                        </div>
+                        <div className="overflow-hidden rounded-[24px] border border-stone-200/80 dark:border-slate-600/80 bg-white/82 dark:bg-slate-800/78 shadow-sm">
+                          <div className="border-t-0 p-4">
+                            <Suspense fallback={<LoadingSurface label="Loading project map..." />}>
+                              <HorizonsGantt
+                                goals={goals ?? []}
+                                onGoalClick={(goal) => setEditingGoal(goal)}
+                                onDeleteGoal={deleteGoal}
+                                onToggleMilestone={toggleMilestone}
+                                onUpdateSubtask={updateSubtask}
+                                onEditGoal={editGoal}
+                                onAddMilestone={addMilestone}
+                                onUpdateMilestone={updateMilestone}
+                                onDeleteMilestone={deleteMilestone}
+                                onAddSubtask={addSubtask}
+                                onDeleteSubtask={deleteSubtask}
+                                onScheduleTask={(taskPayload) => {
+                                  if (taskPayload?.type === 'staging-task' && taskPayload?.task) {
+                                    setPlannerScheduleDrawerPreSelect(taskPayload);
+                                    setPlannerSupportDrawer(null);
+                                  }
+                                }}
+                              />
+                            </Suspense>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {plannerSupportDrawer === 'manage' && (
+                      <div className="space-y-4 px-4 pb-4">
+                        <Suspense fallback={<LoadingSurface label="Loading management hub..." />}>
+                          <PlannerManageHub
+                            onClose={() => setPlannerSupportDrawer(null)}
+                            onEditGoal={(goal) => {
+                              setEditingGoal(goal);
+                              setPlannerSupportDrawer(null);
+                            }}
+                            onEditRoutines={() => {
+                              setPlannerSystemsMode('routines');
+                              setPlannerSupportDrawer('systems');
+                            }}
+                          />
+                        </Suspense>
+                      </div>
+                    )}
+
+                    {plannerSupportDrawer === 'systems' && (
+                      <div className="space-y-4 px-4 pb-4">
+                        <div className="overflow-hidden rounded-[24px] border border-stone-200/80 dark:border-slate-600/80 bg-white/82 dark:bg-slate-800/78 shadow-sm">
+                          {plannerSystemsMode === 'overview' ? (
+                            <div className="p-4">
+                              <PlannerRoutineSupportList onManageRoutines={() => setPlannerSystemsMode('routines')} />
+                            </div>
+                          ) : (
+                            <>
+                              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-stone-200 px-4 py-3 dark:border-slate-600">
+                                <div>
+                                  <p className="font-sans text-sm font-semibold text-stone-800 dark:text-stone-200">Manage routines</p>
+                                  <p className="mt-1 font-sans text-xs text-stone-500 dark:text-stone-400">
+                                    Edit recurring titles, categories, and durations here, then return when you want the lighter weekly support view.
+                                  </p>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => setPlannerSystemsMode('overview')}
+                                  className="rounded-lg border border-stone-300 px-3 py-1.5 font-sans text-xs font-medium text-stone-700 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40 dark:border-slate-600 dark:text-stone-200 dark:hover:bg-slate-700/70"
+                                >
+                                  Back to support view
+                                </button>
+                              </div>
+                              <div className="p-4">
+                                <Suspense fallback={<LoadingSurface label="Loading routine manager..." />}>
+                                  <RoutinesManager />
+                                </Suspense>
+                              </div>
+                            </>
+                          )}
+                        </div>
+
+                        {routinePatternSuggestions.length > 0 && (
+                          <div className="rounded-[24px] border border-stone-200/80 dark:border-slate-600/80 bg-white/82 dark:bg-slate-800/78 shadow-sm p-4">
+                            <div className="flex items-start justify-between gap-3">
+                              <div>
+                                <p className="font-sans text-sm font-semibold text-stone-800 dark:text-stone-200">Suggestions</p>
+                                <p className="mt-1 font-sans text-xs text-stone-500 dark:text-stone-400">Optional ideas when the current support pattern still feels too heavy.</p>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => setShowPlannerRoutineSuggestions((prev) => !prev)}
+                                className="rounded-lg border border-stone-300 px-3 py-1.5 font-sans text-xs font-medium text-stone-700 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-moss-500/40 dark:border-slate-600 dark:text-stone-200 dark:hover:bg-slate-700/70"
+                              >
+                                {showPlannerRoutineSuggestions ? 'Hide suggestions' : `Show ${routinePatternSuggestions.length} suggestions`}
+                              </button>
+                            </div>
+                            {showPlannerRoutineSuggestions && routinePatternSuggestions.map((suggestion) => (
+                              <div key={`drawer-${suggestion.id}`} className="mt-3 rounded-lg border border-stone-200 dark:border-slate-700 px-3 py-2">
+                                <p className="font-sans text-sm text-stone-800 dark:text-stone-200">{suggestion.title}</p>
+                                <p className="mt-1 font-sans text-xs text-stone-500 dark:text-stone-400">{suggestion.body}</p>
+                                <button
+                                  type="button"
+                                  onClick={() => handleAssistantOperatorAction('ADD_ROUTINE_STRUCTURE', { suggestion })}
+                                  className="mt-2 rounded-lg border border-stone-200 px-2.5 py-1.5 text-xs font-sans text-stone-700 hover:bg-stone-100 dark:border-slate-600 dark:text-stone-200 dark:hover:bg-slate-700/60"
+                                >
+                                  {suggestion.actionLabel}
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        <div className="rounded-[24px] border border-stone-200/80 dark:border-slate-600/80 bg-white/82 dark:bg-slate-800/78 shadow-sm p-4 space-y-3">
+                          <p className="font-sans text-sm font-semibold text-stone-800 dark:text-stone-200">Support blocks</p>
+                          <p className="font-sans text-xs text-stone-500 dark:text-stone-400">Use these for recurring admin, reset, or recovery support without filling the main planner canvas.</p>
+                          <div className="flex flex-wrap gap-2">
+                            {MAINTENANCE_BLOCK_TEMPLATES.slice(0, 4).map((template) => (
+                              <button
+                                key={template.id}
+                                type="button"
+                                onClick={() => {
+                                  addMaintenanceBlock?.({ templateId: template.id, ...template });
+                                  pushReward?.({ message: `${template.title} added.`, tone: 'moss', icon: '🧩', durationMs: 1800 });
+                                }}
+                                className="px-2.5 py-1.5 rounded-lg text-xs font-sans border border-stone-300 dark:border-slate-600 text-stone-700 dark:text-stone-200 hover:bg-stone-100 dark:hover:bg-slate-700/60"
+                              >
+                                Add {template.title}
+                              </button>
+                            ))}
+                          </div>
+                          {maintenanceBlocks.length > 0 ? (
+                            <ul className="space-y-2">
+                              {maintenanceBlocks.slice(0, 6).map((block) => (
+                                <li key={block.id} className="flex items-center justify-between gap-3 rounded-lg border border-stone-200 dark:border-slate-700 px-3 py-2">
+                                  <div className="min-w-0">
+                                    <p className="font-sans text-sm text-stone-800 dark:text-stone-200 truncate">{block.title}</p>
+                                    <p className="font-sans text-xs text-stone-500 dark:text-stone-400">
+                                      {block.durationMinutes}m / {block.flexibility}
+                                    </p>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => deleteMaintenanceBlock?.(block.id)}
+                                    className="text-xs font-sans text-stone-500 hover:text-rose-600"
+                                  >
+                                    Remove
+                                  </button>
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <p className="font-sans text-xs text-stone-500 dark:text-stone-400">No support blocks yet.</p>
+                          )}
+                        </div>
+
+                        <div className="rounded-[24px] border border-stone-200/80 dark:border-slate-600/80 bg-white/82 dark:bg-slate-800/78 shadow-sm p-4 space-y-3">
+                          <p className="font-sans text-sm font-semibold text-stone-800 dark:text-stone-200">Support areas</p>
+                          <p className="font-sans text-xs text-stone-500 dark:text-stone-400">Add light support around the parts of life that need steadier attention.</p>
+                          <div className="flex flex-wrap gap-2">
+                            {LIFE_DOMAIN_TEMPLATES.slice(0, 4).map((template) => (
+                              <button
+                                key={template.id}
+                                type="button"
+                                onClick={() => {
+                                  const domain = addLifeDomain?.({ templateId: template.id, title: template.title, supportGoal: `Support ${template.title.toLowerCase()}` });
+                                  const support = buildDomainSupportPlan(domain ?? { templateId: template.id, title: template.title });
+                                  support.maintenanceTemplates.slice(0, 1).forEach((mt) => addMaintenanceBlock?.({ templateId: mt.id, ...mt }));
+                                  pushReward?.({ message: `${template.title} support added.`, tone: 'moss', icon: '🧭', durationMs: 1800 });
+                                }}
+                                className="px-2.5 py-1.5 rounded-lg text-xs font-sans border border-stone-300 dark:border-slate-600 text-stone-700 dark:text-stone-200 hover:bg-stone-100 dark:hover:bg-slate-700/60"
+                              >
+                                Add support for {template.title}
+                              </button>
+                            ))}
+                          </div>
+                          {lifeDomainCards.length > 0 ? (
+                            <ul className="space-y-2">
+                              {lifeDomainCards.slice(0, 6).map(({ domain, health }) => (
+                                <li key={domain.id} className="rounded-lg border border-stone-200 dark:border-slate-700 px-3 py-2">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <p className="font-sans text-sm text-stone-800 dark:text-stone-200">{domain.title}</p>
+                                    <span className={`text-[11px] font-sans px-2 py-0.5 rounded-full ${health.tone === 'moss' ? 'bg-moss-100 text-moss-800' : health.tone === 'amber' ? 'bg-amber-100 text-amber-800' : 'bg-stone-100 text-stone-700'}`}>
+                                      {health.label}
+                                    </span>
+                                  </div>
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <p className="font-sans text-xs text-stone-500 dark:text-stone-400">No support areas yet.</p>
+                          )}
+                        </div>
+
+                        <div className="rounded-[24px] border border-stone-200/80 dark:border-slate-600/80 bg-white/82 dark:bg-slate-800/78 shadow-sm p-4 space-y-3">
+                          <p className="font-sans text-sm font-semibold text-stone-800 dark:text-stone-200">Keep steady</p>
+                          <p className="font-sans text-xs text-stone-500 dark:text-stone-400">Keep recovery, recurring care, and protected time visible while you plan the week.</p>
+                          <div className={`rounded-lg border px-3 py-2 ${protectedTimeSignals.creepRisk ? 'border-amber-300 bg-amber-50/60 dark:border-amber-700 dark:bg-amber-900/20' : 'border-stone-200 bg-stone-50/50 dark:border-slate-700 dark:bg-slate-800/50'}`}>
+                            <p className="font-sans text-sm text-stone-800 dark:text-stone-200">{protectedTimeSignals.message}</p>
+                          </div>
+                        </div>
+
+                      </div>
+                    )}
+                  </motion.aside>
+                </>
+              )}
+            </AnimatePresence>
 
             {plannerShowSecondary && (
               <>
@@ -4706,26 +6240,222 @@ function GardenDashboard() {
                   </button>
                   {plannerProjectsOpen && (
                     <div className="border-t border-stone-200 dark:border-slate-600 p-4">
-                      <HorizonsGantt
-                        goals={goals ?? []}
-                        onGoalClick={(goal) => setEditingGoal(goal)}
-                        onDeleteGoal={deleteGoal}
-                        onToggleMilestone={toggleMilestone}
-                        onUpdateSubtask={updateSubtask}
-                        onEditGoal={editGoal}
-                        onAddMilestone={addMilestone}
-                        onUpdateMilestone={updateMilestone}
-                        onDeleteMilestone={deleteMilestone}
-                        onAddSubtask={addSubtask}
-                        onDeleteSubtask={deleteSubtask}
-                        onScheduleTask={(taskPayload) => {
-                          if (taskPayload?.type === 'staging-task' && taskPayload?.task) {
-                            setPlannerScheduleDrawerPreSelect(taskPayload);
-                          }
-                        }}
-                      />
+                      <Suspense fallback={<LoadingSurface label="Loading project map..." />}>
+                        <HorizonsGantt
+                          goals={goals ?? []}
+                          onGoalClick={(goal) => setEditingGoal(goal)}
+                          onDeleteGoal={deleteGoal}
+                          onToggleMilestone={toggleMilestone}
+                          onUpdateSubtask={updateSubtask}
+                          onEditGoal={editGoal}
+                          onAddMilestone={addMilestone}
+                          onUpdateMilestone={updateMilestone}
+                          onDeleteMilestone={deleteMilestone}
+                          onAddSubtask={addSubtask}
+                          onDeleteSubtask={deleteSubtask}
+                          onScheduleTask={(taskPayload) => {
+                            if (taskPayload?.type === 'staging-task' && taskPayload?.task) {
+                              setPlannerScheduleDrawerPreSelect(taskPayload);
+                            }
+                          }}
+                        />
+                      </Suspense>
                     </div>
                   )}
+                </section>
+
+                {plannerShowSecondary && routinePatternSuggestions.length > 0 && (
+                  <section className="rounded-xl border border-stone-200 dark:border-slate-600 bg-white dark:bg-slate-800/80 shadow-sm mb-6 overflow-hidden">
+                    <div className="px-4 py-3 border-b border-stone-200 dark:border-slate-600">
+                      <p className="font-sans text-sm font-semibold text-stone-800 dark:text-stone-200">Planner support suggestions</p>
+                      <p className="mt-1 font-sans text-xs text-stone-500 dark:text-stone-400">Calm structure suggestions based on repeated friction.</p>
+                    </div>
+                    <div className="p-4 space-y-3">
+                      {routinePatternSuggestions.map((suggestion) => (
+                        <div key={`planner-${suggestion.id}`} className="rounded-lg border border-stone-200 dark:border-slate-700 px-3 py-2">
+                          <p className="font-sans text-sm text-stone-800 dark:text-stone-200">{suggestion.title}</p>
+                          <p className="mt-1 font-sans text-xs text-stone-500 dark:text-stone-400">{suggestion.body}</p>
+                          <button
+                            type="button"
+                            onClick={() => handleAssistantOperatorAction('ADD_ROUTINE_STRUCTURE', { suggestion })}
+                            className="mt-2 text-xs font-sans text-moss-700 hover:text-moss-800 dark:text-moss-300"
+                          >
+                            {suggestion.actionLabel}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                )}
+
+                <section className="rounded-xl border border-stone-200 dark:border-slate-600 bg-white dark:bg-slate-800/80 shadow-sm mb-6 overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => setPlannerMaintenanceOpen((o) => !o)}
+                    className="w-full flex items-center justify-between gap-2 px-4 py-3 text-left font-sans text-sm font-semibold text-stone-800 dark:text-stone-200 hover:bg-stone-50 dark:hover:bg-slate-700/50 focus:outline-none focus:ring-2 focus:ring-moss-500/40"
+                    aria-expanded={plannerMaintenanceOpen}
+                  >
+                    <span>Maintenance blocks</span>
+                    <span className="text-stone-400 shrink-0" aria-hidden>{plannerMaintenanceOpen ? '▼' : '▶'}</span>
+                  </button>
+                  {plannerMaintenanceOpen && (
+                    <div className="border-t border-stone-200 dark:border-slate-600 p-4">
+                      <p className="font-sans text-xs text-stone-500 dark:text-stone-400 mb-2">
+                        Recurring support blocks are flexible upkeep time. Skips can be rescheduled later.
+                      </p>
+                      <div className="flex flex-wrap gap-2 mb-3">
+                        {MAINTENANCE_BLOCK_TEMPLATES.slice(0, 4).map((template) => (
+                          <button
+                            key={template.id}
+                            type="button"
+                            onClick={() => {
+                              addMaintenanceBlock?.({ templateId: template.id, ...template });
+                              pushReward?.({ message: `${template.title} added.`, tone: 'moss', icon: '🧩', durationMs: 1800 });
+                            }}
+                            className="px-2.5 py-1.5 rounded-lg text-xs font-sans border border-stone-300 dark:border-slate-600 text-stone-700 dark:text-stone-200 hover:bg-stone-100 dark:hover:bg-slate-700/60"
+                          >
+                            + {template.title}
+                          </button>
+                        ))}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const title = window.prompt('Name this maintenance block', 'Maintenance block');
+                            if (!title || !title.trim()) return;
+                            addMaintenanceBlock?.({ title: title.trim(), category: 'Custom', durationMinutes: 45, preferredDays: [2], preferredTimeBand: 'early_afternoon', flexibility: 'flexible', importance: 'medium' });
+                            pushReward?.({ message: 'Custom maintenance block added.', tone: 'moss', icon: '🧩', durationMs: 1800 });
+                          }}
+                          className="px-2.5 py-1.5 rounded-lg text-xs font-sans border border-dashed border-stone-300 dark:border-slate-600 text-stone-700 dark:text-stone-200 hover:bg-stone-100 dark:hover:bg-slate-700/60"
+                        >
+                          + Custom block
+                        </button>
+                      </div>
+                      {maintenanceBlocks.length > 0 ? (
+                        <ul className="space-y-2">
+                          {maintenanceBlocks.slice(0, 6).map((block) => (
+                            <li key={block.id} className="flex items-center justify-between gap-3 rounded-lg border border-stone-200 dark:border-slate-700 px-3 py-2">
+                              <div className="min-w-0">
+                                <p className="font-sans text-sm text-stone-800 dark:text-stone-200 truncate">{block.title}</p>
+                                <p className="font-sans text-xs text-stone-500 dark:text-stone-400">
+                                  {block.durationMinutes}m / {block.flexibility} / {block.preferredTimeBand?.replace('_', ' ')}
+                                </p>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => deleteMaintenanceBlock?.(block.id)}
+                                className="text-xs font-sans text-stone-500 hover:text-rose-600"
+                              >
+                                Remove
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="font-sans text-xs text-stone-500 dark:text-stone-400">No maintenance blocks yet.</p>
+                      )}
+                    </div>
+                  )}
+                </section>
+
+                <section id="planner-life-domains" className="rounded-xl border border-stone-200 dark:border-slate-600 bg-white dark:bg-slate-800/80 shadow-sm mb-6 overflow-hidden">
+                  <div className="px-4 py-3 border-b border-stone-200 dark:border-slate-600">
+                    <p className="font-sans text-sm font-semibold text-stone-800 dark:text-stone-200">Life domains</p>
+                    <p className="mt-1 font-sans text-xs text-stone-500 dark:text-stone-400">Support areas, not projects. Keep structure light and steady.</p>
+                  </div>
+                  <div className="p-4 space-y-3">
+                    <div className="flex flex-wrap gap-2">
+                      {LIFE_DOMAIN_TEMPLATES.slice(0, 6).map((template) => (
+                        <button
+                          key={template.id}
+                          type="button"
+                          onClick={() => {
+                            const domain = addLifeDomain?.({ templateId: template.id, title: template.title, supportGoal: `Support ${template.title.toLowerCase()}` });
+                            const support = buildDomainSupportPlan(domain ?? { templateId: template.id, title: template.title });
+                            support.maintenanceTemplates.slice(0, 2).forEach((mt) => addMaintenanceBlock?.({ templateId: mt.id, ...mt }));
+                            pushReward?.({ message: `${template.title} support added.`, tone: 'moss', icon: '🧭', durationMs: 1800 });
+                          }}
+                          className="px-2.5 py-1.5 rounded-lg text-xs font-sans border border-stone-300 dark:border-slate-600 text-stone-700 dark:text-stone-200 hover:bg-stone-100 dark:hover:bg-slate-700/60"
+                        >
+                          + {template.title}
+                        </button>
+                      ))}
+                    </div>
+                    {lifeDomainCards.length > 0 ? (
+                      <ul className="space-y-2">
+                        {lifeDomainCards.slice(0, 8).map(({ domain, support, health }) => (
+                          <li key={domain.id} className="rounded-lg border border-stone-200 dark:border-slate-700 px-3 py-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="font-sans text-sm text-stone-800 dark:text-stone-200">{domain.title}</p>
+                              <span className={`text-[11px] font-sans px-2 py-0.5 rounded-full ${health.tone === 'moss' ? 'bg-moss-100 text-moss-800' : health.tone === 'amber' ? 'bg-amber-100 text-amber-800' : 'bg-stone-100 text-stone-700'}`}>
+                                {health.label}
+                              </span>
+                            </div>
+                            <p className="mt-1 font-sans text-xs text-stone-500 dark:text-stone-400">
+                              {(support.maintenanceTemplates || []).slice(0, 2).map((t) => t.title).join(' · ') || 'No structure yet'}
+                            </p>
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  (support.maintenanceTemplates || []).slice(0, 1).forEach((mt) => addMaintenanceBlock?.({ templateId: mt.id, ...mt }));
+                                  pushReward?.({ message: 'Added one support block.', tone: 'moss', icon: '🧩', durationMs: 1600 });
+                                }}
+                                className="text-xs font-sans text-moss-700 hover:text-moss-800 dark:text-moss-300"
+                              >
+                                Add support block
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => deleteLifeDomain?.(domain.id)}
+                                className="text-xs font-sans text-stone-500 hover:text-stone-700"
+                              >
+                                Remove domain
+                              </button>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="font-sans text-xs text-stone-500 dark:text-stone-400">No life domains yet. Add one template to create lightweight support structure.</p>
+                    )}
+                  </div>
+                </section>
+
+                <section id="planner-protected-time" className="rounded-xl border border-stone-200 dark:border-slate-600 bg-white dark:bg-slate-800/80 shadow-sm mb-6 overflow-hidden">
+                  <div className="px-4 py-3 border-b border-stone-200 dark:border-slate-600">
+                    <p className="font-sans text-sm font-semibold text-stone-800 dark:text-stone-200">Protected time</p>
+                    <p className="mt-1 font-sans text-xs text-stone-500 dark:text-stone-400">Defend recovery, social, decompression, and transition blocks.</p>
+                  </div>
+                  <div className="p-4 space-y-3">
+                    <div className={`rounded-lg border px-3 py-2 ${protectedTimeSignals.creepRisk ? 'border-amber-300 bg-amber-50/60 dark:border-amber-700 dark:bg-amber-900/20' : 'border-stone-200 bg-stone-50/50 dark:border-slate-700 dark:bg-slate-800/50'}`}>
+                      <p className="font-sans text-sm text-stone-800 dark:text-stone-200">{protectedTimeSignals.message}</p>
+                      {protectedTimeSignals.creepRisk && (
+                        <p className="mt-1 font-sans text-xs text-stone-600 dark:text-stone-300">Tradeoff: keep one protected block and shorten tomorrow&apos;s admin/work block instead.</p>
+                      )}
+                    </div>
+                    <ul className="space-y-2">
+                      {(maintenanceBlocks || []).slice(0, 8).map((block) => (
+                        <li key={block.id} className="rounded-lg border border-stone-200 dark:border-slate-700 px-3 py-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="font-sans text-sm text-stone-800 dark:text-stone-200">{block.title}</p>
+                            <span className="font-sans text-[11px] text-stone-500 dark:text-stone-400">{block.protectionStrength ?? 'normal'}</span>
+                          </div>
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {['soft', 'normal', 'strong'].map((strength) => (
+                              <button
+                                key={`${block.id}-${strength}`}
+                                type="button"
+                                onClick={() => updateMaintenanceBlock?.(block.id, { protectionStrength: strength })}
+                                className={`px-2 py-1 rounded text-xs font-sans border ${block.protectionStrength === strength ? 'border-moss-500 text-moss-700 bg-moss-50' : 'border-stone-200 text-stone-600 dark:border-slate-600 dark:text-stone-300'}`}
+                              >
+                                {strength}
+                              </button>
+                            ))}
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
                 </section>
 
                 <section className="rounded-xl border border-stone-200 dark:border-slate-600 bg-white dark:bg-slate-800/80 shadow-sm mb-6 overflow-hidden">
@@ -4740,7 +6470,9 @@ function GardenDashboard() {
                   </button>
                   {plannerRoutinesOpen && (
                     <div className="border-t border-stone-200 dark:border-slate-600 p-4">
-                      <RoutinesManager />
+                      <Suspense fallback={<LoadingSurface label="Loading routine manager..." />}>
+                        <RoutinesManager />
+                      </Suspense>
                     </div>
                   )}
                 </section>
@@ -4981,7 +6713,7 @@ function GardenDashboard() {
       </main>
       )}
 
-      {/* Floating glassmorphic bottom nav: Now / Plan / Garden */}
+      {/* Floating glassmorphic bottom nav: Today / Plan / Garden */}
       <nav
         className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 bg-stone-900/80 backdrop-blur-md px-4 sm:px-6 py-3 rounded-full flex gap-4 sm:gap-8 shadow-2xl border border-white/10 safe-area-pb"
         aria-label="Main navigation"
@@ -4991,10 +6723,10 @@ function GardenDashboard() {
           onClick={() => setActiveTab('today')}
           className={`flex items-center gap-2 min-w-[44px] min-h-[44px] justify-center rounded-full px-3 py-2 transition-colors focus:outline-none focus:ring-2 focus:ring-white/30 ${activeTab === 'today' ? 'bg-white/20 text-amber-300' : 'text-stone-400 hover:text-stone-200'}`}
           aria-current={activeTab === 'today' ? 'page' : undefined}
-          aria-label="Now"
+          aria-label="Today"
         >
           <span className="text-2xl sm:text-xl" aria-hidden>⚡</span>
-          <span className="hidden sm:inline text-sm font-medium">Now</span>
+          <span className="hidden sm:inline text-sm font-medium">Today</span>
         </button>
         <button
           type="button"
@@ -5028,9 +6760,13 @@ function GardenDashboard() {
         onOpen={() => setCommandPaletteOpen(true)}
         onOpenSpiritBuilder={() => { setCommandPaletteOpen(false); openModal('mirror'); }}
         onCapture={handleCaptureFromPalette}
+        onOpenOmniAdd={(text) => {
+          setCommandPaletteOpen(false);
+          requestOmniAddOpen(text);
+        }}
       />
 
-      {activeTab !== 'garden' && (
+      {activeTab !== 'settings' && (
       <div id="guide-omni-add" className="relative">
         <TourHighlight step={2} tooltip="Great. Now add one tiny micro-habit to your list.">
         <OmniAdd
@@ -5041,10 +6777,18 @@ function GardenDashboard() {
           }}
           onOpenScheduleEvent={(title) => {
             setScheduleEventPrefill(title ? { title } : null);
+            if (!title) {
+              setScheduleEventLocation('');
+              setScheduleEventParticipants('');
+              setScheduleEventSourceText('');
+            }
             setShowScheduleEventModal(true);
           }}
           onOpenBrainDump={() => openModal('compost')}
           onParsedRoute={handleOmniAddParsedRoute}
+          requestOpenSignal={omniAddRequestOpenSignal}
+          prefillText={omniAddPrefillText}
+          showFloatingTrigger={false}
         />
       </TourHighlight>
       </div>
@@ -5077,75 +6821,96 @@ function GardenDashboard() {
               >
                 ×
               </button>
-              <SpiritBuilder
-                mode="edit"
-                initialConfig={spiritConfig}
-                onComplete={() => closeModal('mirror')}
-              />
+              <Suspense fallback={<LoadingSurface label="Opening spirit studio..." fullscreen />}>
+                <SpiritBuilder
+                  mode="edit"
+                  initialConfig={spiritConfig}
+                  onComplete={() => closeModal('mirror')}
+                />
+              </Suspense>
             </motion.div>
           </motion.div>
         )}
       </AnimatePresence>
 
-      <GoalCreator
-        open={isPlanting}
-        onClose={() => { setIsPlanting(false); setGoalCreatorInitialTitle(''); setGoalCreatorInitialSubtasks([]); setGoalCreatorInitialIsFixed(undefined); setGoalCreatorInitialContext(undefined); setGoalCreatorInitialRecurrence(undefined); setGoalCreatorInitialEnergyCost(undefined); }}
-        onSave={handleSaveSeed}
-        initialTitle={goalCreatorInitialTitle}
-        initialSubtasks={goalCreatorInitialSubtasks}
-        initialIsFixed={goalCreatorInitialIsFixed}
-        initialContext={goalCreatorInitialContext}
-        initialRecurrence={goalCreatorInitialRecurrence}
-        initialEnergyCost={goalCreatorInitialEnergyCost}
-        existingRoutineGoals={(goals ?? []).filter((g) => g.type === 'routine')}
-        existingVitalityGoals={(goals ?? []).filter((g) => g.type === 'vitality')}
-        ritualCategories={userSettings?.ritualCategories ?? []}
-        onAddRitualCategory={addRitualCategory}
-        onOpenProjectPlanner={() => { setProjectPlannerImportedPlan(null); setShowProjectPlanner(true); }}
-      />
+      {isPlanting && (
+        <Suspense fallback={<LoadingSurface label="Opening seed creator..." fullscreen />}>
+          <GoalCreator
+            open={isPlanting}
+            onClose={() => { setIsPlanting(false); setGoalCreatorInitialTitle(''); setGoalCreatorInitialSubtasks([]); setGoalCreatorInitialIsFixed(undefined); setGoalCreatorInitialContext(undefined); setGoalCreatorInitialRecurrence(undefined); setGoalCreatorInitialEnergyCost(undefined); }}
+            onSave={handleSaveSeed}
+            initialTitle={goalCreatorInitialTitle}
+            initialSubtasks={goalCreatorInitialSubtasks}
+            initialIsFixed={goalCreatorInitialIsFixed}
+            initialContext={goalCreatorInitialContext}
+            initialRecurrence={goalCreatorInitialRecurrence}
+            initialEnergyCost={goalCreatorInitialEnergyCost}
+            existingRoutineGoals={(goals ?? []).filter((g) => g.type === 'routine')}
+            existingVitalityGoals={(goals ?? []).filter((g) => g.type === 'vitality')}
+            ritualCategories={userSettings?.ritualCategories ?? []}
+            onAddRitualCategory={addRitualCategory}
+          />
+        </Suspense>
+      )}
 
-      <ProjectPlanner
-        open={showProjectPlanner}
-        onClose={() => {
-          setShowProjectPlanner(false);
-          setProjectPlannerPrefill({ prefillTitle: '', prefillParentGoalId: '' });
-          setProjectPlannerImportedPlan(null);
-          setProjectPlannerFocusGoalId(null);
-        }}
-        onCreateGoals={handleProjectGoals}
-        prefillTitle={projectPlannerPrefill.prefillTitle}
-        prefillParentGoalId={projectPlannerPrefill.prefillParentGoalId}
-        prefillPlan={projectPlannerImportedPlan?.plan ?? null}
-        prefillDescription={projectPlannerImportedPlan?.description ?? ''}
-        prefillDeadline={projectPlannerImportedPlan?.deadline ?? ''}
-        focusGoalId={projectPlannerFocusGoalId}
-        onStartFocus={(payload) => { runStartFocus(payload); setShowProjectPlanner(false); }}
-        onReschedule={(payload) => { setActiveTab('planner'); setShowProjectPlanner(false); }}
-        onViewTodayPlan={() => { setActiveTab('today'); setShowProjectPlanner(false); }}
-        onEditGoal={(goal) => { setEditingGoal(goal); setShowProjectPlanner(false); }}
-      />
+      {showProjectPlanner && (
+        <Suspense fallback={<LoadingSurface label="Opening project planner..." fullscreen />}>
+          <ProjectPlanner
+            open={showProjectPlanner}
+            onClose={() => {
+              setShowProjectPlanner(false);
+              setProjectPlannerPrefill({ prefillTitle: '', prefillParentGoalId: '' });
+              setProjectPlannerImportedPlan(null);
+              setProjectPlannerFocusGoalId(null);
+            }}
+            onCreateGoals={handleProjectGoals}
+            prefillTitle={projectPlannerPrefill.prefillTitle}
+            prefillParentGoalId={projectPlannerPrefill.prefillParentGoalId}
+            prefillPlan={projectPlannerImportedPlan?.plan ?? null}
+            prefillDescription={projectPlannerImportedPlan?.description ?? ''}
+            prefillDeadline={projectPlannerImportedPlan?.deadline ?? ''}
+            focusGoalId={projectPlannerFocusGoalId}
+            onStartFocus={(payload) => { runStartFocus(payload); setShowProjectPlanner(false); }}
+            onReschedule={() => { setActiveTab('planner'); setShowProjectPlanner(false); }}
+            onViewTodayPlan={() => { setActiveTab('today'); setShowProjectPlanner(false); }}
+            onEditGoal={(goal) => { setEditingGoal(goal); setShowProjectPlanner(false); }}
+          />
+        </Suspense>
+      )}
 
-      <StartNowModal
-        open={showStartNowModal}
-        mode={startNowCandidate?.goal ? 'hasTasks' : 'noTasks'}
-        candidateTask={startNowCandidate}
-        onStart={handleStartNowStart}
-        onPickDifferent={handleStartNowPickDifferent}
-        onCreateSuggestion={handleStartNowCreateSuggestion}
-        onClose={() => { setShowStartNowModal(false); setStartNowCandidate(null); }}
-      />
+      {showStartNowModal && (
+        <Suspense fallback={<LoadingSurface label="Opening next-step assist..." fullscreen />}>
+          <StartNowModal
+            open={showStartNowModal}
+            mode={startNowCandidate?.goal ? 'hasTasks' : 'noTasks'}
+            candidateTask={startNowCandidate}
+            onStart={handleStartNowStart}
+            onPickDifferent={handleStartNowPickDifferent}
+            onCreateSuggestion={handleStartNowCreateSuggestion}
+            onClose={() => { setShowStartNowModal(false); setStartNowCandidate(null); }}
+          />
+        </Suspense>
+      )}
 
-      <GentleRestartModal
-        open={showGentleRestart}
-        onFreshStart={handleGentleRestartFreshStart}
-        onReviewCompost={handleGentleRestartReviewCompost}
-        onDismiss={handleGentleRestartDismiss}
-      />
+      {showGentleRestart && (
+        <Suspense fallback={<LoadingSurface label="Opening restart support..." fullscreen />}>
+          <GentleRestartModal
+            open={showGentleRestart}
+            onFreshStart={handleGentleRestartFreshStart}
+            onReviewCompost={handleGentleRestartReviewCompost}
+            onDismiss={handleGentleRestartDismiss}
+          />
+        </Suspense>
+      )}
 
-      <AccessibilitySettingsModal
-        open={showAccessibilityModal}
-        onClose={() => closeModal('accessibility')}
-      />
+      {showAccessibilityModal && (
+        <Suspense fallback={<LoadingSurface label="Loading accessibility settings..." fullscreen />}>
+          <AccessibilitySettingsModal
+            open={showAccessibilityModal}
+            onClose={() => closeModal('accessibility')}
+          />
+        </Suspense>
+      )}
 
       {showJournalModal && (
         <div
@@ -5242,89 +7007,109 @@ function GardenDashboard() {
         </div>
       )}
 
-      <HabitNurseryModal open={isNurseryOpen} onClose={() => setIsNurseryOpen(false)} />
+      {isNurseryOpen && (
+        <Suspense fallback={<LoadingSurface label="Opening routine nursery..." fullscreen />}>
+          <HabitNurseryModal open={isNurseryOpen} onClose={() => setIsNurseryOpen(false)} />
+        </Suspense>
+      )}
 
-      <DailyPlanRitual
-        open={showDailyPlanRitual}
-        onClose={() => setShowDailyPlanRitual(false)}
-        today={today}
-        goals={goals ?? []}
-        weeklyEvents={weeklyEvents ?? []}
-        dayPlan={ritualDayPlan}
-        dayCapacityHours={Math.max(1, (hourFromTimeStr(userSettings?.dayEnd, 22) - hourFromTimeStr(userSettings?.dayStart, 8)))}
-        onConfirm={handleDailyPlanRitualConfirm}
-      />
+      {showDailyPlanRitual && (
+        <Suspense fallback={<LoadingSurface label="Opening daily planning ritual..." fullscreen />}>
+          <DailyPlanRitual
+            open={showDailyPlanRitual}
+            onClose={() => setShowDailyPlanRitual(false)}
+            today={today}
+            goals={goals ?? []}
+            weeklyEvents={weeklyEvents ?? []}
+            dayPlan={ritualDayPlan}
+            dayCapacityHours={Math.max(1, (hourFromTimeStr(userSettings?.dayEnd, 22) - hourFromTimeStr(userSettings?.dayStart, 8)))}
+            onConfirm={handleDailyPlanRitualConfirm}
+          />
+        </Suspense>
+      )}
 
-      <GoalEditor
-        open={!!editingGoal}
-        goal={editingGoal}
-        onClose={() => setEditingGoal(null)}
-        onSave={(updates) => { if (editingGoal?.id) editGoal(editingGoal.id, updates); setEditingGoal(null); }}
-        addGoal={addGoal}
-        addSubtask={addSubtask}
-        updateSubtask={updateSubtask}
-        deleteSubtask={deleteSubtask}
-        onOpenProjectPlanner={(opts) => {
-          setProjectPlannerPrefill({
-            prefillTitle: opts?.prefillTitle ?? '',
-            prefillParentGoalId: opts?.prefillParentGoalId ?? opts?.parentGoalId ?? '',
-          });
-          setProjectPlannerImportedPlan(null);
-          setEditingGoal(null);
-          setShowProjectPlanner(true);
-        }}
-        onStartFocus={(payload) => { runStartFocus(payload); setEditingGoal(null); }}
-        onReschedule={() => { setActiveTab('planner'); setEditingGoal(null); }}
-      />
+      {editingGoal && (
+        <Suspense fallback={<LoadingSurface label="Opening goal editor..." fullscreen />}>
+          <GoalEditor
+            open={!!editingGoal}
+            goal={editingGoal}
+            onClose={() => setEditingGoal(null)}
+            onSave={(updates) => { if (editingGoal?.id) editGoal(editingGoal.id, updates); setEditingGoal(null); }}
+            addGoal={addGoal}
+            addSubtask={addSubtask}
+            updateSubtask={updateSubtask}
+            deleteSubtask={deleteSubtask}
+            onOpenProjectPlanner={(opts) => {
+              setProjectPlannerPrefill({
+                prefillTitle: opts?.prefillTitle ?? '',
+                prefillParentGoalId: opts?.prefillParentGoalId ?? opts?.parentGoalId ?? '',
+              });
+              setProjectPlannerImportedPlan(null);
+              setEditingGoal(null);
+              setShowProjectPlanner(true);
+            }}
+            onStartFocus={(payload) => { runStartFocus(payload); setEditingGoal(null); }}
+            onReschedule={() => { setActiveTab('planner'); setEditingGoal(null); }}
+          />
+        </Suspense>
+      )}
 
-      <SpiritChat
-        open={showChat}
-        onClose={() => closeModal('chat')}
-        context={{
-          goals: goals ?? [],
-          logs: logs ?? [],
-          energy: dailyEnergyModifier ?? 0,
-          weather: weather ?? 'sun',
-        }}
-        onOperatorAction={handleAssistantOperatorAction}
-        operatorLoadingAction={assistantActionBusy}
-      />
+      {showChat && (
+        <Suspense fallback={<LoadingSurface label="Opening spirit chat..." fullscreen />}>
+          <SpiritChat
+            open={showChat}
+            onClose={() => closeModal('chat')}
+            context={{
+              goals: goals ?? [],
+              logs: logs ?? [],
+              energy: dailyEnergyModifier ?? 0,
+              weather: weather ?? 'sun',
+            }}
+            onOperatorAction={handleAssistantOperatorAction}
+            operatorLoadingAction={assistantActionBusy}
+          />
+        </Suspense>
+      )}
 
-      <CompostHeap
-        open={showCompost}
-        onClose={() => closeModal('compost')}
-        onPlant={(text) => {
-          setGoalCreatorInitialTitle(text ?? '');
-          setGoalCreatorInitialSubtasks([]);
-          closeModal('compost');
-          setIsPlanting(true);
-        }}
-        onPrism={(text, subtasks) => {
-          setGoalCreatorInitialTitle(text ?? '');
-          setGoalCreatorInitialSubtasks(Array.isArray(subtasks) ? subtasks : []);
-          closeModal('compost');
-          setIsPlanting(true);
-        }}
-        onViewInPlanner={(project) => {
-          if (project?.id) setProjectPlannerFocusGoalId(project.id);
-          setProjectPlannerImportedPlan(null);
-          closeModal('compost');
-          setShowProjectPlanner(true);
-        }}
-        onOpenProjectPlannerForDocumentPlan={(payload) => {
-          setProjectPlannerPrefill({
-            prefillTitle: payload?.title ?? '',
-            prefillParentGoalId: '',
-          });
-          setProjectPlannerImportedPlan({
-            plan: payload?.plan ?? null,
-            description: payload?.description ?? '',
-            deadline: payload?.deadline ?? '',
-          });
-          closeModal('compost');
-          setShowProjectPlanner(true);
-        }}
-      />
+      {showCompost && (
+        <Suspense fallback={<LoadingSurface label="Opening compost..." fullscreen />}>
+          <CompostHeap
+            open={showCompost}
+            onClose={() => closeModal('compost')}
+            onPlant={(text) => {
+              setGoalCreatorInitialTitle(text ?? '');
+              setGoalCreatorInitialSubtasks([]);
+              closeModal('compost');
+              setIsPlanting(true);
+            }}
+            onPrism={(text, subtasks) => {
+              setGoalCreatorInitialTitle(text ?? '');
+              setGoalCreatorInitialSubtasks(Array.isArray(subtasks) ? subtasks : []);
+              closeModal('compost');
+              setIsPlanting(true);
+            }}
+            onViewInPlanner={(project) => {
+              if (project?.id) setProjectPlannerFocusGoalId(project.id);
+              setProjectPlannerImportedPlan(null);
+              closeModal('compost');
+              setShowProjectPlanner(true);
+            }}
+            onOpenProjectPlannerForDocumentPlan={(payload) => {
+              setProjectPlannerPrefill({
+                prefillTitle: payload?.title ?? '',
+                prefillParentGoalId: '',
+              });
+              setProjectPlannerImportedPlan({
+                plan: payload?.plan ?? null,
+                description: payload?.description ?? '',
+                deadline: payload?.deadline ?? '',
+              });
+              closeModal('compost');
+              setShowProjectPlanner(true);
+            }}
+          />
+        </Suspense>
+      )}
 
       <AnimatePresence>
         {showScheduleEventModal && (
@@ -5380,6 +7165,37 @@ function GardenDashboard() {
                     />
                   </div>
                 </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label htmlFor="schedule-event-location" className="block font-sans text-sm font-medium text-stone-600 mb-1">Location</label>
+                    <input
+                      id="schedule-event-location"
+                      type="text"
+                      value={scheduleEventLocation}
+                      onChange={(e) => setScheduleEventLocation(e.target.value)}
+                      placeholder="Optional"
+                      className="w-full py-2 px-3 rounded-lg border border-stone-200 bg-white font-sans text-sm focus:outline-none focus:ring-2 focus:ring-moss-500/40 focus:border-moss-500"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="schedule-event-participants" className="block font-sans text-sm font-medium text-stone-600 mb-1">Participants</label>
+                    <input
+                      id="schedule-event-participants"
+                      type="text"
+                      value={scheduleEventParticipants}
+                      onChange={(e) => setScheduleEventParticipants(e.target.value)}
+                      placeholder="Optional, comma separated"
+                      className="w-full py-2 px-3 rounded-lg border border-stone-200 bg-white font-sans text-sm focus:outline-none focus:ring-2 focus:ring-moss-500/40 focus:border-moss-500"
+                    />
+                  </div>
+                </div>
+                {scheduleEventSourceText && (
+                  <div className="rounded-lg border border-stone-200 bg-stone-100/70 px-3 py-2">
+                    <p className="font-sans text-[11px] uppercase tracking-wide text-stone-500">Original shared text</p>
+                    <p className="mt-1 font-sans text-xs text-stone-600 line-clamp-2">{scheduleEventSourceText}</p>
+                  </div>
+                )}
 
                 <div className="grid grid-cols-2 gap-3">
                   <div>

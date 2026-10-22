@@ -1,7 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useGarden } from '../../context/GardenContext';
-import { getPlanningEntryConfig } from '../../constants/plannerPresets';
 import { useReward } from '../../context/RewardContext';
 import { suggestGoalStructure } from '../../services/geminiService';
 import InfoTooltip from '../InfoTooltip';
@@ -51,17 +50,6 @@ const RITUAL_PATTERNS = [
 ];
 
 const DEFAULT_RITUAL = { title: 'Daily Focus', days: [1, 2, 3, 4, 5] };
-
-function getSuggestionsForTitle(title) {
-  if (!title?.trim()) return { rituals: null, milestones: null };
-  const lower = title.toLowerCase();
-  for (const pattern of RITUAL_PATTERNS) {
-    if (pattern.keywords.some((k) => lower.includes(k))) {
-      return { rituals: pattern.rituals, milestones: pattern.milestones ?? [] };
-    }
-  }
-  return { rituals: null, milestones: null };
-}
 
 const DOMAINS = [
   { id: 'finance', label: 'Finance', emoji: '📈' },
@@ -122,9 +110,8 @@ function newVine(overrides = {}) {
   };
 }
 
-function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks = [], initialIsFixed, initialContext, initialRecurrence, initialEnergyCost, existingRoutineGoals = [], existingVitalityGoals = [], ritualCategories = [], onAddRitualCategory, onOpenProjectPlanner }) {
-  const { ownedSeeds = [], userSettings } = useGarden();
-  const planningEntry = useMemo(() => getPlanningEntryConfig(userSettings ?? {}), [userSettings]);
+function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks = [], initialIsFixed, initialContext, initialRecurrence, initialEnergyCost, existingRoutineGoals = [], existingVitalityGoals = [], ritualCategories = [], onAddRitualCategory }) {
+  const { ownedSeeds = [] } = useGarden();
   const [goalType, setGoalType] = useState(null); // null | 'kaizen' | 'routine' | 'vitality'
   const [title, setTitle] = useState('');
   const [selectedSeed, setSelectedSeed] = useState(null); // { id, name, model, icon } or null
@@ -186,7 +173,7 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
 
   useEffect(() => {
     if (open && goalType === 'vitality' && trackingChoice === '') setTrackingChoice('create_new');
-  }, [open, goalType]);
+  }, [open, goalType, trackingChoice]);
 
   // Prism flow: open as Kaizen with pre-filled subtasks
   useEffect(() => {
@@ -531,7 +518,7 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
                     <InfoTooltip text="A recurring habit you do on specific days." />
                     {' '}= recurring. <strong className="text-stone-700">Vitality</strong>
                     <InfoTooltip text="A single number you track over time." />
-                    {' '}= tracking. Projects with phases and deadlines live in Project Planner.
+                    {' '}= tracking.
                   </p>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -565,31 +552,7 @@ function GoalCreator({ open, onClose, onSave, initialTitle = '', initialSubtasks
                     <span className="font-sans text-stone-600 text-xs mt-0.5">(Health / Metric)</span>
                     <p className="font-sans text-stone-500 text-xs mt-2">Track a number. Weight, sleep, body fat. Lower or higher.</p>
                   </button>
-                  {planningEntry.showPlanAProjectInGoalCreator && (
-                    <button
-                      type="button"
-                      onClick={() => { onOpenProjectPlanner?.(); onClose?.(); }}
-                      className="hidden flex flex-col items-start p-5 rounded-2xl border-2 border-stone-200 bg-white hover:border-amber-400 hover:bg-amber-50/50 transition-all text-left focus:outline-none focus:ring-2 focus:ring-moss-500/50"
-                    >
-                      <span className="text-2xl mb-2" aria-hidden>🌻</span>
-                      <span className="font-serif text-stone-900 text-base">Plan a Project</span>
-                      <span className="font-sans text-stone-600 text-xs mt-0.5">(Massive Goal)</span>
-                      <p className="font-sans text-stone-500 text-xs mt-2">A huge undertaking. Mochi will slice it into phases and timelines.</p>
-                    </button>
-                  )}
                 </div>
-                {planningEntry.showPlanAProjectInGoalCreator && (
-                  <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3">
-                    <p className="font-sans text-sm text-amber-900">Working on something with phases, deadlines, or client work?</p>
-                    <button
-                      type="button"
-                      onClick={() => { onOpenProjectPlanner?.(); onClose?.(); }}
-                      className="mt-2 font-sans text-sm font-medium text-amber-800 hover:text-amber-900 hover:underline focus:outline-none focus:ring-2 focus:ring-amber-400/40 rounded px-1 py-0.5"
-                    >
-                      Open Project Planner
-                    </button>
-                  </div>
-                )}
                 <button
                   type="button"
                   onClick={onClose}

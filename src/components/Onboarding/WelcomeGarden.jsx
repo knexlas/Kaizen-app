@@ -20,7 +20,9 @@ function runCelebration() {
       origin: { y: 0.75 },
       colors: ['#5a7a2a', '#87a84b', '#c9d4a2', '#f5f0e6'],
     });
-  } catch (_) {}
+  } catch (_) {
+    // Ignore confetti failures; the onboarding flow should continue.
+  }
 }
 
 /**
@@ -36,7 +38,6 @@ export default function WelcomeGarden({ onComplete }) {
     setUserSettings,
     addGoal,
     editGoal,
-    goals,
   } = useGarden();
 
   const [step, setStep] = useState(STEP_MICRO_WIN);

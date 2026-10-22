@@ -139,7 +139,7 @@ export async function getMostEnergizingTasks(uid, limit = 5) {
   return list.slice(0, limit);
 }
 
-const ADMIN_TITLE_REGEX = /\b(email|reply|follow up|admin|calendar|book|pay|invoice|review|sort|inbox|groceries|dentist|schedule|renew|update|life admin)\b/i;
+const ADMIN_TITLE_REGEX = /\b(email|reply|follow up|admin|calendar|book|pay|invoice|review|sort|inbox|groceries|dentist|schedule|renew|update|life admin|meeting|slack|docs|paperwork)\b/i;
 const LOW_ENERGY_TITLE_REGEX = /\b(rest|reset|walk|stretch|water|hydrate|meal prep|tidy|backup|low-energy|recovery|breath|prep)\b/i;
 
 /**

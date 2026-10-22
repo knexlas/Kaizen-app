@@ -64,7 +64,14 @@ export async function createGoogleEvent(accessToken, eventDetails) {
 
   const event = {
     summary: eventDetails.title,
-    description: "Planted in Kaizen Garden 🌱",
+    description: [
+      eventDetails.originalText ? `Captured: ${eventDetails.originalText}` : null,
+      Array.isArray(eventDetails.participants) && eventDetails.participants.length > 0
+        ? `Participants: ${eventDetails.participants.join(', ')}`
+        : null,
+      'Planted in Kaizen Garden',
+    ].filter(Boolean).join('\n'),
+    ...(eventDetails.location ? { location: eventDetails.location } : {}),
     start: {
       dateTime: eventDetails.startTime, // ISO String
     },

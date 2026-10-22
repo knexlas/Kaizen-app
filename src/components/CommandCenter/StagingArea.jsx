@@ -23,6 +23,16 @@ import {
 } from '../../services/schedulingConflictService';
 import { dedupeCalendarEventsForDate, getPlanItemsForDate as getPlanItemsForDateShared } from '../../services/scheduleAdapter';
 import { getPlannedMinutesByDay } from '../../utils/plannedHoursAggregation';
+import {
+  buildBacklogTasks,
+  buildBacklogTree,
+  timeSlotToInput,
+  inputToTimeSlot,
+  getTaskDurationMinutes,
+  normalizeEventDurationInput,
+  getPlannedMinutesFromPlan,
+} from '../../domains/planning/services/stagingPlanningService';
+import { getRoutineSupportPlacementsForDate } from '../../domains/recovery/services/routineSupportPlacementService';
 
 const WEEKDAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const MAX_DAILY_SPARKS = 10;
@@ -51,91 +61,7 @@ function useIsMobile() {
   return isMobile;
 }
 
-/** Build list of unscheduled staging tasks from goals: narrative breakdown + flexible subtasks (no deadline). Excludes routines and recurrence. Someday Vault: only tasks for current month or milestone without activeMonth. */
-export function buildBacklogTasks(goals, currentMonthStr) {
-  const list = [];
-  const seen = new Set();
-  const month = currentMonthStr && currentMonthStr.length >= 7 ? currentMonthStr.slice(0, 7) : null; // YYYY-MM
-
-  (goals || []).forEach((goal) => {
-    if (goal.type === 'routine' || goal.recurrence) return;
-    const breakdown = goal.narrativeBreakdown;
-    if (breakdown && Array.isArray(breakdown.milestones)) {
-      breakdown.milestones.forEach((milestone, mi) => {
-        const activeMonth = milestone.activeMonth ?? milestone.active_month ?? null;
-        if (month && activeMonth && activeMonth !== month) return;
-        (milestone.tasks || []).forEach((task, ti) => {
-          const id = `narrative-${goal.id}-m${mi}-t${ti}`;
-          if (seen.has(id)) return;
-          seen.add(id);
-          list.push({
-            id,
-            title: task.title || 'Task',
-            goalId: goal.id,
-            goalTitle: goal.title,
-            milestoneTitle: milestone.title ?? `Phase ${mi + 1}`,
-            source: 'narrative',
-            milestoneIndex: mi,
-            taskIndex: ti,
-            estimatedSparks: task.estimatedSparks ?? 2,
-            isKaizen: Boolean(task.isKaizen),
-            defaultStatus: 'active',
-          });
-        });
-      });
-    }
-
-    const subtasks = Array.isArray(goal.subtasks) ? goal.subtasks : [];
-    subtasks.forEach((st) => {
-      if (st.deadline) return;
-      const id = `subtask-${goal.id}-${st.id}`;
-      if (seen.has(id)) return;
-      seen.add(id);
-      list.push({
-        id,
-        title: st.title || 'Subtask',
-        goalId: goal.id,
-        goalTitle: goal.title,
-        source: 'subtask',
-        subtaskId: st.id,
-        estimatedSparks: 2,
-        isKaizen: false,
-        defaultStatus: 'someday',
-      });
-    });
-  });
-
-  return list;
-}
-
-/** Group flat backlog tasks into tree: goal → milestones (or Subtasks) → tasks. For display/accordion only. */
-export function buildBacklogTree(flatTasks) {
-  if (!Array.isArray(flatTasks) || flatTasks.length === 0) return [];
-  const byGoal = new Map();
-  flatTasks.forEach((task) => {
-    const gid = task.goalId ?? 'unknown';
-    if (!byGoal.has(gid)) {
-      byGoal.set(gid, { goalId: gid, goalTitle: task.goalTitle ?? 'Goal', milestones: [], subtasks: [] });
-    }
-    const goalNode = byGoal.get(gid);
-    if (task.source === 'subtask') {
-      goalNode.subtasks.push(task);
-    } else {
-      const mi = task.milestoneIndex ?? 0;
-      const mTitle = task.milestoneTitle ?? `Phase ${mi + 1}`;
-      let mile = goalNode.milestones.find((m) => m.milestoneIndex === mi);
-      if (!mile) {
-        mile = { milestoneTitle: mTitle, milestoneIndex: mi, tasks: [] };
-        goalNode.milestones.push(mile);
-      }
-      mile.tasks.push(task);
-    }
-  });
-  byGoal.forEach((node) => {
-    node.milestones.sort((a, b) => a.milestoneIndex - b.milestoneIndex);
-  });
-  return Array.from(byGoal.values());
-}
+export { buildBacklogTasks, buildBacklogTree };
 
 /** Get events for a date from weeklyEvents (start/end ISO). */
 function getEventsForDate(weeklyEvents, dateStr) {
@@ -316,62 +242,6 @@ function GroupedBacklogList({ flatTasks, selectedTaskId, onSelectTask, compact =
   );
 }
 
-/** Slot (decimal hour or "HH:MM" string) to "HH:mm" for input type="time". */
-function timeSlotToInput(slot) {
-  if (slot != null && typeof slot === 'string' && /^\d{1,2}:\d{1,2}$/.test(slot.trim())) {
-    const [h, m] = slot.trim().split(':').map(Number);
-    if (Number.isFinite(h) && Number.isFinite(m) && h >= 0 && h <= 23 && m >= 0 && m <= 59) {
-      return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-    }
-  }
-  const n = Number(slot);
-  if (!Number.isFinite(n)) return '09:00';
-  const h = Math.floor(n);
-  const m = Math.round((n - h) * 60);
-  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-}
-
-/** "HH:mm" string to slot (decimal hour or canonical "HH:MM" for consistency). */
-function inputToTimeSlot(str) {
-  if (!str || typeof str !== 'string') return 9;
-  const [h, m] = str.split(':').map(Number);
-  if (!Number.isFinite(h)) return 9;
-  const mins = Number.isFinite(m) ? Math.max(0, Math.min(59, m)) : 0;
-  return h + mins / 60;
-}
-
-/** Get task duration in minutes from backlog task and goals (for scheduling). */
-function getTaskDurationMinutes(selectedTask, goals) {
-  if (!selectedTask || !Array.isArray(goals)) return 60;
-  const goal = goals.find((g) => g.id === selectedTask.goalId);
-  if (selectedTask.subtaskId && goal?.subtasks?.length) {
-    const st = goal.subtasks.find((s) => s.id === selectedTask.subtaskId);
-    const hours = Number(st?.estimatedHours);
-    if (hours > 0) return Math.min(480, Math.round(hours * 60));
-  }
-  if (goal?.estimatedMinutes) return Math.min(480, Math.max(1, Number(goal.estimatedMinutes)));
-  const sparks = Number(selectedTask.estimatedSparks);
-  if (sparks > 0) return Math.min(120, Math.max(30, sparks * 30));
-  return 60;
-}
-
-function normalizeEventDurationInput(value, fallback = 60) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.max(15, Math.min(480, parsed));
-}
-
-/** Sum planned minutes from a day plan (all slots except anytime). */
-function getPlannedMinutesFromPlan(plan) {
-  if (!plan || typeof plan !== 'object') return 0;
-  let total = 0;
-  for (const [key, value] of Object.entries(plan)) {
-    if (key === 'anytime') continue;
-    const list = Array.isArray(value) ? value : [value];
-    for (const a of list) total += getDurationMinutesFromPlanAssignment(a);
-  }
-  return total;
-}
 
 const DEFAULT_DAY_CAPACITY_HOURS = 14;
 
@@ -1099,7 +969,32 @@ function DraggableScheduledTask({ task, isDragging, dateStr, onCompleteVolumeBlo
   );
 }
 
-function DroppableDayColumn({ dateStr, label, dayNum, isToday, children, scheduledForDay, events, planItems, activeDragId, isPaused, totalSparks, plannedHours = 0, capacityHours = DEFAULT_DAY_CAPACITY_HOURS, onCompleteVolumeBlock, onTaskClick, onPlanDay }) {
+function RoutineSupportPlacementCard({ placement, onRemove }) {
+  return (
+    <div className="rounded-lg border border-dashed border-moss-200 bg-moss-50/55 px-2.5 py-2 text-moss-900 dark:border-moss-800/70 dark:bg-moss-900/20 dark:text-moss-100">
+      <div className="flex items-start gap-2">
+        <div className="min-w-0 flex-1">
+          <p className="truncate font-sans text-sm font-medium">{placement.title}</p>
+          <p className="mt-0.5 font-sans text-[11px] text-moss-700 dark:text-moss-300">
+            {placement.mode === 'light' ? 'Light support' : 'Support block'} · {placement.durationMinutes} min
+          </p>
+        </div>
+        {onRemove && (
+          <button
+            type="button"
+            onClick={() => onRemove(placement.id)}
+            className="shrink-0 rounded p-1 text-moss-700 hover:bg-moss-100 hover:text-moss-900 dark:text-moss-300 dark:hover:bg-moss-900/40 dark:hover:text-moss-100"
+            title="Remove support from this week"
+          >
+            ×
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function DroppableDayColumn({ dateStr, label, dayNum, isToday, children, scheduledForDay, events, planItems, routineSupportPlacementsForDay = [], activeDragId, isPaused, totalSparks, plannedHours = 0, capacityHours = DEFAULT_DAY_CAPACITY_HOURS, onCompleteVolumeBlock, onTaskClick, onPlanDay, onRemoveRoutineSupportPlacement }) {
   const { isOver, setNodeRef } = useDroppable({
     id: `day-${dateStr}`,
     data: { type: 'day', dateStr, isPaused: !!isPaused },
@@ -1147,6 +1042,13 @@ function DroppableDayColumn({ dateStr, label, dayNum, isToday, children, schedul
             variant={p.assignment?.type === 'event' ? 'event' : 'plan'}
           />
         ))}
+        {routineSupportPlacementsForDay.map((placement) => (
+          <RoutineSupportPlacementCard
+            key={placement.id}
+            placement={placement}
+            onRemove={onRemoveRoutineSupportPlacement}
+          />
+        ))}
         {scheduledForDay.map((t) => (
           <DroppableBumpSlot key={t.id} dateStr={dateStr} displacedTask={t}>
             <DraggableScheduledTask task={t} isDragging={activeDragId === t.id} dateStr={dateStr} onCompleteVolumeBlock={onCompleteVolumeBlock} onTaskClick={onTaskClick} />
@@ -1155,7 +1057,7 @@ function DroppableDayColumn({ dateStr, label, dayNum, isToday, children, schedul
         {children}
         {!isPaused && onPlanDay && (
           <div className="mt-1 flex flex-col gap-1">
-            {events.length === 0 && planItems.length === 0 && scheduledForDay.length === 0 && (
+            {events.length === 0 && planItems.length === 0 && routineSupportPlacementsForDay.length === 0 && scheduledForDay.length === 0 && (
               <p className="font-sans text-xs text-stone-400 text-center">No tasks yet</p>
             )}
             <button
@@ -1177,8 +1079,9 @@ export default function StagingArea({
   goals = [],
   weeklyEvents = [],
   weekAssignments = {},
+  routineSupportPlacements = [],
   loadDayPlan,
-  saveDayPlanForDate,
+  saveDayPlanForDate: _saveDayPlanForDate,
   pausedDays = {},
   needsRescheduling = [],
   rescheduleNeedsReschedulingItem,
@@ -1190,7 +1093,8 @@ export default function StagingArea({
   onTaskClick,
   onPlanDay,
   stagingTaskStatus: stagingTaskStatusProp,
-  setStagingTaskStatus: setStagingTaskStatusProp,
+  setStagingTaskStatus: _setStagingTaskStatusProp,
+  onRemoveRoutineSupportPlacement,
   initialScheduleSelection,
   onConsumeScheduleSelection,
   /** When true, show unscheduled/backlog first (left on desktop, top on mobile) so it feels first-class. */
@@ -1225,6 +1129,14 @@ export default function StagingArea({
     () => getPlannedMinutesByDay(weekAssignments, goals, weekViewDays.map((d) => d.dateStr)),
     [weekAssignments, goals, weekViewDays]
   );
+  const routineSupportMinutesByDay = useMemo(
+    () => weekViewDays.reduce((acc, day) => {
+      acc[day.dateStr] = getRoutineSupportPlacementsForDate(routineSupportPlacements, day.dateStr)
+        .reduce((sum, placement) => sum + (Number(placement?.durationMinutes) || 0), 0);
+      return acc;
+    }, {}),
+    [routineSupportPlacements, weekViewDays]
+  );
 
   const currentMonthStr = useMemo(() => (todayStr || '').slice(0, 7), [todayStr]);
   const allBacklogTasks = useMemo(() => buildBacklogTasks(goals, currentMonthStr), [goals, currentMonthStr]);
@@ -1237,9 +1149,8 @@ export default function StagingArea({
     [allBacklogTasks, scheduledTaskIds]
   );
 
-  const [stagingTaskStatusLocal, setStagingTaskStatusLocal] = useState(() => ({}));
+  const [stagingTaskStatusLocal, _setStagingTaskStatusLocal] = useState(() => ({}));
   const stagingTaskStatus = stagingTaskStatusProp ?? stagingTaskStatusLocal;
-  const setStagingTaskStatus = setStagingTaskStatusProp ?? setStagingTaskStatusLocal;
   const effectiveStatus = useCallback(
     (task) => stagingTaskStatus[task.id] ?? task.defaultStatus ?? 'someday',
     [stagingTaskStatus]
@@ -1253,9 +1164,6 @@ export default function StagingArea({
     [unscheduledTasks, effectiveStatus]
   );
   const [backlogTab, setBacklogTab] = useState('this-week');
-  const promoteToThisWeek = useCallback((taskId) => {
-    setStagingTaskStatus((prev) => ({ ...prev, [taskId]: 'active' }));
-  }, [setStagingTaskStatus]);
 
   const activeVolumeGoals = useMemo(
     () => (goals || []).filter((g) => g.type === 'volume' && ((g.currentProgress ?? 0) < (g.targetValue ?? 0))),
@@ -1446,7 +1354,7 @@ export default function StagingArea({
             ? findNextAvailableStartWithCalendar(plan ?? {}, weeklyEvents, dateStr, '08:00', duration, 22)
             : findNextAvailableStart(plan ?? {}, 8, duration, 22);
           rescheduleNeedsReschedulingItem(taskData.item, dateStr, nextSlot ?? undefined);
-        } catch (e) {
+        } catch (_e) {
           rescheduleNeedsReschedulingItem(taskData.item, dateStr);
         }
       })();
@@ -1602,11 +1510,12 @@ export default function StagingArea({
             {weekViewDays.map(({ dateStr, label, dayNum }) => {
               const events = getVisibleEventsForDate(weeklyEvents, weekAssignments, dateStr);
               const planItems = getPlanItemsForDate(weekAssignments, goals, dateStr);
+              const routineSupportPlacementsForDay = getRoutineSupportPlacementsForDate(routineSupportPlacements, dateStr);
               const scheduledForDay = scheduledTasks[dateStr] || [];
               const isToday = dateStr === todayStr;
               const isPaused = Boolean(pausedDays[dateStr]);
-              const totalSparks = events.length * 2 + planItems.length * 2 + scheduledForDay.reduce((s, t) => s + (t.estimatedSparks ?? 2), 0);
-              const plannedHours = (plannedMinutesByDay[dateStr] ?? 0) / 60;
+              const totalSparks = events.length * 2 + planItems.length * 2 + (routineSupportPlacementsForDay.length * 1.5) + scheduledForDay.reduce((s, t) => s + (t.estimatedSparks ?? 2), 0);
+              const plannedHours = ((plannedMinutesByDay[dateStr] ?? 0) + (routineSupportMinutesByDay[dateStr] ?? 0)) / 60;
               return (
                 <DroppableDayColumn
                   key={dateStr}
@@ -1616,6 +1525,7 @@ export default function StagingArea({
                   isToday={isToday}
                   events={events}
                   planItems={planItems}
+                  routineSupportPlacementsForDay={routineSupportPlacementsForDay}
                   scheduledForDay={scheduledForDay}
                   activeDragId={activeDragId}
                   isPaused={isPaused}
@@ -1625,6 +1535,7 @@ export default function StagingArea({
                   onCompleteVolumeBlock={handleCompleteVolumeBlock}
                   onTaskClick={onTaskClick}
                   onPlanDay={onPlanDay}
+                  onRemoveRoutineSupportPlacement={onRemoveRoutineSupportPlacement}
                 />
               );
             })}

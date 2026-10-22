@@ -28,7 +28,7 @@ export default class ErrorBoundary extends Component {
             spiritEmoji = parsed.spiritConfig.emoji;
           }
         }
-      } catch (e) {
+      } catch (_e) {
         // Silently fallback if localStorage is corrupt
       }
       return (
