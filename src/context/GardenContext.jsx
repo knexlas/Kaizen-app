@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { db } from '../firebase/firebaseConfig';
+import { onAuthStateChanged } from 'firebase/auth';
+import { auth, db } from '../firebase/firebaseConfig';
 import { subscribeToCompost, addCompostItem, deleteCompostItem, subscribeToDailyPlan, saveDailyPlan, getDailyPlan, saveCheckInForDate, getCheckInsForLastDays } from '../firebase/services';
 import { recordVibe } from '../services/energyDictionaryService';
 import { loginWithGoogle, logoutUser } from '../services/authService';
@@ -285,6 +286,11 @@ export function GardenProvider({ children }) {
   const [msUser, setMsUser] = useState(null);
   const [msToken, setMsToken] = useState(null);
 
+  // Restore the Firebase session on reload so cloud save (and the watch feed) keep working without a new popup.
+  useEffect(() => onAuthStateChanged(auth, (user) => {
+    if (user) setGoogleUser((prev) => prev ?? user);
+  }), []);
+
   const connectCalendar = useCallback(async () => {
     try {
       const { user, token } = await loginWithGoogle();
@@ -486,11 +492,13 @@ export function GardenProvider({ children }) {
     };
   }, [googleUser?.uid, hydrated, planDate, assignments]);
 
-  // Keep weekAssignments cache in sync with today's assignments
+  // Keep weekAssignments cache in sync with today's assignments.
+  // Waits for hydration: on the first render `assignments` is still {} and would overwrite the stored plan.
   useEffect(() => {
+    if (!hydrated) return;
     weekAssignmentsRef.current = { ...weekAssignmentsRef.current, [planDate]: assignments };
     setWeekAssignments((prev) => ({ ...prev, [planDate]: assignments }));
-  }, [planDate, assignments]);
+  }, [hydrated, planDate, assignments]);
 
   // When working locally, restore the selected day's plan from the local cache.
   useEffect(() => {
@@ -1014,6 +1022,16 @@ export function GardenProvider({ children }) {
 
     const uid = googleUser?.uid;
 
+    // Plan mode plans days ahead (Plan my week), so a new day must not wipe what was planned for it.
+    if (userSettings?.uiMode !== 'garden') {
+      try {
+        localStorage.setItem(LAST_OPEN_DATE_KEY, today);
+      } catch (_) {
+        // Ignore storage write failures.
+      }
+      return;
+    }
+
     if (!gardenerHasRunRef.current) {
       gardenerHasRunRef.current = true;
       setAssignments({});
@@ -1063,7 +1081,7 @@ export function GardenProvider({ children }) {
     };
 
     archiveYesterday();
-  }, [hydrated, googleUser?.uid, goals, addToCompost, planDate]);
+  }, [hydrated, googleUser?.uid, goals, addToCompost, planDate, userSettings?.uiMode]);
 
   /** Archive current plan into compost and clear assignments (no lastCheckInDate change). Used for missed-day flow before choosing 1/3/0 spoons. */
   const archivePlanToCompost = useCallback(() => {

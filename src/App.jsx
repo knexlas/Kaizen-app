@@ -15,6 +15,8 @@ const GardenDashboard = lazy(() => import('./components/Dashboard/GardenDashboar
 const MorningCheckIn = lazy(() => import('./components/Dashboard/MorningCheckIn'));
 const FirstRunFlow = lazy(() => import('./components/Onboarding/FirstRunFlow'));
 const PreferenceOnboarding = lazy(() => import('./components/Onboarding/PreferenceOnboarding'));
+const LeanApp = lazy(() => import('./components/Lean/LeanApp'));
+const WatchSyncBridge = lazy(() => import('./components/Lean/WatchSyncBridge'));
 /** YYYY-MM-DD for yesterday, local timezone. */
 function yesterdayString() {
   const d = new Date();
@@ -48,8 +50,11 @@ function App() {
     setAssignments,
     archivePlanToCompost,
     weeklyEvents,
+    updateUserSettings,
   } = useGarden();
   const { pushReward } = useReward();
+  // Lean Plan mode is the default; the full garden experience is opt-in (userSettings.uiMode === 'garden').
+  const isLean = userSettings?.uiMode !== 'garden';
 
   const preferencesCompleted = userSettings?.onboardingPreferencesCompleted === true;
   const hasOnboarded = userSettings?.hasOnboarded === true;
@@ -69,6 +74,7 @@ function App() {
   /** Single feedback path for kaizen:toast: route to RewardOverlay only. */
   useEffect(() => {
     const handler = (e) => {
+      if (isLean) return;
       const message = e?.detail?.message;
       if (message != null && String(message).trim() !== '' && typeof pushReward === 'function') {
         pushReward({ message: String(message).trim(), tone: 'moss', icon: '✨', sound: null });
@@ -76,7 +82,7 @@ function App() {
     };
     window.addEventListener('kaizen:toast', handler);
     return () => window.removeEventListener('kaizen:toast', handler);
-  }, [pushReward]);
+  }, [pushReward, isLean]);
 
   const textSizeClass = a11y.textSize === 'sm' ? 'text-sm' : a11y.textSize === 'lg' ? 'text-lg' : 'text-base';
   const a11yClasses = [textSizeClass, a11y.highContrast ? 'hc' : '', a11y.lowStim ? 'lowstim' : ''].filter(Boolean).join(' ');
@@ -124,6 +130,18 @@ function App() {
       ? String(import.meta.env.VITE_FEEDBACK_EMAIL).trim()
       : '');
 
+  if (isLean) {
+    return (
+      <div className={`min-h-screen bg-stone-50 font-sans dark:bg-stone-950 ${a11yClasses}`}>
+        {!hydrated ? <AppViewFallback /> : (
+          <Suspense fallback={<AppViewFallback />}>
+            <LeanApp />
+          </Suspense>
+        )}
+      </div>
+    );
+  }
+
   return (
     <EnergyProvider>
       <div className={`min-h-screen font-sans relative ${theme.containerClass} ${a11yClasses}`}>
@@ -153,6 +171,19 @@ function App() {
             )}
           </Suspense>
         </div>
+
+        {hydrated && (
+          <Suspense fallback={null}>
+            <WatchSyncBridge />
+          </Suspense>
+        )}
+        <button
+          type="button"
+          onClick={() => updateUserSettings({ uiMode: 'lean' })}
+          className="fixed left-3 top-3 z-40 rounded-full bg-white/90 px-3 py-1.5 font-sans text-xs font-medium text-stone-700 shadow hover:bg-white dark:bg-stone-800/90 dark:text-stone-200"
+        >
+          ← Plan mode
+        </button>
 
         {/* Feedback button appears only when configured. */}
         {feedbackEmail && (
